@@ -110,7 +110,7 @@ setup = ["echo 'Created $SILO_NAME at $SILO_IP'"]
 
 ## Per-instance overrides (`.env.silo`)
 
-Create a `.env.silo` file (tracked in git) to define per-instance environment variable overrides. When `silo add` creates an instance, it renders `${SILO_*}` variables and merges the result into `.env` — replacing existing keys in-place and appending new ones.
+Create a `.env.silo` file (tracked in git) to define per-instance environment variable overrides. When `silo add` creates an instance, it renders `${SILO_*}` variables and merges the result into `.env` -- replacing existing keys in-place and appending new ones.
 
 **Example**: your `.env` (gitignored) has secrets and shared config:
 
