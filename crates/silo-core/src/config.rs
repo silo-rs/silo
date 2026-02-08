@@ -38,6 +38,8 @@ pub struct HooksConfig {
 pub struct WorktreeConfig {
     #[serde(default = "default_base_dir")]
     pub base_dir: String,
+    #[serde(default)]
+    pub copy: Vec<String>,
 }
 
 use std::collections::HashMap;
@@ -56,6 +58,7 @@ impl Default for WorktreeConfig {
     fn default() -> Self {
         Self {
             base_dir: default_base_dir(),
+            copy: Vec::new(),
         }
     }
 }
@@ -151,13 +154,14 @@ pub fn generate_default(ip_range: &str) -> String {
 }
 
 pub fn generate_for_project(ip_range: &str, project: &ProjectType) -> String {
-    let (hooks_section, run_section) = match project {
+    let (hooks_section, copy_section, run_section) = match project {
         ProjectType::Node => {
             let has_pnpm = std::path::Path::new("pnpm-lock.yaml").exists();
             let has_yarn = std::path::Path::new("yarn.lock").exists();
             let pm = if has_pnpm { "pnpm" } else if has_yarn { "yarn" } else { "npm" };
             (
                 format!(r#"setup = ["{pm} install"]"#),
+                r#"copy = [".env", ".env.local"]"#.to_string(),
                 format!(
                     r#"dev = "{pm} run dev"
 # test = "{pm} test""#
@@ -166,24 +170,28 @@ pub fn generate_for_project(ip_range: &str, project: &ProjectType) -> String {
         }
         ProjectType::Python => (
             r#"setup = ["pip install -r requirements.txt"]"#.to_string(),
+            r#"copy = [".env"]"#.to_string(),
             r#"# dev = "python manage.py runserver"
 # test = "pytest""#
                 .to_string(),
         ),
         ProjectType::Ruby => (
             r#"setup = ["bundle install"]"#.to_string(),
+            r#"copy = [".env"]"#.to_string(),
             r#"# dev = "rails server"
 # test = "bundle exec rspec""#
                 .to_string(),
         ),
         ProjectType::Go => (
             r#"# setup = ["go mod download"]"#.to_string(),
+            r#"# copy = [".env"]"#.to_string(),
             r#"# dev = "go run ."
 # test = "go test ./...""#
                 .to_string(),
         ),
         ProjectType::Rust => (
             r#"# setup = ["cargo build"]"#.to_string(),
+            r#"# copy = [".env"]"#.to_string(),
             r#"# dev = "cargo run"
 # test = "cargo test""#
                 .to_string(),
@@ -191,6 +199,9 @@ pub fn generate_for_project(ip_range: &str, project: &ProjectType) -> String {
         ProjectType::Unknown => (
             r#"# Commands to run after creating an instance
 # setup = ["npm install"]"#
+                .to_string(),
+            r#"# Files to copy from the main repo into worktrees (glob patterns)
+# copy = [".env", ".env.local"]"#
                 .to_string(),
             r#"# Named commands for `silo run <name>` (receives bind() interception + SILO_* env vars)
 # dev = "npm run dev"
@@ -213,8 +224,7 @@ ip_range = "{ip_range}"
 [worktree]
 # Base directory for git worktrees (relative to repo root)
 # base_dir = "../"
-# Tip: .silo files are auto-rendered with SILO_* variables on instance creation
-# e.g. .env.silo -> .env with ${{SILO_NAME}}, ${{SILO_IP}} substituted
+{copy_section}
 
 [run]
 {run_section}

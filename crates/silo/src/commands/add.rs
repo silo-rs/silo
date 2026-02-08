@@ -101,9 +101,14 @@ pub async fn run(
     }
 
     if instance.is_worktree {
-        let rendered = render::render_templates(&instance.path, &instance.env_vars())?;
-        if !json && rendered > 0 {
-            ui::success("Templates rendered");
+        let copied = render::copy_files(&repo_root, &instance.path, &config.worktree.copy)?;
+        if !json && copied > 0 {
+            ui::success("Files copied");
+        }
+
+        let applied = render::apply_silo_env(&instance.path, &instance.env_vars())?;
+        if !json && applied > 0 {
+            ui::success("Overrides applied");
         }
     }
 

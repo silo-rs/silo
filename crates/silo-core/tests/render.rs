@@ -14,8 +14,10 @@ fn test_vars() -> HashMap<String, String> {
     ])
 }
 
+// --- apply_silo_env tests ---
+
 #[test]
-fn renders_env_silo_to_env() {
+fn apply_creates_env_from_silo() {
     let dir = tempfile::tempdir().unwrap();
     fs::write(
         dir.path().join(".env.silo"),
@@ -23,7 +25,7 @@ fn renders_env_silo_to_env() {
     )
     .unwrap();
 
-    let count = render::render_templates(dir.path(), &test_vars()).unwrap();
+    let count = render::apply_silo_env(dir.path(), &test_vars()).unwrap();
     assert_eq!(count, 1);
 
     let output = fs::read_to_string(dir.path().join(".env")).unwrap();
@@ -34,82 +36,222 @@ fn renders_env_silo_to_env() {
 }
 
 #[test]
-fn renders_nested_templates() {
+fn apply_appends_to_existing_env() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join(".env"), "SECRET_KEY=abc123\nSTRIPE_KEY=sk_test_xxx").unwrap();
+    fs::write(
+        dir.path().join(".env.silo"),
+        "DATABASE_URL=postgres://localhost/myapp_${SILO_NAME}",
+    )
+    .unwrap();
+
+    let count = render::apply_silo_env(dir.path(), &test_vars()).unwrap();
+    assert_eq!(count, 1);
+
+    let output = fs::read_to_string(dir.path().join(".env")).unwrap();
+    assert_eq!(
+        output,
+        "SECRET_KEY=abc123\nSTRIPE_KEY=sk_test_xxx\nDATABASE_URL=postgres://localhost/myapp_feature-a\n"
+    );
+}
+
+#[test]
+fn apply_skips_comments_and_blanks() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(
+        dir.path().join(".env.silo"),
+        "# this is a comment\n\nKEY=value\n  # another comment\n",
+    )
+    .unwrap();
+
+    let count = render::apply_silo_env(dir.path(), &test_vars()).unwrap();
+    assert_eq!(count, 1);
+
+    let output = fs::read_to_string(dir.path().join(".env")).unwrap();
+    assert_eq!(output, "KEY=value\n");
+}
+
+#[test]
+fn apply_nested_dirs() {
     let dir = tempfile::tempdir().unwrap();
     let api_dir = dir.path().join("packages/api");
     let web_dir = dir.path().join("packages/web");
     fs::create_dir_all(&api_dir).unwrap();
     fs::create_dir_all(&web_dir).unwrap();
 
-    fs::write(
-        api_dir.join(".env.silo"),
-        "DB=api_${SILO_NAME}",
-    )
-    .unwrap();
-    fs::write(
-        web_dir.join(".env.silo"),
-        "DB=web_${SILO_NAME}",
-    )
-    .unwrap();
+    fs::write(api_dir.join(".env.silo"), "DB=api_${SILO_NAME}").unwrap();
+    fs::write(web_dir.join(".env.silo"), "DB=web_${SILO_NAME}").unwrap();
 
-    let count = render::render_templates(dir.path(), &test_vars()).unwrap();
+    let count = render::apply_silo_env(dir.path(), &test_vars()).unwrap();
     assert_eq!(count, 2);
 
     assert_eq!(
         fs::read_to_string(api_dir.join(".env")).unwrap(),
-        "DB=api_feature-a"
+        "DB=api_feature-a\n"
     );
     assert_eq!(
         fs::read_to_string(web_dir.join(".env")).unwrap(),
-        "DB=web_feature-a"
+        "DB=web_feature-a\n"
     );
 }
 
 #[test]
-fn skips_existing_output() {
+fn apply_no_silo_files() {
     let dir = tempfile::tempdir().unwrap();
-    fs::write(dir.path().join(".env.silo"), "NEW=${SILO_NAME}").unwrap();
-    fs::write(dir.path().join(".env"), "EXISTING").unwrap();
-
-    let count = render::render_templates(dir.path(), &test_vars()).unwrap();
-    assert_eq!(count, 0);
-
-    // Original file preserved
-    assert_eq!(fs::read_to_string(dir.path().join(".env")).unwrap(), "EXISTING");
-}
-
-#[test]
-fn returns_zero_when_no_templates() {
-    let dir = tempfile::tempdir().unwrap();
-    let count = render::render_templates(dir.path(), &test_vars()).unwrap();
+    let count = render::apply_silo_env(dir.path(), &test_vars()).unwrap();
     assert_eq!(count, 0);
 }
 
 #[test]
-fn renders_file_without_variables() {
-    let dir = tempfile::tempdir().unwrap();
-    fs::write(dir.path().join("config.yml.silo"), "key: value\n").unwrap();
-
-    let count = render::render_templates(dir.path(), &test_vars()).unwrap();
-    assert_eq!(count, 1);
-    assert_eq!(
-        fs::read_to_string(dir.path().join("config.yml")).unwrap(),
-        "key: value\n"
-    );
-}
-
-#[test]
-fn renders_non_env_file_types() {
+fn apply_preserves_equals_in_value() {
     let dir = tempfile::tempdir().unwrap();
     fs::write(
-        dir.path().join("docker-compose.override.yml.silo"),
-        "services:\n  db:\n    ports:\n      - ${SILO_IP}:5432:5432\n",
+        dir.path().join(".env.silo"),
+        "DATABASE_URL=postgres://user:pass@host/db?sslmode=require",
     )
     .unwrap();
 
-    let count = render::render_templates(dir.path(), &test_vars()).unwrap();
-    assert_eq!(count, 1);
+    render::apply_silo_env(dir.path(), &test_vars()).unwrap();
 
-    let output = fs::read_to_string(dir.path().join("docker-compose.override.yml")).unwrap();
-    assert!(output.contains("127.0.1.1:5432:5432"));
+    let output = fs::read_to_string(dir.path().join(".env")).unwrap();
+    assert!(output.contains("DATABASE_URL=postgres://user:pass@host/db?sslmode=require"));
+}
+
+#[test]
+fn apply_only_comments_produces_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join(".env.silo"), "# only comments\n\n").unwrap();
+
+    let count = render::apply_silo_env(dir.path(), &test_vars()).unwrap();
+    assert_eq!(count, 0);
+    assert!(!dir.path().join(".env").exists());
+}
+
+// --- copy_files tests ---
+
+#[test]
+fn copy_files_basic() {
+    let repo = tempfile::tempdir().unwrap();
+    let worktree = tempfile::tempdir().unwrap();
+
+    fs::write(repo.path().join(".env"), "SECRET=abc123").unwrap();
+
+    let count = render::copy_files(
+        repo.path(),
+        worktree.path(),
+        &[".env".into()],
+    )
+    .unwrap();
+
+    assert_eq!(count, 1);
+    assert_eq!(
+        fs::read_to_string(worktree.path().join(".env")).unwrap(),
+        "SECRET=abc123"
+    );
+}
+
+#[test]
+fn copy_files_glob_pattern() {
+    let repo = tempfile::tempdir().unwrap();
+    let worktree = tempfile::tempdir().unwrap();
+
+    fs::write(repo.path().join(".env"), "A=1").unwrap();
+    fs::write(repo.path().join(".env.local"), "B=2").unwrap();
+
+    let count = render::copy_files(
+        repo.path(),
+        worktree.path(),
+        &[".env*".into()],
+    )
+    .unwrap();
+
+    assert_eq!(count, 2);
+    assert!(worktree.path().join(".env").exists());
+    assert!(worktree.path().join(".env.local").exists());
+}
+
+#[test]
+fn copy_files_skips_existing() {
+    let repo = tempfile::tempdir().unwrap();
+    let worktree = tempfile::tempdir().unwrap();
+
+    fs::write(repo.path().join(".env"), "NEW").unwrap();
+    fs::write(worktree.path().join(".env"), "EXISTING").unwrap();
+
+    let count = render::copy_files(
+        repo.path(),
+        worktree.path(),
+        &[".env".into()],
+    )
+    .unwrap();
+
+    assert_eq!(count, 0);
+    assert_eq!(
+        fs::read_to_string(worktree.path().join(".env")).unwrap(),
+        "EXISTING"
+    );
+}
+
+#[test]
+fn copy_files_empty_patterns() {
+    let repo = tempfile::tempdir().unwrap();
+    let worktree = tempfile::tempdir().unwrap();
+
+    let count = render::copy_files(repo.path(), worktree.path(), &[]).unwrap();
+    assert_eq!(count, 0);
+}
+
+#[test]
+fn copy_files_nested() {
+    let repo = tempfile::tempdir().unwrap();
+    let worktree = tempfile::tempdir().unwrap();
+
+    let nested = repo.path().join("config");
+    fs::create_dir_all(&nested).unwrap();
+    fs::write(nested.join("secrets.yml"), "key: value").unwrap();
+
+    let count = render::copy_files(
+        repo.path(),
+        worktree.path(),
+        &["config/secrets.yml".into()],
+    )
+    .unwrap();
+
+    assert_eq!(count, 1);
+    assert_eq!(
+        fs::read_to_string(worktree.path().join("config/secrets.yml")).unwrap(),
+        "key: value"
+    );
+}
+
+// --- copy + apply integration ---
+
+#[test]
+fn copy_then_apply_produces_merged_env() {
+    let repo = tempfile::tempdir().unwrap();
+    let worktree = tempfile::tempdir().unwrap();
+
+    // Main repo has .env with secrets
+    fs::write(
+        repo.path().join(".env"),
+        "SECRET_KEY=abc123\nDATABASE_URL=postgres://localhost/myapp\n",
+    )
+    .unwrap();
+
+    // Worktree has .env.silo (tracked in git, so it's already there)
+    fs::write(
+        worktree.path().join(".env.silo"),
+        "DATABASE_URL=postgres://localhost/myapp_${SILO_NAME}",
+    )
+    .unwrap();
+
+    // Step 1: copy .env
+    render::copy_files(repo.path(), worktree.path(), &[".env".into()]).unwrap();
+
+    // Step 2: apply .silo overrides
+    render::apply_silo_env(worktree.path(), &test_vars()).unwrap();
+
+    let output = fs::read_to_string(worktree.path().join(".env")).unwrap();
+    assert!(output.contains("SECRET_KEY=abc123"));
+    assert!(output.contains("DATABASE_URL=postgres://localhost/myapp_feature-a"));
 }

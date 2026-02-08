@@ -81,6 +81,7 @@ teardown = []                    # runs when you `silo remove`
 
 [worktree]
 base_dir = "../"                 # where worktrees are created
+copy = [".env", ".env.local"]   # files to copy from main repo into worktrees
 
 [run]
 dev = "npm run dev"              # shortcuts for `silo run dev`
@@ -107,35 +108,48 @@ You can reference these in hooks, scripts, or your app's configuration:
 setup = ["echo 'Created $SILO_NAME at $SILO_IP'"]
 ```
 
-## Template files (`.silo`)
+## Per-instance overrides (`.silo` files)
 
-Any file ending in `.silo` is automatically rendered when an instance is created. Variables like `${SILO_NAME}` and `${SILO_IP}` are substituted, and the output is written without the `.silo` suffix.
+Files ending in `.silo` define per-instance environment variable overrides. When `silo add` creates an instance, it appends the rendered `.silo` values to the corresponding target file (e.g. `.env.silo` → `.env`).
 
-This is the recommended way to handle per-instance configuration like database URLs or service ports.
+**Example**: your `.env` (gitignored) has secrets and shared config:
 
-**Example**: create `.env.silo` (tracked in git):
+```
+SECRET_KEY=abc123
+STRIPE_KEY=sk_test_xxx
+DATABASE_URL=postgres://localhost/myapp
+```
+
+Create `.env.silo` (tracked in git) with only the per-instance overrides:
 
 ```
 DATABASE_URL=postgres://localhost/myapp_${SILO_NAME}
 REDIS_URL=redis://${SILO_IP}:6379
 ```
 
-When you run `silo add feature-a`, silo generates `.env` (gitignored):
+When you run `silo add feature-a`:
+
+1. `.env` is copied from the main repo (via `[worktree] copy`)
+2. `.env.silo` is rendered and appended to `.env`
+
+The resulting `.env` in the worktree:
 
 ```
+SECRET_KEY=abc123
+STRIPE_KEY=sk_test_xxx
+DATABASE_URL=postgres://localhost/myapp
 DATABASE_URL=postgres://localhost/myapp_feature-a
 REDIS_URL=redis://127.0.1.1:6379
 ```
 
-Works with any file type and in nested directories -- ideal for monorepos:
+The last `DATABASE_URL` wins in most dotenv libraries. Secrets are preserved, per-instance values are added, and setup hooks can immediately use the correct `DATABASE_URL`.
+
+Works in monorepos too:
 
 ```
-packages/api/.env.silo     → packages/api/.env
-packages/web/.env.silo     → packages/web/.env
-config.yml.silo            → config.yml
+packages/api/.env.silo     → appended to packages/api/.env
+packages/web/.env.silo     → appended to packages/web/.env
 ```
-
-No configuration needed. Just add `.silo` files to your repo.
 
 ## Commands
 

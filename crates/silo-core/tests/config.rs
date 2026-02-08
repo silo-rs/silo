@@ -30,6 +30,7 @@ teardown = ["echo bye"]
 
 [worktree]
 base_dir = "../worktrees"
+copy = [".env", ".env.local"]
 "#;
     fs::write(dir.path().join("silo.toml"), content).unwrap();
 
@@ -39,6 +40,7 @@ base_dir = "../worktrees"
     assert_eq!(config.hooks.enter, vec!["echo entering"]);
     assert_eq!(config.hooks.teardown, vec!["echo bye"]);
     assert_eq!(config.worktree.base_dir, "../worktrees");
+    assert_eq!(config.worktree.copy, vec![".env", ".env.local"]);
 }
 
 #[test]
