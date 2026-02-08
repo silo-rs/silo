@@ -64,6 +64,23 @@ ip_range = "127.0.1.0/24"
     assert!(config.hooks.setup.is_empty());
     assert!(config.hooks.enter.is_empty());
     assert_eq!(config.worktree.base_dir, "../");
+    assert_eq!(config.worktree.copy, vec!["**/.env*"]);
+}
+
+#[test]
+fn copy_default_can_be_overridden() {
+    let dir = tempfile::tempdir().unwrap();
+    let content = r#"
+[instance]
+ip_range = "127.0.1.0/24"
+
+[worktree]
+copy = []
+"#;
+    fs::write(dir.path().join("silo.toml"), content).unwrap();
+
+    let config = load_config_from(dir.path()).unwrap().unwrap();
+    assert!(config.worktree.copy.is_empty());
 }
 
 #[test]

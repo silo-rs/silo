@@ -5,8 +5,9 @@ use eyre::Context;
 use tracing::{debug, instrument};
 
 /// Scan for `**/*.silo` files under `worktree_path`, substitute `${VAR}` references,
-/// and append the resulting KEY=VALUE lines to the corresponding target file
-/// (e.g. `.env.silo` appends to `.env`). Creates the target file if it doesn't exist.
+/// and merge the resulting KEY=VALUE lines into the corresponding target file
+/// (e.g. `.env.silo` → `.env`). If a key already exists in the target, its value
+/// is replaced in-place. New keys are appended. Creates the target if it doesn't exist.
 /// Returns the number of `.silo` files processed.
 #[instrument(skip(env_vars), fields(worktree = %worktree_path.display()))]
 pub fn apply_silo_env(
@@ -30,24 +31,22 @@ pub fn apply_silo_env(
 
         let target = path.with_extension("");
 
-        let rendered_lines = render_lines(&content, env_vars);
-        if rendered_lines.is_empty() {
+        let overrides = parse_overrides(&content, env_vars);
+        if overrides.is_empty() {
             continue;
         }
 
-        let mut output = String::new();
-
-        // If target already exists (e.g. copied .env), read it and ensure trailing newline
-        if target.exists() {
+        let output = if target.exists() {
             let existing = std::fs::read_to_string(&target)
                 .with_context(|| format!("failed to read {}", target.display()))?;
-            output.push_str(&existing);
-            if !output.ends_with('\n') {
-                output.push('\n');
+            merge_env(&existing, &overrides)
+        } else {
+            let mut out = String::new();
+            for (key, value) in &overrides {
+                out.push_str(&format!("{key}={value}\n"));
             }
-        }
-
-        output.push_str(&rendered_lines);
+            out
+        };
 
         std::fs::write(&target, &output)
             .with_context(|| format!("failed to write {}", target.display()))?;
@@ -68,24 +67,49 @@ pub fn apply_silo_env(
 }
 
 /// Parse KEY=VALUE lines (skipping comments and blanks), substitute variables,
-/// and return the rendered content as a string.
-fn render_lines(content: &str, vars: &HashMap<String, String>) -> String {
-    let mut lines = Vec::new();
+/// and return as ordered (key, value) pairs.
+fn parse_overrides(content: &str, vars: &HashMap<String, String>) -> Vec<(String, String)> {
+    let mut pairs = Vec::new();
     for line in content.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
         if let Some((key, value)) = trimmed.split_once('=') {
-            let rendered_value = substitute(value, vars);
-            lines.push(format!("{}={}", key, rendered_value));
+            pairs.push((key.to_string(), substitute(value, vars)));
         }
     }
-    if lines.is_empty() {
-        return String::new();
+    pairs
+}
+
+/// Merge overrides into existing env content. If a key already exists, replace
+/// that line in-place. Otherwise append at the end.
+fn merge_env(existing: &str, overrides: &[(String, String)]) -> String {
+    let mut lines: Vec<String> = existing.lines().map(String::from).collect();
+    let mut appended = Vec::new();
+
+    for (key, value) in overrides {
+        let prefix = format!("{key}=");
+        let mut replaced = false;
+        for line in &mut lines {
+            let trimmed = line.trim();
+            if !trimmed.starts_with('#') && trimmed.starts_with(&prefix) {
+                *line = format!("{key}={value}");
+                replaced = true;
+                break;
+            }
+        }
+        if !replaced {
+            appended.push(format!("{key}={value}"));
+        }
     }
+
+    lines.extend(appended);
+
     let mut result = lines.join("\n");
-    result.push('\n');
+    if !result.ends_with('\n') {
+        result.push('\n');
+    }
     result
 }
 
@@ -194,22 +218,62 @@ mod tests {
     }
 
     #[test]
-    fn render_lines_basic() {
+    fn parse_overrides_basic() {
         let vars = HashMap::from([("SILO_NAME".into(), "api".into())]);
         let content = "DB=myapp_${SILO_NAME}\nPORT=3000";
-        assert_eq!(render_lines(content, &vars), "DB=myapp_api\nPORT=3000\n");
+        let pairs = parse_overrides(content, &vars);
+        assert_eq!(pairs, vec![
+            ("DB".into(), "myapp_api".into()),
+            ("PORT".into(), "3000".into()),
+        ]);
     }
 
     #[test]
-    fn render_lines_skips_comments_and_blanks() {
+    fn parse_overrides_skips_comments_and_blanks() {
         let vars = HashMap::new();
         let content = "# comment\n\nKEY=value\n  # another";
-        assert_eq!(render_lines(content, &vars), "KEY=value\n");
+        let pairs = parse_overrides(content, &vars);
+        assert_eq!(pairs, vec![("KEY".into(), "value".into())]);
     }
 
     #[test]
-    fn render_lines_empty_input() {
+    fn parse_overrides_empty_input() {
         let vars = HashMap::new();
-        assert_eq!(render_lines("# only comments\n\n", &vars), "");
+        assert!(parse_overrides("# only comments\n\n", &vars).is_empty());
+    }
+
+    #[test]
+    fn merge_env_replaces_existing_key() {
+        let existing = "SECRET=abc\nDATABASE_URL=old\nPORT=3000\n";
+        let overrides = vec![("DATABASE_URL".into(), "new".into())];
+        let result = merge_env(existing, &overrides);
+        assert_eq!(result, "SECRET=abc\nDATABASE_URL=new\nPORT=3000\n");
+    }
+
+    #[test]
+    fn merge_env_appends_new_key() {
+        let existing = "SECRET=abc\n";
+        let overrides = vec![("NEW_KEY".into(), "value".into())];
+        let result = merge_env(existing, &overrides);
+        assert_eq!(result, "SECRET=abc\nNEW_KEY=value\n");
+    }
+
+    #[test]
+    fn merge_env_mixed_replace_and_append() {
+        let existing = "A=1\nB=2\nC=3\n";
+        let overrides = vec![
+            ("B".into(), "replaced".into()),
+            ("D".into(), "new".into()),
+        ];
+        let result = merge_env(existing, &overrides);
+        assert_eq!(result, "A=1\nB=replaced\nC=3\nD=new\n");
+    }
+
+    #[test]
+    fn merge_env_preserves_comments() {
+        let existing = "# database\nDB=old\n# cache\nREDIS=localhost\n";
+        let overrides = vec![("DB".into(), "new".into())];
+        let result = merge_env(existing, &overrides);
+        assert_eq!(result, "# database\nDB=new\n# cache\nREDIS=localhost\n");
     }
 }

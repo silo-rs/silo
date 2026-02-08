@@ -36,9 +36,9 @@ fn apply_creates_env_from_silo() {
 }
 
 #[test]
-fn apply_appends_to_existing_env() {
+fn apply_appends_new_keys_to_existing_env() {
     let dir = tempfile::tempdir().unwrap();
-    fs::write(dir.path().join(".env"), "SECRET_KEY=abc123\nSTRIPE_KEY=sk_test_xxx").unwrap();
+    fs::write(dir.path().join(".env"), "SECRET_KEY=abc123\nSTRIPE_KEY=sk_test_xxx\n").unwrap();
     fs::write(
         dir.path().join(".env.silo"),
         "DATABASE_URL=postgres://localhost/myapp_${SILO_NAME}",
@@ -52,6 +52,30 @@ fn apply_appends_to_existing_env() {
     assert_eq!(
         output,
         "SECRET_KEY=abc123\nSTRIPE_KEY=sk_test_xxx\nDATABASE_URL=postgres://localhost/myapp_feature-a\n"
+    );
+}
+
+#[test]
+fn apply_replaces_existing_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(
+        dir.path().join(".env"),
+        "SECRET_KEY=abc123\nDATABASE_URL=postgres://localhost/myapp\nSTRIPE_KEY=sk_test_xxx\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join(".env.silo"),
+        "DATABASE_URL=postgres://localhost/myapp_${SILO_NAME}",
+    )
+    .unwrap();
+
+    let count = render::apply_silo_env(dir.path(), &test_vars()).unwrap();
+    assert_eq!(count, 1);
+
+    let output = fs::read_to_string(dir.path().join(".env")).unwrap();
+    assert_eq!(
+        output,
+        "SECRET_KEY=abc123\nDATABASE_URL=postgres://localhost/myapp_feature-a\nSTRIPE_KEY=sk_test_xxx\n"
     );
 }
 
@@ -227,11 +251,11 @@ fn copy_files_nested() {
 // --- copy + apply integration ---
 
 #[test]
-fn copy_then_apply_produces_merged_env() {
+fn copy_then_apply_replaces_keys_in_copied_env() {
     let repo = tempfile::tempdir().unwrap();
     let worktree = tempfile::tempdir().unwrap();
 
-    // Main repo has .env with secrets
+    // Main repo has .env with secrets + default DATABASE_URL
     fs::write(
         repo.path().join(".env"),
         "SECRET_KEY=abc123\nDATABASE_URL=postgres://localhost/myapp\n",
@@ -241,7 +265,7 @@ fn copy_then_apply_produces_merged_env() {
     // Worktree has .env.silo (tracked in git, so it's already there)
     fs::write(
         worktree.path().join(".env.silo"),
-        "DATABASE_URL=postgres://localhost/myapp_${SILO_NAME}",
+        "DATABASE_URL=postgres://localhost/myapp_${SILO_NAME}\nREDIS_URL=redis://${SILO_IP}:6379",
     )
     .unwrap();
 
@@ -252,6 +276,9 @@ fn copy_then_apply_produces_merged_env() {
     render::apply_silo_env(worktree.path(), &test_vars()).unwrap();
 
     let output = fs::read_to_string(worktree.path().join(".env")).unwrap();
-    assert!(output.contains("SECRET_KEY=abc123"));
-    assert!(output.contains("DATABASE_URL=postgres://localhost/myapp_feature-a"));
+    // DATABASE_URL replaced in-place (no duplicate), REDIS_URL appended
+    assert_eq!(
+        output,
+        "SECRET_KEY=abc123\nDATABASE_URL=postgres://localhost/myapp_feature-a\nREDIS_URL=redis://127.0.1.1:6379\n"
+    );
 }
