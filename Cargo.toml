@@ -1,0 +1,48 @@
+[workspace]
+members = ["crates/*"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["Jun Ryu <junhsss@gmail.com>"]
+description = "Development environment isolation via loopback IP aliasing"
+license = "MIT"
+repository = "https://github.com/silo-rs/silo"
+homepage = "https://github.com/silo-rs/silo"
+
+[workspace.dependencies]
+# silo-core deps
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.9"
+chrono = { version = "0.4", features = ["serde"] }
+eyre = "0.6"
+thiserror = "2"
+colored = "3"
+dirs = "6"
+ipnet = "2"
+glob = "0.3"
+typed-builder = "0.23"
+tokio = { version = "1", features = ["rt", "macros"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
+which = "8"
+tracing = "0.1"
+
+# silo binary deps
+clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
+color-eyre = "0.6"
+comfy-table = { version = "7", features = ["custom_styling"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# silo-bind deps
+libc = "0.2"
+
+# dev deps
+tempfile = "3"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
