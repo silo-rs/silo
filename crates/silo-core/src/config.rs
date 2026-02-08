@@ -220,7 +220,7 @@ ip_range = "{ip_range}"
 [worktree]
 # Base directory for git worktrees (relative to repo root)
 # base_dir = "../"
-# .env* files are copied automatically (override with: copy = [".env"])
+copy = ["**/.env*"]
 
 [run]
 {run_section}

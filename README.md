@@ -81,7 +81,7 @@ teardown = []                    # runs when you `silo remove`
 
 [worktree]
 base_dir = "../"                 # where worktrees are created
-# copy = ["**/.env*"]           # files to copy from main repo (default: all .env* files)
+copy = ["**/.env*"]              # files to copy from main repo into worktrees
 
 [run]
 dev = "npm run dev"              # shortcuts for `silo run dev`
@@ -129,7 +129,7 @@ REDIS_URL=redis://${SILO_IP}:6379
 
 When you run `silo add feature-a`:
 
-1. `.env` is copied from the main repo (via `[worktree] copy`)
+1. `.env` is copied automatically from the main repo
 2. `.env.silo` is rendered and merged into `.env`
 
 The resulting `.env` in the worktree:
