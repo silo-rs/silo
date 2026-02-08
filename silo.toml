@@ -1,0 +1,18 @@
+[instance]
+ip_range = "127.0.1.0/24"
+
+[hooks]
+# setup = ["cargo build"]
+# Commands to run before each `silo exec` / `silo run`
+# enter = []
+# Commands to run before destroying an instance
+# teardown = []
+
+[worktree]
+# Base directory for git worktrees (relative to repo root)
+# base_dir = "../"
+copy = ["**/.env*"]
+
+[run]
+# dev = "cargo run"
+# test = "cargo test"
