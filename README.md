@@ -14,7 +14,7 @@ Zero code changes. No containers. Each instance gets its own loopback IP, and yo
 
 ## Why
 
-You're running your app on `localhost:3000`. You switch to another branch to test something — but port 3000 is taken.
+You're running your app on `localhost:3000`. You switch to another branch to test something -- but port 3000 is taken.
 
 Now multiply that by three AI coding agents working on different features at the same time.
 
@@ -26,7 +26,7 @@ The usual options aren't great:
 | Docker                | Heavy, slow, breaks native toolchains     |
 | Run one at a time     | Kills your workflow                       |
 
-silo takes a different approach: give each instance its own IP on the loopback interface, and transparently intercept `bind()` at the syscall level. Your app calls `bind("0.0.0.0", 3000)` — silo rewrites it to `bind("127.0.1.x", 3000)` before it hits the kernel.
+silo takes a different approach: give each instance its own IP on the loopback interface, and transparently intercept `bind()` at the syscall level. Your app calls `bind("0.0.0.0", 3000)` -- silo rewrites it to `bind("127.0.1.x", 3000)` before it hits the kernel.
 
 No environment variables to set. No config files to edit. No code to change.
 
@@ -50,7 +50,7 @@ silo exec npm run dev        # binds to 127.0.1.1:3000 transparently
 
 # in another terminal
 silo cd feature-b
-silo exec npm run dev        # binds to 127.0.1.2:3000 — no conflict
+silo exec npm run dev        # binds to 127.0.1.2:3000 -- no conflict
 ```
 
 Each instance also gets a hostname via `/etc/hosts`:
@@ -89,7 +89,7 @@ test = "npm test"
 
 ## Environment variables
 
-These variables are automatically set inside an instance (via `silo cd` or `silo exec`):
+These variables are automatically set inside an instance:
 
 | Variable        | Description                        | Example                 |
 | --------------- | ---------------------------------- | ----------------------- |
@@ -127,7 +127,7 @@ DATABASE_URL=postgres://localhost/myapp_feature-a
 REDIS_URL=redis://127.0.1.1:6379
 ```
 
-Works with any file type and in nested directories — ideal for monorepos:
+Works with any file type and in nested directories -- ideal for monorepos:
 
 ```
 packages/api/.env.silo     → packages/api/.env
