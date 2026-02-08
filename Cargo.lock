@@ -1559,7 +1559,7 @@ dependencies = [
 
 [[package]]
 name = "silo"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "clap_complete",
@@ -1579,14 +1579,14 @@ dependencies = [
 
 [[package]]
 name = "silo-bind"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "libc",
 ]
 
 [[package]]
 name = "silo-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "colored",
