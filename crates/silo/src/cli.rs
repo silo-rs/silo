@@ -8,6 +8,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub json: bool,
 
+    /// Skip confirmation prompts
+    #[arg(long, short, global = true)]
+    pub yes: bool,
+
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -52,10 +56,6 @@ pub enum Commands {
         /// Name of the instance (auto-detected from cwd if omitted)
         name: Option<String>,
 
-        /// Skip confirmation prompt
-        #[arg(long, short)]
-        force: bool,
-
         /// Skip teardown hooks
         #[arg(long)]
         no_hooks: bool,
@@ -99,11 +99,7 @@ pub enum Commands {
     Doctor,
 
     /// Remove orphaned instances (missing paths, stale aliases)
-    Prune {
-        /// Apply changes without confirmation
-        #[arg(long, short)]
-        force: bool,
-    },
+    Prune,
 
     /// Run a command defined in silo.toml [run] (omit name to list available commands)
     Run {

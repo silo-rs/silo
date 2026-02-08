@@ -10,7 +10,7 @@ use silo_core::store::Store;
 use crate::ui;
 use silo_core::worktree;
 
-pub async fn run(store: &Store, force: bool) -> eyre::Result<()> {
+pub async fn run(store: &Store, yes: bool) -> eyre::Result<()> {
     let all = store.list_all().await?;
 
     let orphans: Vec<_> = all
@@ -33,7 +33,7 @@ pub async fn run(store: &Store, force: bool) -> eyre::Result<()> {
         );
     }
 
-    if !force {
+    if !yes {
         eprintln!();
         eprint!("  remove these instances? [y/N] ");
         io::stderr().flush()?;

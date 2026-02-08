@@ -41,6 +41,7 @@ fn init_tracing() {
 async fn run() -> eyre::Result<()> {
     let cli = Cli::parse();
     let json = cli.json;
+    let yes = cli.yes;
 
     match cli.command {
         Commands::Init { ip_range } => return commands::init::run(&ip_range),
@@ -57,15 +58,15 @@ async fn run() -> eyre::Result<()> {
             commands::add::run(&store, &name, path.as_deref(), branch.as_deref(), no_hooks, json).await
         }
         Commands::List { all } => commands::list::run(&store, all, json).await,
-        Commands::Remove { name, force, no_hooks } => {
-            commands::remove::run(&store, name.as_deref(), force, no_hooks, json).await
+        Commands::Remove { name, no_hooks } => {
+            commands::remove::run(&store, name.as_deref(), yes, no_hooks, json).await
         }
         Commands::Env { instance } => commands::env::run(&store, instance.as_deref(), json).await,
         Commands::Info { name } => commands::info::run(&store, name.as_deref(), json).await,
         Commands::Dir { name } => commands::dir::run(&store, &name).await,
         Commands::Doctor => commands::doctor::run(&store).await,
         Commands::Activate => commands::activate::run(&store).await,
-        Commands::Prune { force } => commands::prune::run(&store, force).await,
+        Commands::Prune => commands::prune::run(&store, yes).await,
         Commands::Run { instance, name, no_hooks } => commands::run::run(&store, instance.as_deref(), name.as_deref(), no_hooks).await,
         Commands::Exec { instance, quiet, no_hooks, command } => commands::exec::run(&store, instance.as_deref(), &command, quiet, no_hooks).await,
         Commands::Hook { name, instance } => commands::hook::run(&store, &name, instance.as_deref()).await,

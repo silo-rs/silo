@@ -11,13 +11,13 @@ use silo_core::store::Store;
 use crate::ui;
 use silo_core::worktree;
 
-pub async fn run(store: &Store, name: Option<&str>, force: bool, no_hooks: bool, json: bool) -> eyre::Result<()> {
+pub async fn run(store: &Store, name: Option<&str>, yes: bool, no_hooks: bool, json: bool) -> eyre::Result<()> {
     let cwd = std::env::current_dir().context("failed to get current directory")?;
     let cwd = cwd.canonicalize().unwrap_or(cwd);
 
     let instance = super::resolve_instance_interactive(store, name, &cwd).await?;
 
-    if !force && !json {
+    if !yes && !json {
         eprint!(
             "  remove {} ({})? [y/N] ",
             ui::accent(&instance.name).bold(),
