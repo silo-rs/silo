@@ -7,6 +7,10 @@ pub async fn run(store: &Store, instance: Option<&str>, json_output: bool) -> ey
     let cwd = std::env::current_dir().context("failed to get current directory")?;
     let cwd = cwd.canonicalize().unwrap_or(cwd);
 
+    let is_fish = std::env::var("SHELL")
+        .map(|s| s.contains("fish"))
+        .unwrap_or(false);
+
     match super::resolve_instance_interactive(store, instance, &cwd).await {
         Ok(inst) => {
             let host = inst.hostname();
@@ -19,6 +23,16 @@ pub async fn run(store: &Store, instance: Option<&str>, json_output: bool) -> ey
                     "SILO_DIR": inst.path,
                     "SILO_WORKTREE": if inst.is_worktree { "1" } else { "0" },
                 }))?);
+            } else if is_fish {
+                println!(
+                    "set -gx SILO_NAME {}; set -gx SILO_IP {}; set -gx SILO_HOST {}; set -gx SILO_REPO {}; set -gx SILO_DIR {}; set -gx SILO_WORKTREE {}",
+                    shell_escape(&inst.name),
+                    shell_escape(&inst.ip.to_string()),
+                    shell_escape(&host),
+                    shell_escape(&inst.repo.display().to_string()),
+                    shell_escape(&inst.path.display().to_string()),
+                    if inst.is_worktree { "1" } else { "0" },
+                );
             } else {
                 println!(
                     "export SILO_NAME={} SILO_IP={} SILO_HOST={} SILO_REPO={} SILO_DIR={} SILO_WORKTREE={}",
@@ -34,6 +48,8 @@ pub async fn run(store: &Store, instance: Option<&str>, json_output: bool) -> ey
         Err(_) => {
             if json_output {
                 println!("null");
+            } else if is_fish {
+                println!("set -e SILO_NAME SILO_IP SILO_HOST SILO_REPO SILO_DIR SILO_WORKTREE");
             } else {
                 println!("unset SILO_NAME SILO_IP SILO_HOST SILO_REPO SILO_DIR SILO_WORKTREE");
             }
