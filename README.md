@@ -16,7 +16,7 @@ Zero code changes. No containers. Each instance gets its own loopback IP, and yo
 
 Three AI agents building three features at the same time. All need `localhost:3000`. Port taken.
 
-Even without agents, you hit this every time you switch branches and forget to kill the old process.
+Even without agents, you know the drill: `lsof -i :3000`, find the PID, `kill -9`, try again.
 
 The usual options aren't great:
 

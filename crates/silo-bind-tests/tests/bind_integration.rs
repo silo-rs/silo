@@ -204,6 +204,49 @@ fn invalid_silo_ip_passes_through() {
     );
 }
 
+// ── IPv6→IPv4 socket option preservation (macOS only) ──
+
+/// When silo-bind replaces an IPv6 socket with an IPv4 one (macOS only),
+/// socket options like SO_REUSEADDR and fd flags like O_NONBLOCK must survive.
+#[test]
+#[cfg(target_os = "macos")]
+fn bind_v6_preserves_socket_options() {
+    let (stdout, _, success) = run_helper("bind_v6_opts", Some(TEST_IP));
+    assert!(success, "helper failed");
+
+    // Socket should have been replaced to IPv4
+    assert!(
+        stdout.contains("family=v4"),
+        "expected IPv6→IPv4 replacement, got: {stdout}"
+    );
+    assert!(
+        stdout.contains(&format!("bound={TEST_IP}")),
+        "expected bind to {TEST_IP}, got: {stdout}"
+    );
+
+    // SO_REUSEADDR must be preserved (macOS may return a non-zero value other than 1)
+    let reuseaddr_line = stdout
+        .lines()
+        .find(|l| l.starts_with("reuseaddr="))
+        .expect("missing reuseaddr line");
+    let reuseaddr_val: i32 = reuseaddr_line
+        .strip_prefix("reuseaddr=")
+        .unwrap()
+        .trim()
+        .parse()
+        .expect("bad reuseaddr value");
+    assert!(
+        reuseaddr_val != 0,
+        "SO_REUSEADDR was lost during socket replacement (got 0)"
+    );
+
+    // O_NONBLOCK must be preserved
+    assert!(
+        stdout.contains("nonblock=true"),
+        "O_NONBLOCK was lost during socket replacement, got: {stdout}"
+    );
+}
+
 // ── shell-mediated tests (macOS SIP scenario) ──
 
 /// Simulates what `silo run` does: runs bind-helper through `sh -c`.

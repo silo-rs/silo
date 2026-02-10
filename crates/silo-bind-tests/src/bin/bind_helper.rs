@@ -26,6 +26,8 @@ fn main() {
         "getaddrinfo" => cmd_getaddrinfo(),
         "getaddrinfo_v6" => cmd_getaddrinfo_v6(),
         "sendto_any" => cmd_sendto(Ipv4Addr::UNSPECIFIED),
+        #[cfg(target_os = "macos")]
+        "bind_v6_opts" => cmd_bind_v6_opts(),
         "passthrough" => cmd_bind(Ipv4Addr::UNSPECIFIED),
         other => {
             eprintln!("unknown command: {other}");
@@ -176,6 +178,90 @@ fn cmd_getaddrinfo_v6() -> io::Result<()> {
     if !printed {
         eprintln!("no results from getaddrinfo");
         std::process::exit(1);
+    }
+
+    Ok(())
+}
+
+/// Create an IPv6 TCP socket with SO_REUSEADDR and O_NONBLOCK set, then bind
+/// to [::]:0. On macOS with SILO_IP, silo-bind's `replace_with_ipv4` replaces
+/// the socket fd. This test verifies that socket options survive the replacement.
+#[cfg(target_os = "macos")]
+fn cmd_bind_v6_opts() -> io::Result<()> {
+    unsafe {
+        let fd = libc::socket(libc::AF_INET6, libc::SOCK_STREAM, 0);
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        // Set SO_REUSEADDR
+        let optval: libc::c_int = 1;
+        libc::setsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_REUSEADDR,
+            &optval as *const _ as *const libc::c_void,
+            std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+        );
+
+        // Set O_NONBLOCK
+        let flags = libc::fcntl(fd, libc::F_GETFL);
+        libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
+
+        // Bind to [::]:0 — triggers replace_with_ipv4 when SILO_IP is set
+        let mut addr6: libc::sockaddr_in6 = std::mem::zeroed();
+        addr6.sin6_len = std::mem::size_of::<libc::sockaddr_in6>() as u8;
+        addr6.sin6_family = libc::AF_INET6 as u8;
+        addr6.sin6_port = 0;
+
+        let ret = libc::bind(
+            fd,
+            &addr6 as *const _ as *const libc::sockaddr,
+            std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t,
+        );
+        if ret != 0 {
+            let err = io::Error::last_os_error();
+            libc::close(fd);
+            return Err(err);
+        }
+
+        // Check what address we're bound to
+        let mut bound_addr: libc::sockaddr_storage = std::mem::zeroed();
+        let mut bound_len = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+        libc::getsockname(
+            fd,
+            &mut bound_addr as *mut _ as *mut libc::sockaddr,
+            &mut bound_len,
+        );
+
+        let family = bound_addr.ss_family;
+        if family == libc::AF_INET as u8 {
+            let sin = &*(&bound_addr as *const _ as *const libc::sockaddr_in);
+            let ip = Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr));
+            println!("family=v4");
+            println!("bound={ip}");
+        } else {
+            println!("family=v6");
+        }
+
+        // Check SO_REUSEADDR is preserved
+        let mut reuseaddr: libc::c_int = 0;
+        let mut optlen = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+        libc::getsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_REUSEADDR,
+            &mut reuseaddr as *mut _ as *mut libc::c_void,
+            &mut optlen,
+        );
+        println!("reuseaddr={reuseaddr}");
+
+        // Check O_NONBLOCK is preserved
+        let final_flags = libc::fcntl(fd, libc::F_GETFL);
+        let nonblock = (final_flags & libc::O_NONBLOCK) != 0;
+        println!("nonblock={nonblock}");
+
+        libc::close(fd);
     }
 
     Ok(())

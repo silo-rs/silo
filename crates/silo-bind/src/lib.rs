@@ -758,12 +758,21 @@ mod platform {
             &mut optlen,
         );
 
+        // Save file descriptor flags (O_NONBLOCK, O_CLOEXEC, etc.)
+        let fd_flags = libc::fcntl(fd, libc::F_GETFL);
+
         let new_fd = libc::socket(AF_INET, sock_type, 0);
         if new_fd < 0 {
             return Err(-1);
         }
 
-        for opt in [libc::SO_REUSEADDR, libc::SO_REUSEPORT] {
+        // Copy boolean socket options
+        for opt in [
+            libc::SO_REUSEADDR,
+            libc::SO_REUSEPORT,
+            libc::SO_KEEPALIVE,
+            libc::SO_NOSIGPIPE,
+        ] {
             let mut optval: c_int = 0;
             optlen = std::mem::size_of::<c_int>() as socklen_t;
             if libc::getsockopt(
@@ -785,8 +794,35 @@ mod platform {
             }
         }
 
+        // Copy buffer sizes
+        for opt in [libc::SO_RCVBUF, libc::SO_SNDBUF] {
+            let mut optval: c_int = 0;
+            optlen = std::mem::size_of::<c_int>() as socklen_t;
+            if libc::getsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                opt,
+                &mut optval as *mut _ as *mut libc::c_void,
+                &mut optlen,
+            ) == 0
+            {
+                libc::setsockopt(
+                    new_fd,
+                    libc::SOL_SOCKET,
+                    opt,
+                    &optval as *const _ as *const libc::c_void,
+                    std::mem::size_of::<c_int>() as socklen_t,
+                );
+            }
+        }
+
         libc::dup2(new_fd, fd);
         libc::close(new_fd);
+
+        // Restore file descriptor flags (O_NONBLOCK, etc.)
+        if fd_flags >= 0 {
+            libc::fcntl(fd, libc::F_SETFL, fd_flags);
+        }
 
         Ok(fd)
     }
