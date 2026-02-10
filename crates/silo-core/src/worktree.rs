@@ -54,7 +54,10 @@ pub fn create_worktree(
         .context("failed to run git worktree add")?;
 
     if !status.success() {
-        debug!(branch = branch_name, "branch already exists, retrying without -b");
+        debug!(
+            branch = branch_name,
+            "branch already exists, retrying without -b"
+        );
         let status = Command::new("git")
             .args(["worktree", "add"])
             .arg(&worktree_path)
@@ -71,9 +74,7 @@ pub fn create_worktree(
         }
     }
 
-    let worktree_path = worktree_path
-        .canonicalize()
-        .unwrap_or(worktree_path);
+    let worktree_path = worktree_path.canonicalize().unwrap_or(worktree_path);
 
     info!(path = %worktree_path.display(), "worktree created");
     Ok(worktree_path)

@@ -8,7 +8,7 @@ use std::sync::OnceLock;
 #[cfg(target_os = "macos")]
 use std::ffi::{CStr, CString};
 
-use libc::{sockaddr, sockaddr_in, socklen_t, AF_INET};
+use libc::{AF_INET, sockaddr, sockaddr_in, socklen_t};
 
 static SILO_IP: OnceLock<Option<u32>> = OnceLock::new();
 
@@ -80,11 +80,10 @@ unsafe fn rewrite_bind_addr(addr: *const sockaddr) {
     if family == AF_INET {
         let sin = addr as *mut sockaddr_in;
         let s_addr = (*sin).sin_addr.s_addr;
-        if s_addr == 0 || s_addr == u32::from(Ipv4Addr::LOCALHOST).to_be() {
-            if let Some(ip_bytes) = get_silo_ip() {
+        if (s_addr == 0 || s_addr == u32::from(Ipv4Addr::LOCALHOST).to_be())
+            && let Some(ip_bytes) = get_silo_ip() {
                 (*sin).sin_addr.s_addr = ip_bytes;
             }
-        }
     }
 
     #[cfg(target_os = "linux")]
@@ -92,13 +91,13 @@ unsafe fn rewrite_bind_addr(addr: *const sockaddr) {
         let sin6 = addr as *mut libc::sockaddr_in6;
         let v6_addr = (*sin6).sin6_addr.s6_addr;
         let is_any = v6_addr == [0u8; 16];
-        let is_loopback = v6_addr == [0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1];
+        let is_loopback = v6_addr == [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
         if is_any || is_loopback {
             if let Some(ip_bytes) = get_silo_ip() {
                 let octets = ip_bytes.to_be_bytes();
                 (*sin6).sin6_addr.s6_addr = [
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, octets[0], octets[1],
-                    octets[2], octets[3],
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, octets[0], octets[1], octets[2],
+                    octets[3],
                 ];
             }
         }
@@ -114,11 +113,10 @@ unsafe fn rewrite_connect_addr(addr: *const sockaddr) {
 
     if family == AF_INET {
         let sin = addr as *mut sockaddr_in;
-        if (*sin).sin_addr.s_addr == u32::from(Ipv4Addr::LOCALHOST).to_be() {
-            if let Some(ip_bytes) = get_silo_ip() {
+        if (*sin).sin_addr.s_addr == u32::from(Ipv4Addr::LOCALHOST).to_be()
+            && let Some(ip_bytes) = get_silo_ip() {
                 (*sin).sin_addr.s_addr = ip_bytes;
             }
-        }
     }
 
     #[cfg(target_os = "linux")]
@@ -129,8 +127,8 @@ unsafe fn rewrite_connect_addr(addr: *const sockaddr) {
             if let Some(ip_bytes) = get_silo_ip() {
                 let octets = ip_bytes.to_be_bytes();
                 (*sin6).sin6_addr.s6_addr = [
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, octets[0], octets[1],
-                    octets[2], octets[3],
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, octets[0], octets[1], octets[2],
+                    octets[3],
                 ];
             }
         }
@@ -147,11 +145,10 @@ unsafe fn rewrite_sendto_addr(addr: *const sockaddr) {
     if family == AF_INET {
         let sin = addr as *mut sockaddr_in;
         let s_addr = (*sin).sin_addr.s_addr;
-        if s_addr == 0 || s_addr == u32::from(Ipv4Addr::LOCALHOST).to_be() {
-            if let Some(ip_bytes) = get_silo_ip() {
+        if (s_addr == 0 || s_addr == u32::from(Ipv4Addr::LOCALHOST).to_be())
+            && let Some(ip_bytes) = get_silo_ip() {
                 (*sin).sin_addr.s_addr = ip_bytes;
             }
-        }
     }
 
     #[cfg(target_os = "linux")]
@@ -159,13 +156,13 @@ unsafe fn rewrite_sendto_addr(addr: *const sockaddr) {
         let sin6 = addr as *mut libc::sockaddr_in6;
         let v6_addr = (*sin6).sin6_addr.s6_addr;
         let is_any = v6_addr == [0u8; 16];
-        let is_loopback = v6_addr == [0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1];
+        let is_loopback = v6_addr == [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
         if is_any || is_loopback {
             if let Some(ip_bytes) = get_silo_ip() {
                 let octets = ip_bytes.to_be_bytes();
                 (*sin6).sin6_addr.s6_addr = [
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, octets[0], octets[1],
-                    octets[2], octets[3],
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, octets[0], octets[1], octets[2],
+                    octets[3],
                 ];
             }
         }
@@ -218,11 +215,10 @@ fn find_non_sip_in_path(name: &str) -> Option<CString> {
                 continue;
             }
             let candidate = format!("{}/{}", dir, try_name);
-            if let Ok(c) = CString::new(candidate) {
-                if unsafe { libc::access(c.as_ptr(), libc::X_OK) } == 0 {
+            if let Ok(c) = CString::new(candidate)
+                && unsafe { libc::access(c.as_ptr(), libc::X_OK) } == 0 {
                     return Some(c);
                 }
-            }
         }
     }
     None
@@ -291,7 +287,10 @@ unsafe fn resolve_sip_exec(
     let is_env = interpreter.ends_with("/env");
     let resolved = if is_env {
         let cmd = arg.as_deref()?;
-        let stripped = cmd.strip_prefix("-S").map(|s| s.trim_start()).unwrap_or(cmd);
+        let stripped = cmd
+            .strip_prefix("-S")
+            .map(|s| s.trim_start())
+            .unwrap_or(cmd);
         let actual = stripped.split_whitespace().next()?;
         find_non_sip_in_path(actual)?
     } else {
@@ -303,14 +302,12 @@ unsafe fn resolve_sip_exec(
 
     ptrs.push(resolved.as_ptr());
 
-    if !is_env {
-        if let Some(ref a) = arg {
-            if let Ok(c) = CString::new(a.as_bytes()) {
+    if !is_env
+        && let Some(ref a) = arg
+            && let Ok(c) = CString::new(a.as_bytes()) {
                 ptrs.push(c.as_ptr());
                 owned.push(c);
             }
-        }
-    }
 
     ptrs.push(path);
 
@@ -383,13 +380,19 @@ mod platform {
                     u16::from_be((*(addr as *const sockaddr_in)).sin_port)
                 } else if family == libc::AF_INET6 as c_int {
                     u16::from_be((*(addr as *const libc::sockaddr_in6)).sin6_port)
-                } else { 0 };
+                } else {
+                    0
+                };
                 let silo_ip = get_silo_ip()
                     .map(|ip| Ipv4Addr::from(u32::from_be(ip)).to_string())
                     .unwrap_or_default();
                 eprintln!(
                     "[silo-bind] pid={} bind fd={} family={} port={} SILO_IP={}",
-                    std::process::id(), fd, family, port, silo_ip
+                    std::process::id(),
+                    fd,
+                    family,
+                    port,
+                    silo_ip
                 );
             }
 
@@ -397,17 +400,21 @@ mod platform {
                 let sin6 = addr as *const libc::sockaddr_in6;
                 let v6_addr = (*sin6).sin6_addr.s6_addr;
                 let is_any = v6_addr == [0u8; 16];
-                let is_loopback = v6_addr == [0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1];
-                if is_any || is_loopback {
-                    if let Some(ip) = get_silo_ip() {
+                let is_loopback = v6_addr == [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+                if (is_any || is_loopback)
+                    && let Some(ip) = get_silo_ip() {
                         let ret = rebind_as_ipv4(fd, (*sin6).sin6_port, ip);
                         if debug_enabled() {
                             let kind = if is_any { "::" } else { "::1" };
-                            eprintln!("[silo-bind] pid={} bind {} → rebind_as_ipv4 → {}", std::process::id(), kind, ret);
+                            eprintln!(
+                                "[silo-bind] pid={} bind {} → rebind_as_ipv4 → {}",
+                                std::process::id(),
+                                kind,
+                                ret
+                            );
                         }
                         return ret;
                     }
-                }
             }
         }
 
@@ -427,11 +434,10 @@ mod platform {
             if family == libc::AF_INET6 as c_int {
                 let sin6 = addr as *const libc::sockaddr_in6;
                 let loopback_v6: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
-                if (*sin6).sin6_addr.s6_addr == loopback_v6 {
-                    if let Some(ip) = get_silo_ip() {
+                if (*sin6).sin6_addr.s6_addr == loopback_v6
+                    && let Some(ip) = get_silo_ip() {
                         return reconnect_as_ipv4(fd, (*sin6).sin6_port, ip);
                     }
-                }
             }
         }
 
@@ -551,14 +557,7 @@ mod platform {
                 );
             }
             if new_argv.is_empty() {
-                return real_posix_spawn(
-                    pid,
-                    resolved.as_ptr(),
-                    file_actions,
-                    attrp,
-                    argv,
-                    envp,
-                );
+                return real_posix_spawn(pid, resolved.as_ptr(), file_actions, attrp, argv, envp);
             }
             return real_posix_spawn(
                 pid,
@@ -597,14 +596,7 @@ mod platform {
                 );
             }
             if new_argv.is_empty() {
-                return real_posix_spawn(
-                    pid,
-                    resolved.as_ptr(),
-                    file_actions,
-                    attrp,
-                    argv,
-                    envp,
-                );
+                return real_posix_spawn(pid, resolved.as_ptr(), file_actions, attrp, argv, envp);
             }
             return real_posix_spawn(
                 pid,
@@ -794,11 +786,7 @@ mod platform {
     use super::*;
 
     #[unsafe(no_mangle)]
-    pub unsafe extern "C" fn bind(
-        fd: c_int,
-        addr: *const sockaddr,
-        len: socklen_t,
-    ) -> c_int {
+    pub unsafe extern "C" fn bind(fd: c_int, addr: *const sockaddr, len: socklen_t) -> c_int {
         let real = libc::dlsym(libc::RTLD_NEXT, b"bind\0".as_ptr() as *const _);
         let real_fn: unsafe extern "C" fn(c_int, *const sockaddr, socklen_t) -> c_int =
             std::mem::transmute(real);
@@ -808,11 +796,7 @@ mod platform {
     }
 
     #[unsafe(no_mangle)]
-    pub unsafe extern "C" fn connect(
-        fd: c_int,
-        addr: *const sockaddr,
-        len: socklen_t,
-    ) -> c_int {
+    pub unsafe extern "C" fn connect(fd: c_int, addr: *const sockaddr, len: socklen_t) -> c_int {
         let real = libc::dlsym(libc::RTLD_NEXT, b"connect\0".as_ptr() as *const _);
         let real_fn: unsafe extern "C" fn(c_int, *const sockaddr, socklen_t) -> c_int =
             std::mem::transmute(real);

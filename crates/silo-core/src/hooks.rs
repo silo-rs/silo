@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use eyre::Context;
 use colored::Colorize;
+use eyre::Context;
 use tracing::{debug, instrument, warn};
 
 use crate::error::SiloError;

@@ -29,9 +29,10 @@ pub fn add_entry(ip: Ipv4Addr, hostname: &str) -> eyre::Result<()> {
 
     let new_line = format!("{}\t{}", ip, hostname);
 
-    if let Some(pos) = entries.iter().position(|e| {
-        e.split('\t').nth(1).map(|h| h == hostname).unwrap_or(false)
-    }) {
+    if let Some(pos) = entries
+        .iter()
+        .position(|e| e.split('\t').nth(1).map(|h| h == hostname).unwrap_or(false))
+    {
         entries[pos] = new_line;
     } else {
         entries.push(new_line);
@@ -52,9 +53,7 @@ pub fn remove_entry(hostname: &str) -> eyre::Result<()> {
     let (before, mut entries, after) = parse_block(&content);
 
     let len_before = entries.len();
-    entries.retain(|e| {
-        e.split('\t').nth(1).map(|h| h != hostname).unwrap_or(true)
-    });
+    entries.retain(|e| e.split('\t').nth(1).map(|h| h != hostname).unwrap_or(true));
 
     if entries.len() == len_before {
         debug!(%hostname, "no hosts entry found, skipping");
@@ -269,15 +268,16 @@ mod tests {
         let hostname = "api.myapp.silo";
 
         // add_entry logic: should not find a match
-        let pos = entries.iter().position(|e| {
-            e.split('\t').nth(1).map(|h| h == hostname).unwrap_or(false)
-        });
+        let pos = entries
+            .iter()
+            .position(|e| e.split('\t').nth(1).map(|h| h == hostname).unwrap_or(false));
         assert!(pos.is_none());
 
         // remove_entry logic: should not remove old-api
-        let filtered: Vec<_> = entries.iter().filter(|e| {
-            e.split('\t').nth(1).map(|h| h != hostname).unwrap_or(true)
-        }).collect();
+        let filtered: Vec<_> = entries
+            .iter()
+            .filter(|e| e.split('\t').nth(1).map(|h| h != hostname).unwrap_or(true))
+            .collect();
         assert_eq!(filtered.len(), 2);
     }
 

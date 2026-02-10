@@ -4,19 +4,16 @@ use std::path::PathBuf;
 
 use colored::Colorize;
 
+use crate::ui;
 use silo_core::hosts;
 use silo_core::ip;
 use silo_core::store::Store;
-use crate::ui;
 use silo_core::worktree;
 
 pub async fn run(store: &Store, yes: bool) -> eyre::Result<()> {
     let all = store.list_all().await?;
 
-    let orphans: Vec<_> = all
-        .into_iter()
-        .filter(|inst| !inst.path.exists())
-        .collect();
+    let orphans: Vec<_> = all.into_iter().filter(|inst| !inst.path.exists()).collect();
 
     if orphans.is_empty() {
         ui::info("no orphaned instances found");
@@ -70,11 +67,10 @@ pub async fn run(store: &Store, yes: bool) -> eyre::Result<()> {
             ui::warn(format!("failed to remove hosts entry: {e}"));
         }
 
-        if inst.is_worktree {
-            if let Err(e) = worktree::delete_branch(&inst.repo, &inst.name) {
+        if inst.is_worktree
+            && let Err(e) = worktree::delete_branch(&inst.repo, &inst.name) {
                 ui::warn(format!("failed to delete branch {}: {e}", inst.name));
             }
-        }
     }
 
     for inst in &orphans {

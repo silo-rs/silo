@@ -8,7 +8,7 @@ use clap::Parser;
 use cli::{Cli, Commands};
 use colored::Colorize;
 use silo_core::store;
-use tracing_subscriber::{fmt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt};
 
 fn main() {
     init_tracing();
@@ -54,8 +54,21 @@ async fn run() -> eyre::Result<()> {
     let store = store::Store::open_default().await?;
 
     match cli.command {
-        Commands::Add { name, path, branch, no_hooks } => {
-            commands::add::run(&store, &name, path.as_deref(), branch.as_deref(), no_hooks, json).await
+        Commands::Add {
+            name,
+            path,
+            branch,
+            no_hooks,
+        } => {
+            commands::add::run(
+                &store,
+                &name,
+                path.as_deref(),
+                branch.as_deref(),
+                no_hooks,
+                json,
+            )
+            .await
         }
         Commands::List { all } => commands::list::run(&store, all, json).await,
         Commands::Remove { name, no_hooks } => {
@@ -67,9 +80,20 @@ async fn run() -> eyre::Result<()> {
         Commands::Doctor => commands::doctor::run(&store).await,
         Commands::Activate => commands::activate::run(&store).await,
         Commands::Prune => commands::prune::run(&store, yes).await,
-        Commands::Run { instance, name, no_hooks } => commands::run::run(&store, instance.as_deref(), name.as_deref(), no_hooks).await,
-        Commands::Exec { instance, quiet, no_hooks, command } => commands::exec::run(&store, instance.as_deref(), &command, quiet, no_hooks).await,
-        Commands::Hook { name, instance } => commands::hook::run(&store, &name, instance.as_deref()).await,
+        Commands::Run {
+            instance,
+            name,
+            no_hooks,
+        } => commands::run::run(&store, instance.as_deref(), name.as_deref(), no_hooks).await,
+        Commands::Exec {
+            instance,
+            quiet,
+            no_hooks,
+            command,
+        } => commands::exec::run(&store, instance.as_deref(), &command, quiet, no_hooks).await,
+        Commands::Hook { name, instance } => {
+            commands::hook::run(&store, &name, instance.as_deref()).await
+        }
         Commands::Init { .. }
         | Commands::ShellInit
         | Commands::Completions { .. }

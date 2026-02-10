@@ -15,14 +15,17 @@ pub async fn run(store: &Store, instance: Option<&str>, json_output: bool) -> ey
         Ok(inst) => {
             let host = inst.hostname();
             if json_output {
-                println!("{}", serde_json::to_string(&json!({
-                    "SILO_NAME": inst.name,
-                    "SILO_IP": inst.ip.to_string(),
-                    "SILO_HOST": host,
-                    "SILO_REPO": inst.repo,
-                    "SILO_DIR": inst.path,
-                    "SILO_WORKTREE": if inst.is_worktree { "1" } else { "0" },
-                }))?);
+                println!(
+                    "{}",
+                    serde_json::to_string(&json!({
+                        "SILO_NAME": inst.name,
+                        "SILO_IP": inst.ip.to_string(),
+                        "SILO_HOST": host,
+                        "SILO_REPO": inst.repo,
+                        "SILO_DIR": inst.path,
+                        "SILO_WORKTREE": if inst.is_worktree { "1" } else { "0" },
+                    }))?
+                );
             } else if is_fish {
                 println!(
                     "set -gx SILO_NAME {}; set -gx SILO_IP {}; set -gx SILO_HOST {}; set -gx SILO_REPO {}; set -gx SILO_DIR {}; set -gx SILO_WORKTREE {}",

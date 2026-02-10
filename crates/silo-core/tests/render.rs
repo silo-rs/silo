@@ -38,7 +38,11 @@ fn apply_creates_env_from_silo() {
 #[test]
 fn apply_appends_new_keys_to_existing_env() {
     let dir = tempfile::tempdir().unwrap();
-    fs::write(dir.path().join(".env"), "SECRET_KEY=abc123\nSTRIPE_KEY=sk_test_xxx\n").unwrap();
+    fs::write(
+        dir.path().join(".env"),
+        "SECRET_KEY=abc123\nSTRIPE_KEY=sk_test_xxx\n",
+    )
+    .unwrap();
     fs::write(
         dir.path().join(".env.silo"),
         "DATABASE_URL=postgres://localhost/myapp_${SILO_NAME}",
@@ -160,12 +164,7 @@ fn copy_files_basic() {
 
     fs::write(repo.path().join(".env"), "SECRET=abc123").unwrap();
 
-    let count = render::copy_files(
-        repo.path(),
-        worktree.path(),
-        &[".env".into()],
-    )
-    .unwrap();
+    let count = render::copy_files(repo.path(), worktree.path(), &[".env".into()]).unwrap();
 
     assert_eq!(count, 1);
     assert_eq!(
@@ -182,12 +181,7 @@ fn copy_files_glob_pattern() {
     fs::write(repo.path().join(".env"), "A=1").unwrap();
     fs::write(repo.path().join(".env.local"), "B=2").unwrap();
 
-    let count = render::copy_files(
-        repo.path(),
-        worktree.path(),
-        &[".env*".into()],
-    )
-    .unwrap();
+    let count = render::copy_files(repo.path(), worktree.path(), &[".env*".into()]).unwrap();
 
     assert_eq!(count, 2);
     assert!(worktree.path().join(".env").exists());
@@ -202,12 +196,7 @@ fn copy_files_skips_existing() {
     fs::write(repo.path().join(".env"), "NEW").unwrap();
     fs::write(worktree.path().join(".env"), "EXISTING").unwrap();
 
-    let count = render::copy_files(
-        repo.path(),
-        worktree.path(),
-        &[".env".into()],
-    )
-    .unwrap();
+    let count = render::copy_files(repo.path(), worktree.path(), &[".env".into()]).unwrap();
 
     assert_eq!(count, 0);
     assert_eq!(
@@ -234,12 +223,8 @@ fn copy_files_nested() {
     fs::create_dir_all(&nested).unwrap();
     fs::write(nested.join("secrets.yml"), "key: value").unwrap();
 
-    let count = render::copy_files(
-        repo.path(),
-        worktree.path(),
-        &["config/secrets.yml".into()],
-    )
-    .unwrap();
+    let count =
+        render::copy_files(repo.path(), worktree.path(), &["config/secrets.yml".into()]).unwrap();
 
     assert_eq!(count, 1);
     assert_eq!(

@@ -1,12 +1,17 @@
-use eyre::Context;
 use colored::Colorize;
+use eyre::Context;
 
+use crate::ui;
 use silo_core::config;
 use silo_core::hooks;
 use silo_core::store::Store;
-use crate::ui;
 
-pub async fn run(store: &Store, instance: Option<&str>, name: Option<&str>, no_hooks: bool) -> eyre::Result<()> {
+pub async fn run(
+    store: &Store,
+    instance: Option<&str>,
+    name: Option<&str>,
+    no_hooks: bool,
+) -> eyre::Result<()> {
     let (cfg, _) = config::load_config()?;
 
     let name = match name {
@@ -25,7 +30,10 @@ pub async fn run(store: &Store, instance: Option<&str>, name: Option<&str>, no_h
                 eprintln!("    {}  {}", ui::accent(name).bold(), cmd.dimmed());
             }
             eprintln!();
-            ui::hint(format!("run {} to execute", ui::accent("silo run <name>").bold()));
+            ui::hint(format!(
+                "run {} to execute",
+                ui::accent("silo run <name>").bold()
+            ));
             return Ok(());
         }
     };

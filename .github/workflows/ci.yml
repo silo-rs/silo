@@ -35,6 +35,40 @@ jobs:
       - run: cargo build -p silo-bind
       - run: cargo test --workspace
 
+  test-linux-distros:
+    name: Test (${{ matrix.distro }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: fedora
+            image: fedora:latest
+            setup: dnf install -y gcc git curl iproute
+          - distro: archlinux
+            image: archlinux:latest
+            setup: pacman -Sy --noconfirm gcc git curl iproute2
+    container:
+      image: ${{ matrix.image }}
+    steps:
+      - name: Install system deps
+        run: ${{ matrix.setup }}
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+      - name: Build and test
+        run: |
+          . "$HOME/.cargo/env"
+          cargo build -p silo-bind
+          cargo test --workspace
+      - name: Verify ip command detection
+        run: |
+          . "$HOME/.cargo/env"
+          ip_path=$(which ip)
+          echo "ip command at: $ip_path"
+          # Verify our detection logic finds the same path
+          cargo test -p silo-core -- ip::tests::admin_group --nocapture
+
   shell-syntax:
     name: Shell syntax
     runs-on: ubuntu-latest

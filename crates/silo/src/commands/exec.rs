@@ -3,15 +3,21 @@ use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
 
-use eyre::Context;
 use colored::Colorize;
+use eyre::Context;
 
+use crate::ui;
 use silo_core::config;
 use silo_core::hooks;
 use silo_core::store::Store;
-use crate::ui;
 
-pub async fn run(store: &Store, instance: Option<&str>, command: &[String], quiet: bool, no_hooks: bool) -> eyre::Result<()> {
+pub async fn run(
+    store: &Store,
+    instance: Option<&str>,
+    command: &[String],
+    quiet: bool,
+    no_hooks: bool,
+) -> eyre::Result<()> {
     let cwd = std::env::current_dir().context("failed to get current directory")?;
     let cwd = cwd.canonicalize().unwrap_or(cwd);
 
@@ -35,9 +41,9 @@ pub async fn run(store: &Store, instance: Option<&str>, command: &[String], quie
         );
     }
 
-    if !no_hooks {
-        if let Some(cfg) = config::load_config_from(&instance.repo)? {
-            if !cfg.hooks.enter.is_empty() {
+    if !no_hooks
+        && let Some(cfg) = config::load_config_from(&instance.repo)?
+            && !cfg.hooks.enter.is_empty() {
                 hooks::run_hooks(
                     &cfg.hooks.enter,
                     &instance.path,
@@ -45,8 +51,6 @@ pub async fn run(store: &Store, instance: Option<&str>, command: &[String], quie
                     "enter",
                 )?;
             }
-        }
-    }
 
     exec_with_interception(&command[0], &command[1..], &instance.env_vars())
 }

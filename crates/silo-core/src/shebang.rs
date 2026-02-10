@@ -28,7 +28,11 @@ pub fn resolve_program(program: &str, args: &[String]) -> (String, Vec<String>) 
     }
 }
 
-fn resolve_recursive(program: &str, args: &[String], depth: usize) -> Option<(String, Vec<String>)> {
+fn resolve_recursive(
+    program: &str,
+    args: &[String],
+    depth: usize,
+) -> Option<(String, Vec<String>)> {
     if depth >= MAX_RECURSION_DEPTH {
         debug!("shebang resolution hit max recursion depth");
         return None;
@@ -61,15 +65,15 @@ fn resolve_recursive(program: &str, args: &[String], depth: usize) -> Option<(St
 
     let resolved_interpreter = resolve_sip_interpreter(&interpreter, shebang_arg.as_deref())?;
 
-    if interpreter_path.file_name().map(|n| n == "env").unwrap_or(false) {
+    if interpreter_path
+        .file_name()
+        .map(|n| n == "env")
+        .unwrap_or(false)
+    {
         if shebang_arg.is_some() {
             let mut new_args = vec![program_path.to_string_lossy().into_owned()];
             new_args.extend_from_slice(args);
-            if let Some(result) = resolve_recursive(
-                &resolved_interpreter,
-                &new_args,
-                depth + 1,
-            ) {
+            if let Some(result) = resolve_recursive(&resolved_interpreter, &new_args, depth + 1) {
                 return Some(result);
             }
             let mut final_args = vec![program_path.to_string_lossy().into_owned()];
@@ -99,7 +103,10 @@ fn resolve_sip_interpreter(interpreter: &str, shebang_arg: Option<&str>) -> Opti
 
     if name == "env" {
         let raw = shebang_arg?;
-        let stripped = raw.strip_prefix("-S").map(|s| s.trim_start()).unwrap_or(raw);
+        let stripped = raw
+            .strip_prefix("-S")
+            .map(|s| s.trim_start())
+            .unwrap_or(raw);
         let cmd = stripped.split_whitespace().next()?;
         match which::which(cmd) {
             Ok(p) => {
@@ -177,7 +184,10 @@ fn parse_shebang(line: &str) -> Option<(String, Option<String>)> {
 
     let mut parts = line.splitn(2, |c: char| c.is_ascii_whitespace());
     let interpreter = parts.next()?.to_string();
-    let arg = parts.next().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let arg = parts
+        .next()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
 
     Some((interpreter, arg))
 }

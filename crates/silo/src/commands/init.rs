@@ -1,11 +1,11 @@
 use std::process::Command;
 
-use eyre::Context;
 use colored::Colorize;
+use eyre::Context;
 
+use crate::ui;
 use silo_core::config;
 use silo_core::error::SiloError;
-use crate::ui;
 
 pub fn run(ip_range: &str) -> eyre::Result<()> {
     let cwd = std::env::current_dir().context("failed to get current directory")?;
@@ -48,7 +48,10 @@ pub fn run(ip_range: &str) -> eyre::Result<()> {
                 config::ProjectType::Rust => "rust",
                 config::ProjectType::Unknown => unreachable!(),
             };
-            ui::info(format!("detected {} project — config tailored", ui::accent(label)));
+            ui::info(format!(
+                "detected {} project — config tailored",
+                ui::accent(label)
+            ));
         }
     }
     eprintln!("  config  {}", config_path.display().to_string().dimmed());
@@ -62,11 +65,9 @@ pub fn run(ip_range: &str) -> eyre::Result<()> {
 }
 
 fn validate_ip_range(range: &str) -> eyre::Result<()> {
-    let network: ipnet::Ipv4Net = range
-        .parse()
-        .map_err(|e: ipnet::AddrParseError| {
-            SiloError::InvalidCidrRange(range.to_string(), e.to_string())
-        })?;
+    let network: ipnet::Ipv4Net = range.parse().map_err(|e: ipnet::AddrParseError| {
+        SiloError::InvalidCidrRange(range.to_string(), e.to_string())
+    })?;
 
     if network.network().octets()[0] != 127 {
         return Err(SiloError::IpNotLoopback(network.network()).into());

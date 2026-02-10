@@ -1,7 +1,10 @@
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "silo", about = "Development environment isolation via loopback IP aliasing")]
+#[command(
+    name = "silo",
+    about = "Development environment isolation via loopback IP aliasing"
+)]
 #[command(version, propagate_version = true)]
 pub struct Cli {
     /// Output results as JSON (machine-readable)

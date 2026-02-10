@@ -1,9 +1,9 @@
 use colored::Colorize;
 
+use crate::ui;
 use silo_core::hosts;
 use silo_core::ip;
 use silo_core::store::Store;
-use crate::ui;
 
 pub async fn run(store: &Store) -> eyre::Result<()> {
     let instances = store.list_all().await?;
@@ -31,17 +31,13 @@ pub async fn run(store: &Store) -> eyre::Result<()> {
         .iter()
         .map(|inst| (inst.ip, inst.hostname()))
         .collect();
-    if !host_entries.is_empty() {
-        if let Err(e) = hosts::sync_entries(&host_entries) {
+    if !host_entries.is_empty()
+        && let Err(e) = hosts::sync_entries(&host_entries) {
             ui::warn(format!("failed to sync hosts entries: {e}"));
         }
-    }
 
     if activated == 0 {
-        ui::success(format!(
-            "all {} instance(s) already active",
-            already_active
-        ));
+        ui::success(format!("all {} instance(s) already active", already_active));
     } else {
         eprintln!();
         ui::success(format!(

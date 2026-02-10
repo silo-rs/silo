@@ -2,11 +2,11 @@ use std::process::Command;
 
 use colored::Colorize;
 
+use crate::ui;
 use silo_core::config;
 use silo_core::hosts;
 use silo_core::ip;
 use silo_core::store::Store;
-use crate::ui;
 
 pub async fn run(store: &Store) -> eyre::Result<()> {
     let mut warnings = 0;
@@ -70,7 +70,10 @@ pub async fn run(store: &Store) -> eyre::Result<()> {
             );
             warnings += 1;
         } else if registered_count > 0 {
-            ui::check_ok("aliases", format!("all {} IP aliases active", registered_count));
+            ui::check_ok(
+                "aliases",
+                format!("all {} IP aliases active", registered_count),
+            );
         }
 
         for inst in &instances {
@@ -90,28 +93,29 @@ pub async fn run(store: &Store) -> eyre::Result<()> {
                     format!("{} @ {}", inst.ip, inst.path.display()),
                 );
             } else {
-                ui::check_warn(
-                    &format!("instance:{}", inst.name),
-                    &issues.join(", "),
-                );
+                ui::check_warn(&format!("instance:{}", inst.name), issues.join(", "));
                 warnings += 1;
             }
         }
     }
 
     match hosts::has_managed_block() {
-        Ok(true) => {
-            match hosts::current_entries() {
-                Ok(entries) => ui::check_ok("hosts", format!("{} entry(ies) in /etc/hosts", entries.len())),
-                Err(e) => {
-                    ui::check_warn("hosts", format!("failed to parse: {e}"));
-                    warnings += 1;
-                }
+        Ok(true) => match hosts::current_entries() {
+            Ok(entries) => ui::check_ok(
+                "hosts",
+                format!("{} entry(ies) in /etc/hosts", entries.len()),
+            ),
+            Err(e) => {
+                ui::check_warn("hosts", format!("failed to parse: {e}"));
+                warnings += 1;
             }
-        }
+        },
         Ok(false) => {
             if has_instances {
-                ui::check_warn("hosts", "no silo block in /etc/hosts (run `silo activate` to sync)");
+                ui::check_warn(
+                    "hosts",
+                    "no silo block in /etc/hosts (run `silo activate` to sync)",
+                );
                 warnings += 1;
             } else {
                 ui::check_info("hosts", "no silo block in /etc/hosts");
@@ -130,7 +134,10 @@ pub async fn run(store: &Store) -> eyre::Result<()> {
             if cfg.instance.ip_range.parse::<ipnet::Ipv4Net>().is_ok() {
                 ui::check_ok("ip_range", &cfg.instance.ip_range);
             } else {
-                ui::check_error("ip_range", format!("invalid CIDR: {}", cfg.instance.ip_range));
+                ui::check_error(
+                    "ip_range",
+                    format!("invalid CIDR: {}", cfg.instance.ip_range),
+                );
                 errors += 1;
             }
         }
@@ -139,7 +146,11 @@ pub async fn run(store: &Store) -> eyre::Result<()> {
         }
     }
 
-    for var in ["SILO_IP_RANGE", "SILO_WORKTREE_BASE_DIR", "SILO_WORKTREE_LINK"] {
+    for var in [
+        "SILO_IP_RANGE",
+        "SILO_WORKTREE_BASE_DIR",
+        "SILO_WORKTREE_LINK",
+    ] {
         if let Ok(val) = std::env::var(var) {
             ui::check_info("env", format!("{var}={val}"));
         }
@@ -156,14 +167,18 @@ pub async fn run(store: &Store) -> eyre::Result<()> {
         eprintln!(
             "  {} {}",
             "✗".red(),
-            format!("{} error(s), {} warning(s)", errors, warnings).red().bold()
+            format!("{} error(s), {} warning(s)", errors, warnings)
+                .red()
+                .bold()
         );
         std::process::exit(1);
     } else if warnings > 0 {
         eprintln!(
             "  {} {}",
             "⚠".yellow(),
-            format!("no errors, {} warning(s)", warnings).yellow().bold()
+            format!("no errors, {} warning(s)", warnings)
+                .yellow()
+                .bold()
         );
     } else {
         eprintln!("  {} {}", "✓".green(), "all checks passed".green().bold());

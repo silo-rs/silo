@@ -51,12 +51,8 @@ pub fn apply_silo_env(
         std::fs::write(&target, &output)
             .with_context(|| format!("failed to write {}", target.display()))?;
 
-        let relative = path
-            .strip_prefix(worktree_path)
-            .unwrap_or(&path);
-        let target_relative = target
-            .strip_prefix(worktree_path)
-            .unwrap_or(&target);
+        let relative = path.strip_prefix(worktree_path).unwrap_or(&path);
+        let target_relative = target.strip_prefix(worktree_path).unwrap_or(&target);
 
         debug!(source = %relative.display(), target = %target_relative.display(), "silo env applied");
         eprintln!("  apply {}", target_relative.display());
@@ -136,8 +132,7 @@ pub fn copy_files(
             .with_context(|| format!("invalid glob pattern: {}", pattern))?;
 
         for entry in entries {
-            let source = entry
-                .with_context(|| format!("glob error for pattern: {}", pattern))?;
+            let source = entry.with_context(|| format!("glob error for pattern: {}", pattern))?;
 
             if source.is_dir() {
                 continue;
@@ -159,9 +154,8 @@ pub fn copy_files(
             }
 
             if let Some(parent) = target.parent() {
-                std::fs::create_dir_all(parent).with_context(|| {
-                    format!("failed to create directory {}", parent.display())
-                })?;
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("failed to create directory {}", parent.display()))?;
             }
 
             std::fs::copy(&source, &target).with_context(|| {
@@ -222,10 +216,13 @@ mod tests {
         let vars = HashMap::from([("SILO_NAME".into(), "api".into())]);
         let content = "DB=myapp_${SILO_NAME}\nPORT=3000";
         let pairs = parse_overrides(content, &vars);
-        assert_eq!(pairs, vec![
-            ("DB".into(), "myapp_api".into()),
-            ("PORT".into(), "3000".into()),
-        ]);
+        assert_eq!(
+            pairs,
+            vec![
+                ("DB".into(), "myapp_api".into()),
+                ("PORT".into(), "3000".into()),
+            ]
+        );
     }
 
     #[test]
@@ -261,10 +258,7 @@ mod tests {
     #[test]
     fn merge_env_mixed_replace_and_append() {
         let existing = "A=1\nB=2\nC=3\n";
-        let overrides = vec![
-            ("B".into(), "replaced".into()),
-            ("D".into(), "new".into()),
-        ];
+        let overrides = vec![("B".into(), "replaced".into()), ("D".into(), "new".into())];
         let result = merge_env(existing, &overrides);
         assert_eq!(result, "A=1\nB=replaced\nC=3\nD=new\n");
     }

@@ -75,10 +75,8 @@ pub fn load_config() -> eyre::Result<(SiloConfig, PathBuf)> {
         .expect("config path must have parent")
         .to_path_buf();
     debug!(path = %config_path.display(), "loading config");
-    let content =
-        std::fs::read_to_string(&config_path).context("failed to read silo.toml")?;
-    let mut config: SiloConfig =
-        toml::from_str(&content).context("failed to parse silo.toml")?;
+    let content = std::fs::read_to_string(&config_path).context("failed to read silo.toml")?;
+    let mut config: SiloConfig = toml::from_str(&content).context("failed to parse silo.toml")?;
     apply_env_overrides(&mut config);
     debug!(ip_range = %config.instance.ip_range, "config loaded");
     Ok((config, repo_root))
@@ -104,10 +102,8 @@ pub fn load_config_from(repo_root: &Path) -> eyre::Result<Option<SiloConfig>> {
     if !config_path.exists() {
         return Ok(None);
     }
-    let content =
-        std::fs::read_to_string(&config_path).context("failed to read silo.toml")?;
-    let mut config: SiloConfig =
-        toml::from_str(&content).context("failed to parse silo.toml")?;
+    let content = std::fs::read_to_string(&config_path).context("failed to read silo.toml")?;
+    let mut config: SiloConfig = toml::from_str(&content).context("failed to parse silo.toml")?;
     apply_env_overrides(&mut config);
     Ok(Some(config))
 }

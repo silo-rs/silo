@@ -102,7 +102,10 @@ impl Store {
             .fetch_all(&self.pool)
             .await?;
 
-        let instances: Vec<Instance> = rows.iter().map(row_to_instance).collect::<eyre::Result<_>>()?;
+        let instances: Vec<Instance> = rows
+            .iter()
+            .map(row_to_instance)
+            .collect::<eyre::Result<_>>()?;
         Ok(instances
             .into_iter()
             .filter(|inst| path.starts_with(&inst.path))
@@ -153,11 +156,7 @@ impl Store {
         Ok(result.rows_affected() > 0)
     }
 
-    pub async fn resolve_instance(
-        &self,
-        name: Option<&str>,
-        cwd: &Path,
-    ) -> eyre::Result<Instance> {
+    pub async fn resolve_instance(&self, name: Option<&str>, cwd: &Path) -> eyre::Result<Instance> {
         match name {
             Some(name) => {
                 if let Some(current) = self.find_by_path(cwd).await? {
@@ -262,9 +261,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(dir.path()).await.unwrap();
 
-        store.insert(&make_instance("api", [127, 0, 1, 1], "/work/a", "/repo-a")).await.unwrap();
-        store.insert(&make_instance("web", [127, 0, 1, 2], "/work/b", "/repo-b")).await.unwrap();
-        store.insert(&make_instance("svc", [127, 0, 1, 3], "/work/c", "/repo-a")).await.unwrap();
+        store
+            .insert(&make_instance("api", [127, 0, 1, 1], "/work/a", "/repo-a"))
+            .await
+            .unwrap();
+        store
+            .insert(&make_instance("web", [127, 0, 1, 2], "/work/b", "/repo-b"))
+            .await
+            .unwrap();
+        store
+            .insert(&make_instance("svc", [127, 0, 1, 3], "/work/c", "/repo-a"))
+            .await
+            .unwrap();
 
         let results = store.list_by_repo(Path::new("/repo-a")).await.unwrap();
         assert_eq!(results.len(), 2);
@@ -275,10 +283,24 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(dir.path()).await.unwrap();
 
-        store.insert(&make_instance("outer", [127, 0, 1, 1], "/work", "/repo")).await.unwrap();
-        store.insert(&make_instance("inner", [127, 0, 1, 2], "/work/nested", "/repo")).await.unwrap();
+        store
+            .insert(&make_instance("outer", [127, 0, 1, 1], "/work", "/repo"))
+            .await
+            .unwrap();
+        store
+            .insert(&make_instance(
+                "inner",
+                [127, 0, 1, 2],
+                "/work/nested",
+                "/repo",
+            ))
+            .await
+            .unwrap();
 
-        let found = store.find_by_path(Path::new("/work/nested/src")).await.unwrap();
+        let found = store
+            .find_by_path(Path::new("/work/nested/src"))
+            .await
+            .unwrap();
         assert_eq!(found.unwrap().name, "inner");
     }
 
@@ -287,8 +309,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(dir.path()).await.unwrap();
 
-        store.insert(&make_instance("a", [127, 0, 1, 1], "/a", "/repo")).await.unwrap();
-        store.insert(&make_instance("b", [127, 0, 1, 2], "/b", "/repo")).await.unwrap();
+        store
+            .insert(&make_instance("a", [127, 0, 1, 1], "/a", "/repo"))
+            .await
+            .unwrap();
+        store
+            .insert(&make_instance("b", [127, 0, 1, 2], "/b", "/repo"))
+            .await
+            .unwrap();
 
         let ips = store.used_ips().await.unwrap();
         assert!(ips.contains(&Ipv4Addr::new(127, 0, 1, 1)));
@@ -301,10 +329,19 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(dir.path()).await.unwrap();
 
-        store.insert(&make_instance("api", [127, 0, 1, 1], "/work/api", "/repo")).await.unwrap();
-        store.insert(&make_instance("web", [127, 0, 1, 2], "/work/web", "/repo")).await.unwrap();
+        store
+            .insert(&make_instance("api", [127, 0, 1, 1], "/work/api", "/repo"))
+            .await
+            .unwrap();
+        store
+            .insert(&make_instance("web", [127, 0, 1, 2], "/work/web", "/repo"))
+            .await
+            .unwrap();
 
-        let found = store.resolve_instance(Some("web"), Path::new("/work/api/src")).await.unwrap();
+        let found = store
+            .resolve_instance(Some("web"), Path::new("/work/api/src"))
+            .await
+            .unwrap();
         assert_eq!(found.name, "web");
     }
 
@@ -313,9 +350,15 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(dir.path()).await.unwrap();
 
-        store.insert(&make_instance("api", [127, 0, 1, 1], "/work/api", "/repo")).await.unwrap();
+        store
+            .insert(&make_instance("api", [127, 0, 1, 1], "/work/api", "/repo"))
+            .await
+            .unwrap();
 
-        let found = store.resolve_instance(None, Path::new("/work/api/src")).await.unwrap();
+        let found = store
+            .resolve_instance(None, Path::new("/work/api/src"))
+            .await
+            .unwrap();
         assert_eq!(found.name, "api");
     }
 
@@ -323,7 +366,9 @@ mod tests {
     async fn resolve_not_found() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(dir.path()).await.unwrap();
-        let err = store.resolve_instance(Some("nope"), Path::new("/work")).await;
+        let err = store
+            .resolve_instance(Some("nope"), Path::new("/work"))
+            .await;
         assert!(err.is_err());
     }
 
@@ -332,10 +377,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(dir.path()).await.unwrap();
 
-        store.insert(&make_instance("api", [127, 0, 1, 1], "/work/a", "/repo-a")).await.unwrap();
-        store.insert(&make_instance("api", [127, 0, 1, 2], "/work/b", "/repo-b")).await.unwrap();
+        store
+            .insert(&make_instance("api", [127, 0, 1, 1], "/work/a", "/repo-a"))
+            .await
+            .unwrap();
+        store
+            .insert(&make_instance("api", [127, 0, 1, 2], "/work/b", "/repo-b"))
+            .await
+            .unwrap();
 
-        let err = store.resolve_instance(Some("api"), Path::new("/elsewhere")).await;
+        let err = store
+            .resolve_instance(Some("api"), Path::new("/elsewhere"))
+            .await;
         assert!(err.is_err());
         let msg = format!("{}", err.unwrap_err());
         assert!(msg.contains("ambiguous"));
@@ -347,11 +400,13 @@ mod tests {
 
         {
             let store = Store::open(dir.path()).await.unwrap();
-            store.insert(&make_instance("api", [127, 0, 1, 1], "/work/api", "/repo")).await.unwrap();
+            store
+                .insert(&make_instance("api", [127, 0, 1, 1], "/work/api", "/repo"))
+                .await
+                .unwrap();
         }
 
         let store = Store::open(dir.path()).await.unwrap();
         assert_eq!(store.count().await.unwrap(), 1);
     }
-
 }

@@ -1,17 +1,23 @@
 use std::io::{self, Write};
 
-use eyre::Context;
 use colored::Colorize;
+use eyre::Context;
 
+use crate::ui;
 use silo_core::config;
 use silo_core::hooks;
 use silo_core::hosts;
 use silo_core::ip;
 use silo_core::store::Store;
-use crate::ui;
 use silo_core::worktree;
 
-pub async fn run(store: &Store, name: Option<&str>, yes: bool, no_hooks: bool, json: bool) -> eyre::Result<()> {
+pub async fn run(
+    store: &Store,
+    name: Option<&str>,
+    yes: bool,
+    no_hooks: bool,
+    json: bool,
+) -> eyre::Result<()> {
     let cwd = std::env::current_dir().context("failed to get current directory")?;
     let cwd = cwd.canonicalize().unwrap_or(cwd);
 
@@ -34,9 +40,9 @@ pub async fn run(store: &Store, name: Option<&str>, yes: bool, no_hooks: bool, j
 
     let cfg = config::load_config_from(&instance.repo)?;
 
-    if !no_hooks {
-        if let Some(ref cfg) = cfg {
-            if let Err(e) = hooks::run_hooks(
+    if !no_hooks
+        && let Some(ref cfg) = cfg
+            && let Err(e) = hooks::run_hooks(
                 &cfg.hooks.teardown,
                 &instance.path,
                 &instance.env_vars(),
@@ -44,8 +50,6 @@ pub async fn run(store: &Store, name: Option<&str>, yes: bool, no_hooks: bool, j
             ) {
                 ui::warn(format!("teardown hook failed: {e}"));
             }
-        }
-    }
 
     if let Err(e) = ip::remove_alias(instance.ip) {
         ui::warn(format!("failed to remove IP alias: {e}"));

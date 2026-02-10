@@ -9,13 +9,53 @@ use tracing::{debug, info, instrument, warn};
 
 use crate::error::SiloError;
 
+/// Locate the `ip` command on Linux. Tries `which` first, then falls back to
+/// well-known paths across distributions (Debian, Fedora, Arch, etc.).
+#[cfg(target_os = "linux")]
+fn find_ip_command() -> String {
+    if let Ok(p) = which::which("ip") {
+        return p.to_string_lossy().into_owned();
+    }
+    for candidate in ["/usr/sbin/ip", "/sbin/ip", "/usr/bin/ip", "/bin/ip"] {
+        if Path::new(candidate).exists() {
+            return candidate.to_string();
+        }
+    }
+    // Last resort — let the OS resolve it
+    "ip".to_string()
+}
+
+/// Detect the admin group for sudoers rules on Linux.
+/// Debian/Ubuntu use `sudo`, RHEL/Fedora/Arch use `wheel`.
+#[cfg(target_os = "linux")]
+pub(crate) fn detect_admin_group() -> &'static str {
+    if let Ok(content) = std::fs::read_to_string("/etc/group") {
+        return admin_group_from_etc_group(&content);
+    }
+    "%sudo"
+}
+
+/// Parse /etc/group content and return the appropriate sudoers group.
+/// Extracted for testability.
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn admin_group_from_etc_group(content: &str) -> &'static str {
+    let has_sudo = content.lines().any(|l| l.starts_with("sudo:"));
+    let has_wheel = content.lines().any(|l| l.starts_with("wheel:"));
+    if has_sudo {
+        return "%sudo";
+    }
+    if has_wheel {
+        return "%wheel";
+    }
+    // Default to %sudo (Debian-family is the most common CI/server environment)
+    "%sudo"
+}
+
 #[instrument(skip(used))]
 pub fn allocate_ip(range: &str, used: &HashSet<Ipv4Addr>) -> Result<Ipv4Addr, SiloError> {
-    let network: Ipv4Net = range
-        .parse()
-        .map_err(|e: ipnet::AddrParseError| {
-            SiloError::InvalidCidrRange(range.to_string(), e.to_string())
-        })?;
+    let network: Ipv4Net = range.parse().map_err(|e: ipnet::AddrParseError| {
+        SiloError::InvalidCidrRange(range.to_string(), e.to_string())
+    })?;
 
     if network.network().octets()[0] != 127 {
         return Err(SiloError::IpNotLoopback(network.network()));
@@ -58,7 +98,10 @@ pub fn add_alias(ip: Ipv4Addr) -> eyre::Result<()> {
     ])?;
 
     #[cfg(target_os = "linux")]
-    run_sudo(&["ip", "addr", "add", &format!("{}/8", ip), "dev", "lo"])?;
+    {
+        let ip_cmd = find_ip_command();
+        run_sudo(&[&ip_cmd, "addr", "add", &format!("{}/8", ip), "dev", "lo"])?;
+    }
 
     Ok(())
 }
@@ -78,7 +121,10 @@ pub fn remove_alias(ip: Ipv4Addr) -> eyre::Result<()> {
     run_sudo(&["ifconfig", "lo0", "-alias", &ip.to_string()])?;
 
     #[cfg(target_os = "linux")]
-    run_sudo(&["ip", "addr", "del", &format!("{}/8", ip), "dev", "lo"])?;
+    {
+        let ip_cmd = find_ip_command();
+        run_sudo(&[&ip_cmd, "addr", "del", &format!("{}/8", ip), "dev", "lo"])?;
+    }
 
     Ok(())
 }
@@ -124,10 +170,11 @@ fn loopback_output() -> eyre::Result<String> {
 
     #[cfg(target_os = "linux")]
     {
-        let output = Command::new("ip")
+        let ip_cmd = find_ip_command();
+        let output = Command::new(&ip_cmd)
             .args(["addr", "show", "lo"])
             .output()
-            .context("failed to run ip addr")?;
+            .with_context(|| format!("failed to run {} addr show lo", ip_cmd))?;
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 }
@@ -150,9 +197,18 @@ fn install_sudoers() -> eyre::Result<()> {
                  %admin ALL=(root) NOPASSWD: /usr/bin/tee /etc/hosts\n";
 
     #[cfg(target_os = "linux")]
-    let rules = "%sudo ALL=(root) NOPASSWD: /sbin/ip addr add 127.0.*/8 dev lo\n\
-                 %sudo ALL=(root) NOPASSWD: /sbin/ip addr del 127.0.*/8 dev lo\n\
-                 %sudo ALL=(root) NOPASSWD: /usr/bin/tee /etc/hosts\n";
+    let rules = {
+        let group = detect_admin_group();
+        let ip_cmd = find_ip_command();
+        let tee_cmd = which::which("tee")
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| "/usr/bin/tee".to_string());
+        format!(
+            "{group} ALL=(root) NOPASSWD: {ip_cmd} addr add 127.0.*/8 dev lo\n\
+             {group} ALL=(root) NOPASSWD: {ip_cmd} addr del 127.0.*/8 dev lo\n\
+             {group} ALL=(root) NOPASSWD: {tee_cmd} /etc/hosts\n"
+        )
+    };
 
     let status = Command::new("sudo")
         .args(["tee", "/etc/sudoers.d/silo"])
@@ -332,10 +388,7 @@ lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384
 
     #[test]
     fn allocate_exhausted() {
-        let used = used_set(&[
-            Ipv4Addr::new(127, 0, 1, 1),
-            Ipv4Addr::new(127, 0, 1, 2),
-        ]);
+        let used = used_set(&[Ipv4Addr::new(127, 0, 1, 1), Ipv4Addr::new(127, 0, 1, 2)]);
         let err = allocate_ip("127.0.1.0/30", &used).unwrap_err();
         assert!(matches!(err, SiloError::IpRangeExhausted(_)));
     }
@@ -345,5 +398,30 @@ lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384
         let used = empty_used();
         let err = allocate_ip("not-a-cidr", &used).unwrap_err();
         assert!(matches!(err, SiloError::InvalidCidrRange(_, _)));
+    }
+
+    #[test]
+    fn admin_group_debian_has_sudo() {
+        let etc_group = "root:x:0:\ndaemon:x:1:\nsudo:x:27:user\nusers:x:100:\n";
+        assert_eq!(admin_group_from_etc_group(etc_group), "%sudo");
+    }
+
+    #[test]
+    fn admin_group_fedora_has_wheel() {
+        let etc_group = "root:x:0:\nwheel:x:10:user\nusers:x:100:\n";
+        assert_eq!(admin_group_from_etc_group(etc_group), "%wheel");
+    }
+
+    #[test]
+    fn admin_group_both_prefers_sudo() {
+        // Unlikely but possible — prefer sudo if both exist
+        let etc_group = "root:x:0:\nsudo:x:27:user\nwheel:x:10:user\n";
+        assert_eq!(admin_group_from_etc_group(etc_group), "%sudo");
+    }
+
+    #[test]
+    fn admin_group_neither_defaults_sudo() {
+        let etc_group = "root:x:0:\nusers:x:100:\n";
+        assert_eq!(admin_group_from_etc_group(etc_group), "%sudo");
     }
 }

@@ -1,8 +1,9 @@
 use std::path::PathBuf;
 
-use eyre::Context;
 use colored::Colorize;
+use eyre::Context;
 
+use crate::ui;
 use silo_core::config;
 use silo_core::error::SiloError;
 use silo_core::hooks;
@@ -11,7 +12,6 @@ use silo_core::ip;
 use silo_core::render;
 use silo_core::state::Instance;
 use silo_core::store::Store;
-use crate::ui;
 use silo_core::worktree;
 
 pub async fn run(
@@ -47,11 +47,10 @@ pub async fn run(
         };
         let p = p.canonicalize().unwrap_or(p);
 
-        if let Some(existing) = store.find_by_path(&p).await? {
-            if existing.path == p {
+        if let Some(existing) = store.find_by_path(&p).await?
+            && existing.path == p {
                 eyre::bail!("another instance already uses path {}", p.display());
             }
-        }
         p
     };
 
@@ -76,15 +75,17 @@ pub async fn run(
             rollback_failed = true;
         }
 
-        if instance.is_worktree {
-            if let Err(rb_err) = worktree::remove_worktree(&repo_root, &instance.path) {
+        if instance.is_worktree
+            && let Err(rb_err) = worktree::remove_worktree(&repo_root, &instance.path) {
                 ui::warn(format!("rollback failed (worktree): {rb_err}"));
                 rollback_failed = true;
             }
-        }
 
         if rollback_failed {
-            ui::hint(format!("run {} to clean up", ui::accent("silo prune").bold()));
+            ui::hint(format!(
+                "run {} to clean up",
+                ui::accent("silo prune").bold()
+            ));
         }
 
         return Err(e).context("failed to create IP alias");
@@ -144,11 +145,17 @@ pub async fn run(
 
 pub(crate) fn validate_name(name: &str) -> Result<(), SiloError> {
     if name.is_empty() {
-        return Err(SiloError::InvalidInstanceName(name.to_string(), "must not be empty"));
+        return Err(SiloError::InvalidInstanceName(
+            name.to_string(),
+            "must not be empty",
+        ));
     }
 
     if name.len() > 64 {
-        return Err(SiloError::InvalidInstanceName(name.to_string(), "must be 64 characters or fewer"));
+        return Err(SiloError::InvalidInstanceName(
+            name.to_string(),
+            "must be 64 characters or fewer",
+        ));
     }
 
     if !name.starts_with(|c: char| c.is_ascii_alphanumeric()) {
@@ -158,7 +165,10 @@ pub(crate) fn validate_name(name: &str) -> Result<(), SiloError> {
         ));
     }
 
-    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
         return Err(SiloError::InvalidInstanceName(
             name.to_string(),
             "may only contain letters, digits, hyphens, and underscores",

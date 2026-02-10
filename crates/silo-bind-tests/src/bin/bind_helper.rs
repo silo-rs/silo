@@ -13,7 +13,9 @@ fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
         eprintln!("usage: bind-helper <command> [args...]");
-        eprintln!("commands: bind_any, bind_localhost, connect_localhost, getaddrinfo, sendto_any, passthrough");
+        eprintln!(
+            "commands: bind_any, bind_localhost, connect_localhost, getaddrinfo, sendto_any, passthrough"
+        );
         std::process::exit(1);
     }
 

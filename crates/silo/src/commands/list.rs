@@ -2,10 +2,10 @@ use colored::Colorize;
 use comfy_table::{ContentArrangement, Table};
 use serde_json::json;
 
+use crate::ui;
 use silo_core::config;
 use silo_core::ip;
 use silo_core::store::Store;
-use crate::ui;
 
 pub async fn run(store: &Store, all: bool, json: bool) -> eyre::Result<()> {
     let instances = if all {
@@ -16,10 +16,7 @@ pub async fn run(store: &Store, all: bool, json: bool) -> eyre::Result<()> {
             .and_then(|p| p.canonicalize().ok().or(Some(p)));
 
         let repo = if let Some(ref cwd) = cwd {
-            store
-                .find_by_path(cwd)
-                .await?
-                .map(|inst| inst.repo.clone())
+            store.find_by_path(cwd).await?.map(|inst| inst.repo.clone())
         } else {
             None
         };

@@ -1,10 +1,10 @@
-use eyre::Context;
 use colored::Colorize;
+use eyre::Context;
 use serde_json::json;
 
+use crate::ui;
 use silo_core::ip;
 use silo_core::store::Store;
-use crate::ui;
 
 pub async fn run(store: &Store, name: Option<&str>, json: bool) -> eyre::Result<()> {
     let cwd = std::env::current_dir().context("failed to get current directory")?;
@@ -33,12 +33,25 @@ pub async fn run(store: &Store, name: Option<&str>, json: bool) -> eyre::Result<
     eprintln!("{}", ui::accent(&instance.name).bold());
     eprintln!("  ip       {}", instance.ip.to_string().dimmed());
     eprintln!("  host     {}", host.dimmed());
-    eprintln!("  path     {}", instance.path.display().to_string().dimmed());
-    eprintln!("  repo     {}", instance.repo.display().to_string().dimmed());
-    eprintln!("  worktree {}", if instance.is_worktree { "yes" } else { "no" });
+    eprintln!(
+        "  path     {}",
+        instance.path.display().to_string().dimmed()
+    );
+    eprintln!(
+        "  repo     {}",
+        instance.repo.display().to_string().dimmed()
+    );
+    eprintln!(
+        "  worktree {}",
+        if instance.is_worktree { "yes" } else { "no" }
+    );
     eprintln!(
         "  created  {}",
-        instance.created_at.format("%Y-%m-%d %H:%M:%S UTC").to_string().dimmed()
+        instance
+            .created_at
+            .format("%Y-%m-%d %H:%M:%S UTC")
+            .to_string()
+            .dimmed()
     );
 
     if active {
