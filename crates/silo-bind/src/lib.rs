@@ -93,10 +93,10 @@ unsafe fn rewrite_bind_addr(addr: *const sockaddr) {
     if family == libc::AF_INET6 as c_int {
         let sin6 = addr as *mut libc::sockaddr_in6;
         let v6_addr = (*sin6).sin6_addr.s6_addr;
-        if v6_addr == V6_ANY || v6_addr == V6_LOOPBACK {
-            if let Some(ip_bytes) = get_silo_ip() {
-                (*sin6).sin6_addr.s6_addr = ipv4_mapped_v6(ip_bytes);
-            }
+        if (v6_addr == V6_ANY || v6_addr == V6_LOOPBACK)
+            && let Some(ip_bytes) = get_silo_ip()
+        {
+            (*sin6).sin6_addr.s6_addr = ipv4_mapped_v6(ip_bytes);
         }
     }
 }
@@ -120,10 +120,10 @@ unsafe fn rewrite_connect_addr(addr: *const sockaddr) {
     #[cfg(target_os = "linux")]
     if family == libc::AF_INET6 as c_int {
         let sin6 = addr as *mut libc::sockaddr_in6;
-        if (*sin6).sin6_addr.s6_addr == V6_LOOPBACK {
-            if let Some(ip_bytes) = get_silo_ip() {
-                (*sin6).sin6_addr.s6_addr = ipv4_mapped_v6(ip_bytes);
-            }
+        if (*sin6).sin6_addr.s6_addr == V6_LOOPBACK
+            && let Some(ip_bytes) = get_silo_ip()
+        {
+            (*sin6).sin6_addr.s6_addr = ipv4_mapped_v6(ip_bytes);
         }
     }
 }
@@ -149,10 +149,10 @@ unsafe fn rewrite_sendto_addr(addr: *const sockaddr) {
     if family == libc::AF_INET6 as c_int {
         let sin6 = addr as *mut libc::sockaddr_in6;
         let v6_addr = (*sin6).sin6_addr.s6_addr;
-        if v6_addr == V6_ANY || v6_addr == V6_LOOPBACK {
-            if let Some(ip_bytes) = get_silo_ip() {
-                (*sin6).sin6_addr.s6_addr = ipv4_mapped_v6(ip_bytes);
-            }
+        if (v6_addr == V6_ANY || v6_addr == V6_LOOPBACK)
+            && let Some(ip_bytes) = get_silo_ip()
+        {
+            (*sin6).sin6_addr.s6_addr = ipv4_mapped_v6(ip_bytes);
         }
     }
 }
