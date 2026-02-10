@@ -132,6 +132,41 @@ fn getaddrinfo_localhost_is_rewritten() {
     );
 }
 
+/// getaddrinfo("localhost") with AF_UNSPEC should rewrite IPv6 ::1 results
+/// to ::ffff:SILO_IP (IPv4-mapped IPv6 address).
+#[test]
+fn getaddrinfo_v6_localhost_is_rewritten() {
+    let (stdout, _, success) = run_helper("getaddrinfo_v6", Some(TEST_IP));
+    assert!(success, "helper failed");
+
+    // IPv4 results should be rewritten
+    for line in stdout.lines() {
+        if let Some(ip) = line.strip_prefix("v4=") {
+            assert_eq!(
+                ip, TEST_IP,
+                "expected IPv4 result to be {TEST_IP}, got: {ip}"
+            );
+        }
+    }
+
+    // IPv6 results should be rewritten to ::ffff:SILO_IP
+    let expected_mapped = format!("::ffff:{TEST_IP}");
+    for line in stdout.lines() {
+        if let Some(ip) = line.strip_prefix("v6=") {
+            assert_eq!(
+                ip, expected_mapped,
+                "expected IPv6 result to be {expected_mapped}, got: {ip}"
+            );
+        }
+    }
+
+    // Should NOT contain raw ::1
+    assert!(
+        !stdout.contains("v6=::1"),
+        "IPv6 loopback ::1 should have been rewritten, got: {stdout}"
+    );
+}
+
 // ── sendto() tests ──
 
 /// UDP bind(0.0.0.0) used for sendto should be rewritten to SILO_IP.

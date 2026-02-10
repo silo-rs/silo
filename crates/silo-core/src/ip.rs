@@ -148,10 +148,10 @@ pub(crate) fn is_ip_in_output(output: &str, ip: Ipv4Addr) -> bool {
     output.lines().any(|line| {
         if let Some(pos) = line.find(&needle) {
             let after = pos + needle.len();
-            match line.as_bytes().get(after) {
-                None | Some(b' ') | Some(b'\t') | Some(b'/') => true,
-                _ => false,
-            }
+            matches!(
+                line.as_bytes().get(after),
+                None | Some(b' ') | Some(b'\t') | Some(b'/')
+            )
         } else {
             false
         }

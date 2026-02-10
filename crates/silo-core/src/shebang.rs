@@ -27,21 +27,21 @@ pub fn resolve_program(program: &str, args: &[String]) -> (String, Vec<String>) 
 
     // Second: if program is a SIP-protected binary, find a non-SIP alternative
     let program_path = Path::new(program);
-    if is_sip_protected(program_path) {
-        if let Some(name) = program_path.file_name().and_then(|n| n.to_str()) {
-            if let Some(resolved) = find_non_sip_binary(name) {
-                debug!(
-                    original = program,
-                    resolved = %resolved,
-                    "SIP binary resolved to non-SIP alternative"
-                );
-                return (resolved, args.to_vec());
-            }
+    if is_sip_protected(program_path)
+        && let Some(name) = program_path.file_name().and_then(|n| n.to_str())
+    {
+        if let Some(resolved) = find_non_sip_binary(name) {
             debug!(
                 original = program,
-                "no non-SIP alternative found for SIP-protected binary"
+                resolved = %resolved,
+                "SIP binary resolved to non-SIP alternative"
             );
+            return (resolved, args.to_vec());
         }
+        debug!(
+            original = program,
+            "no non-SIP alternative found for SIP-protected binary"
+        );
     }
 
     (program.to_string(), args.to_vec())
@@ -67,16 +67,16 @@ pub fn find_non_sip_binary(name: &str) -> Option<String> {
     };
 
     for candidate in candidates {
-        if let Ok(path) = which::which(candidate) {
-            if !is_sip_protected(&path) {
-                debug!(
-                    name,
-                    candidate,
-                    resolved = %path.display(),
-                    "found non-SIP binary"
-                );
-                return Some(path.to_string_lossy().into_owned());
-            }
+        if let Ok(path) = which::which(candidate)
+            && !is_sip_protected(&path)
+        {
+            debug!(
+                name,
+                candidate,
+                resolved = %path.display(),
+                "found non-SIP binary"
+            );
+            return Some(path.to_string_lossy().into_owned());
         }
     }
 

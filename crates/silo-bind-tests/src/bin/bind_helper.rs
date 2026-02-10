@@ -7,7 +7,7 @@
 
 use std::env;
 use std::io;
-use std::net::{Ipv4Addr, SocketAddrV4, TcpListener, UdpSocket};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, TcpListener, UdpSocket};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -24,6 +24,7 @@ fn main() {
         "bind_localhost" => cmd_bind(Ipv4Addr::LOCALHOST),
         "connect_localhost" => cmd_connect_localhost(),
         "getaddrinfo" => cmd_getaddrinfo(),
+        "getaddrinfo_v6" => cmd_getaddrinfo_v6(),
         "sendto_any" => cmd_sendto(Ipv4Addr::UNSPECIFIED),
         "passthrough" => cmd_bind(Ipv4Addr::UNSPECIFIED),
         other => {
@@ -114,6 +115,66 @@ fn cmd_getaddrinfo() -> io::Result<()> {
 
     if !printed {
         eprintln!("no AF_INET results from getaddrinfo");
+        std::process::exit(1);
+    }
+
+    Ok(())
+}
+
+/// Call libc::getaddrinfo for "localhost" with AF_UNSPEC hints and print
+/// all results, including IPv6. This tests that ::1 is rewritten to
+/// ::ffff:SILO_IP (IPv4-mapped IPv6).
+fn cmd_getaddrinfo_v6() -> io::Result<()> {
+    use std::ffi::CString;
+    use std::ptr;
+
+    let node = CString::new("localhost").unwrap();
+    let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+    let hints = libc::addrinfo {
+        ai_flags: 0,
+        ai_family: libc::AF_UNSPEC,
+        ai_socktype: libc::SOCK_STREAM,
+        ai_protocol: 0,
+        ai_addrlen: 0,
+        ai_addr: ptr::null_mut(),
+        ai_canonname: ptr::null_mut(),
+        ai_next: ptr::null_mut(),
+    };
+
+    let ret = unsafe { libc::getaddrinfo(node.as_ptr(), ptr::null(), &hints, &mut res) };
+
+    if ret != 0 {
+        eprintln!("getaddrinfo failed: {ret}");
+        std::process::exit(1);
+    }
+
+    let mut cur = res;
+    let mut printed = false;
+    while !cur.is_null() {
+        unsafe {
+            let ai = &*cur;
+            if ai.ai_family == libc::AF_INET && !ai.ai_addr.is_null() {
+                let sin = &*(ai.ai_addr as *const libc::sockaddr_in);
+                let ip = Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr));
+                println!("v4={ip}");
+                printed = true;
+            } else if ai.ai_family == libc::AF_INET6 && !ai.ai_addr.is_null() {
+                let sin6 = &*(ai.ai_addr as *const libc::sockaddr_in6);
+                let ip = Ipv6Addr::from(sin6.sin6_addr.s6_addr);
+                println!("v6={ip}");
+                printed = true;
+            }
+            cur = ai.ai_next;
+        }
+    }
+
+    unsafe {
+        libc::freeaddrinfo(res);
+    }
+
+    if !printed {
+        eprintln!("no results from getaddrinfo");
         std::process::exit(1);
     }
 

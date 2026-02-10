@@ -78,12 +78,12 @@ search   → http://search.acme.silo:3000
 
 When you run `silo exec <cmd>`, silo injects a shared library into the process that intercepts network syscalls **before they reach the kernel**. The rewriting rules are:
 
-| Syscall | Original address | Rewritten to | Why |
-| --- | --- | --- | --- |
-| `bind()` | `0.0.0.0` or `127.0.0.1` | `SILO_IP` | Server listens on its own loopback IP |
-| `connect()` | `127.0.0.1` | `SILO_IP` | Client talks to its own instance, not someone else's |
-| `getaddrinfo()` | Results resolving to `127.0.0.1` | `SILO_IP` | DNS-based localhost lookups get the same treatment |
-| `sendto()` | `0.0.0.0` or `127.0.0.1` | `SILO_IP` | UDP traffic (e.g. DNS) goes to the right place |
+| Syscall         | Original address                 | Rewritten to | Why                                                  |
+| --------------- | -------------------------------- | ------------ | ---------------------------------------------------- |
+| `bind()`        | `0.0.0.0` or `127.0.0.1`         | `SILO_IP`    | Server listens on its own loopback IP                |
+| `connect()`     | `127.0.0.1`                      | `SILO_IP`    | Client talks to its own instance, not someone else's |
+| `getaddrinfo()` | Results resolving to `127.0.0.1` | `SILO_IP`    | DNS-based localhost lookups get the same treatment   |
+| `sendto()`      | `0.0.0.0` or `127.0.0.1`         | `SILO_IP`    | UDP traffic (e.g. DNS) goes to the right place       |
 
 On macOS, IPv6 sockets binding to `::` or `::1` are **downgraded to IPv4** and rewritten to `SILO_IP`. On Linux, they're rewritten to the IPv4-mapped IPv6 address (`::ffff:SILO_IP`).
 

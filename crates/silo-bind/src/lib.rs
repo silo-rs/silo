@@ -91,15 +91,9 @@ unsafe fn rewrite_bind_addr(addr: *const sockaddr) {
     if family == libc::AF_INET6 as c_int {
         let sin6 = addr as *mut libc::sockaddr_in6;
         let v6_addr = (*sin6).sin6_addr.s6_addr;
-        let is_any = v6_addr == [0u8; 16];
-        let is_loopback = v6_addr == [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
-        if is_any || is_loopback {
+        if v6_addr == V6_ANY || v6_addr == V6_LOOPBACK {
             if let Some(ip_bytes) = get_silo_ip() {
-                let octets = ip_bytes.to_be_bytes();
-                (*sin6).sin6_addr.s6_addr = [
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, octets[0], octets[1], octets[2],
-                    octets[3],
-                ];
+                (*sin6).sin6_addr.s6_addr = ipv4_mapped_v6(ip_bytes);
             }
         }
     }
@@ -124,14 +118,9 @@ unsafe fn rewrite_connect_addr(addr: *const sockaddr) {
     #[cfg(target_os = "linux")]
     if family == libc::AF_INET6 as c_int {
         let sin6 = addr as *mut libc::sockaddr_in6;
-        let loopback_v6: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
-        if (*sin6).sin6_addr.s6_addr == loopback_v6 {
+        if (*sin6).sin6_addr.s6_addr == V6_LOOPBACK {
             if let Some(ip_bytes) = get_silo_ip() {
-                let octets = ip_bytes.to_be_bytes();
-                (*sin6).sin6_addr.s6_addr = [
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, octets[0], octets[1], octets[2],
-                    octets[3],
-                ];
+                (*sin6).sin6_addr.s6_addr = ipv4_mapped_v6(ip_bytes);
             }
         }
     }
@@ -158,15 +147,9 @@ unsafe fn rewrite_sendto_addr(addr: *const sockaddr) {
     if family == libc::AF_INET6 as c_int {
         let sin6 = addr as *mut libc::sockaddr_in6;
         let v6_addr = (*sin6).sin6_addr.s6_addr;
-        let is_any = v6_addr == [0u8; 16];
-        let is_loopback = v6_addr == [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
-        if is_any || is_loopback {
+        if v6_addr == V6_ANY || v6_addr == V6_LOOPBACK {
             if let Some(ip_bytes) = get_silo_ip() {
-                let octets = ip_bytes.to_be_bytes();
-                (*sin6).sin6_addr.s6_addr = [
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, octets[0], octets[1], octets[2],
-                    octets[3],
-                ];
+                (*sin6).sin6_addr.s6_addr = ipv4_mapped_v6(ip_bytes);
             }
         }
     }
@@ -179,6 +162,20 @@ fn get_silo_ip() -> Option<u32> {
         Some(u32::from(ip).to_be())
     })
 }
+
+/// Convert silo_ip (stored in network byte order) to an IPv4-mapped IPv6
+/// address `::ffff:SILO_IP`. Returns the 16-byte `s6_addr`.
+fn ipv4_mapped_v6(silo_ip: u32) -> [u8; 16] {
+    // silo_ip is in network byte order; to_ne_bytes() gives us the raw
+    // bytes as they sit in memory, which is the correct octet order.
+    let octets = silo_ip.to_ne_bytes();
+    [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, octets[0], octets[1], octets[2], octets[3],
+    ]
+}
+
+const V6_LOOPBACK: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+const V6_ANY: [u8; 16] = [0u8; 16];
 
 fn debug_enabled() -> bool {
     *DEBUG.get_or_init(|| env::var("SILO_BIND_DEBUG").is_ok())
@@ -679,6 +676,7 @@ mod platform {
 
         if let Some(silo_ip) = get_silo_ip() {
             let localhost_be = u32::from(Ipv4Addr::LOCALHOST).to_be();
+            let mapped = ipv4_mapped_v6(silo_ip);
             let mut cur = *res;
             while !cur.is_null() {
                 let ai = &mut *cur;
@@ -699,6 +697,12 @@ mod platform {
                             );
                         }
                         (*sin).sin_addr.s_addr = silo_ip;
+                    }
+                } else if ai.ai_family == libc::AF_INET6 as c_int && !ai.ai_addr.is_null() {
+                    let sin6 = ai.ai_addr as *mut libc::sockaddr_in6;
+                    let v6_addr = (*sin6).sin6_addr.s6_addr;
+                    if v6_addr == V6_LOOPBACK || v6_addr == V6_ANY {
+                        (*sin6).sin6_addr.s6_addr = mapped;
                     }
                 }
                 cur = ai.ai_next;
@@ -834,6 +838,7 @@ mod platform {
 
         if let Some(silo_ip) = get_silo_ip() {
             let localhost_be = u32::from(Ipv4Addr::LOCALHOST).to_be();
+            let mapped = ipv4_mapped_v6(silo_ip);
             let mut cur = *res;
             while !cur.is_null() {
                 let ai = &mut *cur;
@@ -842,6 +847,12 @@ mod platform {
                     let addr = (*sin).sin_addr.s_addr;
                     if addr == localhost_be || addr == 0 {
                         (*sin).sin_addr.s_addr = silo_ip;
+                    }
+                } else if ai.ai_family == libc::AF_INET6 as c_int && !ai.ai_addr.is_null() {
+                    let sin6 = ai.ai_addr as *mut libc::sockaddr_in6;
+                    let v6_addr = (*sin6).sin6_addr.s6_addr;
+                    if v6_addr == V6_LOOPBACK || v6_addr == V6_ANY {
+                        (*sin6).sin6_addr.s6_addr = mapped;
                     }
                 }
                 cur = ai.ai_next;
