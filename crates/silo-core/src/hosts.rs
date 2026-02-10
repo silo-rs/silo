@@ -296,7 +296,7 @@ mod tests {
     #[test]
     fn no_false_positive_on_suffix_hostname() {
         // "old-api.myapp.silo" should NOT match when looking for "api.myapp.silo"
-        let entries = vec![
+        let entries = [
             "127.0.1.1\told-api.myapp.silo".to_string(),
             "127.0.1.2\tweb.myapp.silo".to_string(),
         ];
@@ -340,6 +340,7 @@ mod tests {
         // A second open file description should fail with try_lock
         let file2 = std::fs::File::options()
             .create(true)
+            .truncate(false)
             .read(true)
             .write(true)
             .open(&lock_path)
