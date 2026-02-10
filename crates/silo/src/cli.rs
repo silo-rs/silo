@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 #[derive(Parser)]
 #[command(
     name = "silo",
-    about = "Development environment isolation via loopback IP aliasing"
+    about = "silo — syscall interception on loopback"
 )]
 #[command(version, propagate_version = true)]
 pub struct Cli {
