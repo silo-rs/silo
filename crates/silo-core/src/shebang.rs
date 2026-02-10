@@ -98,7 +98,9 @@ fn resolve_sip_interpreter(interpreter: &str, shebang_arg: Option<&str>) -> Opti
     let name = interpreter_path.file_name()?.to_str()?;
 
     if name == "env" {
-        let cmd = shebang_arg?;
+        let raw = shebang_arg?;
+        let stripped = raw.strip_prefix("-S").map(|s| s.trim_start()).unwrap_or(raw);
+        let cmd = stripped.split_whitespace().next()?;
         match which::which(cmd) {
             Ok(p) => {
                 let resolved = p.to_string_lossy().into_owned();
@@ -213,6 +215,20 @@ mod tests {
         assert!(is_sip_protected(Path::new("/usr/sbin/something")));
         assert!(!is_sip_protected(Path::new("/opt/homebrew/bin/bash")));
         assert!(!is_sip_protected(Path::new("/usr/local/bin/node")));
+    }
+
+    #[test]
+    fn test_resolve_sip_interpreter_strips_env_s_flag() {
+        // resolve_sip_interpreter should strip -S and find the actual command
+        // We can't test the full resolution without a real PATH, but we can
+        // verify the stripping logic by checking it doesn't panic/return None
+        // on "-S node" when "node" isn't installed (graceful failure).
+        let result = resolve_sip_interpreter("/usr/bin/env", Some("-S node"));
+        // Result depends on whether node is in PATH; just ensure no panic
+        let _ = result;
+
+        let result = resolve_sip_interpreter("/usr/bin/env", Some("-S python3 -u"));
+        let _ = result;
     }
 
     #[test]

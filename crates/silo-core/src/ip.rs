@@ -267,6 +267,42 @@ mod tests {
     }
 
     #[test]
+    fn ip_match_macos_ifconfig_full_output() {
+        let output = "\
+lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384
+\tinet 127.0.0.1 netmask 0xff000000
+\tinet 127.0.1.1 netmask 0xff000000
+\tinet6 ::1 prefixlen 128
+\tinet6 fe80::1%lo0 prefixlen 64 scopeid 0x1";
+        assert!(is_ip_in_output(output, Ipv4Addr::new(127, 0, 1, 1)));
+        assert!(is_ip_in_output(output, Ipv4Addr::new(127, 0, 0, 1)));
+        assert!(!is_ip_in_output(output, Ipv4Addr::new(127, 0, 1, 2)));
+    }
+
+    #[test]
+    fn ip_match_linux_ip_addr_full_output() {
+        let output = "\
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+    inet 127.0.0.1/8 scope host lo
+       valid_lft forever preferred_lft forever
+    inet 127.0.1.1/8 scope host lo
+       valid_lft forever preferred_lft forever
+    inet6 ::1/128 scope host
+       valid_lft forever preferred_lft forever";
+        assert!(is_ip_in_output(output, Ipv4Addr::new(127, 0, 1, 1)));
+        assert!(is_ip_in_output(output, Ipv4Addr::new(127, 0, 0, 1)));
+        assert!(!is_ip_in_output(output, Ipv4Addr::new(127, 0, 1, 2)));
+    }
+
+    #[test]
+    fn ip_no_false_positive_inet6() {
+        // "inet6" should not match "inet 6.x.x.x" — the space after "inet" matters
+        let output = "    inet6 ::1/128 scope host\n";
+        assert!(!is_ip_in_output(output, Ipv4Addr::new(127, 0, 0, 1)));
+    }
+
+    #[test]
     fn allocate_first_ip() {
         let used = empty_used();
         let ip = allocate_ip("127.0.1.0/24", &used).unwrap();

@@ -151,3 +151,48 @@ if not test -f "$_silo_marker"; or test (cat "$_silo_marker" 2>/dev/null) != "$_
 end
 __silo_env_hook
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bash_defines_required_functions() {
+        assert!(BASH_INIT.contains("__silo_env_hook()"));
+        assert!(BASH_INIT.contains("silo()"));
+        assert!(BASH_INIT.contains("PROMPT_COMMAND"));
+        assert!(BASH_INIT.contains("silo activate"));
+    }
+
+    #[test]
+    fn zsh_defines_required_functions() {
+        assert!(ZSH_INIT.contains("__silo_env_hook()"));
+        assert!(ZSH_INIT.contains("silo()"));
+        assert!(ZSH_INIT.contains("add-zsh-hook"));
+        assert!(ZSH_INIT.contains("silo activate"));
+    }
+
+    #[test]
+    fn fish_defines_required_functions() {
+        assert!(FISH_INIT.contains("function __silo_env_hook"));
+        assert!(FISH_INIT.contains("function silo"));
+        assert!(FISH_INIT.contains("--on-variable PWD"));
+        assert!(FISH_INIT.contains("silo activate"));
+    }
+
+    #[test]
+    fn all_shells_handle_cd_subcommand() {
+        // Each shell wrapper should intercept "silo cd <name>"
+        assert!(BASH_INIT.contains(r#""$1" = "cd""#));
+        assert!(ZSH_INIT.contains(r#""$1" == "cd""#));
+        assert!(FISH_INIT.contains(r#""$argv[1]" = "cd""#));
+    }
+
+    #[test]
+    fn all_shells_have_fast_path_cache() {
+        // Each shell should cache the instance path for fast cd detection
+        assert!(BASH_INIT.contains("__silo_instance_path"));
+        assert!(ZSH_INIT.contains("__silo_instance_path"));
+        assert!(FISH_INIT.contains("__silo_instance_path"));
+    }
+}

@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, macos-13]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build -p silo-bind
+      - run: cargo test --workspace
+
+  shell-syntax:
+    name: Shell syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install fish
+        run: sudo apt-get update && sudo apt-get install -y fish
+      - name: Build silo
+        run: cargo build -p silo
+      - name: Validate shell init scripts
+        run: |
+          SHELL=/bin/bash ./target/debug/silo shell-init > /tmp/bash_init.sh
+          SHELL=/bin/zsh  ./target/debug/silo shell-init > /tmp/zsh_init.sh
+          SHELL=/usr/bin/fish ./target/debug/silo shell-init > /tmp/fish_init.fish
+
+          echo "Checking bash syntax..."
+          bash -n /tmp/bash_init.sh
+
+          echo "Checking zsh syntax..."
+          zsh -n /tmp/zsh_init.sh
+
+          echo "Checking fish syntax..."
+          fish --no-execute /tmp/fish_init.fish
+
+          echo "All shell scripts are syntactically valid."

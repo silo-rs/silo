@@ -291,7 +291,8 @@ unsafe fn resolve_sip_exec(
     let is_env = interpreter.ends_with("/env");
     let resolved = if is_env {
         let cmd = arg.as_deref()?;
-        let actual = cmd.split_whitespace().next()?;
+        let stripped = cmd.strip_prefix("-S").map(|s| s.trim_start()).unwrap_or(cmd);
+        let actual = stripped.split_whitespace().next()?;
         find_non_sip_in_path(actual)?
     } else {
         find_non_sip_in_path(interpreter.rsplit('/').next()?)?
@@ -877,7 +878,7 @@ mod platform {
             socklen_t,
         ) -> libc::ssize_t = std::mem::transmute(real);
 
-        rewrite_connect_addr(dest_addr);
+        rewrite_sendto_addr(dest_addr);
         real_fn(fd, buf, len, flags, dest_addr, addrlen)
     }
 }
