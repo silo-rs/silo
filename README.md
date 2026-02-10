@@ -67,6 +67,67 @@ http://feature-b.your-project.silo:3000
 3. **Git worktrees** — lightweight working copies that share `.git` history, not full clones
 4. **Hostname mapping** — automatic `/etc/hosts` entries for human-readable access
 
+## Deep dive: `silo exec`
+
+`silo exec` is where the magic happens. Understanding what it does (and doesn't do) will save you from surprises.
+
+### What gets rewritten
+
+When you run `silo exec <cmd>`, silo injects a shared library into the process that intercepts network syscalls **before they reach the kernel**. The rewriting rules are:
+
+| Syscall | Original address | Rewritten to | Why |
+| --- | --- | --- | --- |
+| `bind()` | `0.0.0.0` or `127.0.0.1` | `SILO_IP` | Server listens on its own loopback IP |
+| `connect()` | `127.0.0.1` | `SILO_IP` | Client talks to its own instance, not someone else's |
+| `getaddrinfo()` | Results resolving to `127.0.0.1` | `SILO_IP` | DNS-based localhost lookups get the same treatment |
+| `sendto()` | `0.0.0.0` or `127.0.0.1` | `SILO_IP` | UDP traffic (e.g. DNS) goes to the right place |
+
+On macOS, IPv6 sockets binding to `::` or `::1` are **downgraded to IPv4** and rewritten to `SILO_IP`. On Linux, they're rewritten to the IPv4-mapped IPv6 address (`::ffff:SILO_IP`).
+
+Anything else -- specific IPs like `192.168.x.x`, Unix domain sockets, non-loopback addresses -- passes through untouched.
+
+### What this means in practice
+
+Your app calls `bind("0.0.0.0", 3000)`. Silo rewrites it to `bind("127.0.1.1", 3000)`. The app thinks it's listening on all interfaces, but it's actually scoped to its own loopback IP. Another instance does the same thing and gets `127.0.1.2:3000`. No conflict.
+
+The `connect()` rewrite ensures that when your app talks to `localhost`, it reaches **its own instance**, not a different one. This is critical for apps with multiple processes (e.g. a Next.js dev server spawning a separate process for HMR).
+
+### Edge cases
+
+**External services on localhost (databases, Redis, etc.)**
+
+This is the most common gotcha. If PostgreSQL is running on `127.0.0.1:5432`, and your app connects to `localhost:5432`, silo rewrites that to `127.0.1.x:5432` -- but PostgreSQL isn't listening there.
+
+Note that hardcoding `127.0.0.1` in your connection string doesn't help -- `connect()` rewrites that too. The fix depends on the situation:
+
+1. **Configure the service to listen on `0.0.0.0`** (e.g. `listen_addresses = '*'` in `postgresql.conf`), so it accepts connections on all loopback IPs including `127.0.1.x`
+2. **Run the service through `silo exec` too**, so it binds to the same `SILO_IP` as your app
+3. **Use a Unix domain socket** instead of TCP -- silo doesn't touch `AF_UNIX`
+
+For per-instance databases (e.g. one DB per branch), use `.env.silo`:
+
+```
+DATABASE_URL=postgres://localhost/myapp_${SILO_NAME}
+```
+
+**Statically linked binaries**
+
+`DYLD_INSERT_LIBRARIES` / `LD_PRELOAD` only works with dynamically linked binaries. Statically compiled programs (common in Go) bypass the interception entirely. For Go specifically, compile with `CGO_ENABLED=1` to use libc, or configure the app to bind to `$SILO_IP` directly.
+
+**macOS System Integrity Protection (SIP)**
+
+macOS prevents library injection into system binaries under `/usr/bin`, `/bin`, `/sbin`. Silo handles this automatically by detecting SIP-protected paths and finding non-SIP alternatives (e.g. Homebrew-installed `bash` instead of `/bin/bash`). If your shebang points to a SIP-protected binary, silo rewrites the execution transparently.
+
+### Debugging
+
+Set `SILO_BIND_DEBUG=1` to see every intercepted syscall:
+
+```sh
+SILO_BIND_DEBUG=1 silo exec npm run dev
+# [silo-bind] loaded pid=12345 SILO_IP=127.0.1.1
+# [silo-bind] pid=12345 bind fd=7 family=2 port=3000 SILO_IP=127.0.1.1
+```
+
 ## Configuration
 
 `silo init` generates a `silo.toml` in your repo:
