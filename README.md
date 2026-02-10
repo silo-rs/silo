@@ -40,24 +40,27 @@ curl -fsSL https://setup.silo.rs | sh
 
 ```sh
 cd your-project
-silo init                    # creates silo.toml, detects project type
+silo init
 
-silo add feature-a           # creates git worktree + assigns 127.0.1.1
-silo add feature-b           # creates git worktree + assigns 127.0.1.2
-
-silo cd feature-a
-silo exec npm run dev        # binds to 127.0.1.1:3000 transparently
-
-# in another terminal
-silo cd feature-b
-silo exec npm run dev        # binds to 127.0.1.2:3000 -- no conflict
+silo add auth
+silo add payments
+silo add search
 ```
 
-Each instance also gets a hostname via `/etc/hosts`:
+Three terminals, three agents, same port:
+
+```sh
+silo cd auth && claude "implement OAuth login"
+silo cd payments && claude "add Stripe integration"
+silo cd search && claude "build search API"
+```
+
+Each agent runs `silo exec npm run dev` to test their work -- all on `:3000`, zero conflicts:
 
 ```
-http://feature-a.your-project.silo:3000
-http://feature-b.your-project.silo:3000
+auth     → http://auth.your-project.silo:3000
+payments → http://payments.your-project.silo:3000
+search   → http://search.your-project.silo:3000
 ```
 
 ## How it works

@@ -357,8 +357,7 @@ mod tests {
     #[test]
     fn test_resolve_program_non_sip_path_unchanged() {
         let args = vec!["-c".to_string(), "echo hi".to_string()];
-        let (prog, resolved_args) =
-            resolve_program("/opt/homebrew/bin/bash", &args);
+        let (prog, resolved_args) = resolve_program("/opt/homebrew/bin/bash", &args);
         // Non-SIP path should NOT be modified (it's not a script so shebang
         // resolution returns None, and the SIP check doesn't apply)
         assert_eq!(prog, "/opt/homebrew/bin/bash");

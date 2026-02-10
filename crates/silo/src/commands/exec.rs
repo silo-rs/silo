@@ -78,8 +78,7 @@ pub fn exec_with_interception(
         );
         eprintln!(
             "  {}",
-            "bind interception may not work (DYLD_INSERT_LIBRARIES stripped by macOS)"
-                .dimmed()
+            "bind interception may not work (DYLD_INSERT_LIBRARIES stripped by macOS)".dimmed()
         );
         eprintln!(
             "  {}",
