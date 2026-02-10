@@ -32,9 +32,10 @@ pub async fn run(store: &Store) -> eyre::Result<()> {
         .map(|inst| (inst.ip, inst.hostname()))
         .collect();
     if !host_entries.is_empty()
-        && let Err(e) = hosts::sync_entries(&host_entries) {
-            ui::warn(format!("failed to sync hosts entries: {e}"));
-        }
+        && let Err(e) = hosts::sync_entries(&host_entries)
+    {
+        ui::warn(format!("failed to sync hosts entries: {e}"));
+    }
 
     if activated == 0 {
         ui::success(format!("all {} instance(s) already active", already_active));

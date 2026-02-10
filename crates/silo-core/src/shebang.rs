@@ -15,17 +15,72 @@ pub fn is_sip_protected(path: &Path) -> bool {
 }
 
 pub fn resolve_program(program: &str, args: &[String]) -> (String, Vec<String>) {
-    match resolve_recursive(program, args, 0) {
-        Some((prog, resolved_args)) => {
+    // First: try shebang-based resolution (for scripts)
+    if let Some((prog, resolved_args)) = resolve_recursive(program, args, 0) {
+        debug!(
+            original = program,
+            resolved = %prog,
+            "shebang resolved"
+        );
+        return (prog, resolved_args);
+    }
+
+    // Second: if program is a SIP-protected binary, find a non-SIP alternative
+    let program_path = Path::new(program);
+    if is_sip_protected(program_path) {
+        if let Some(name) = program_path.file_name().and_then(|n| n.to_str()) {
+            if let Some(resolved) = find_non_sip_binary(name) {
+                debug!(
+                    original = program,
+                    resolved = %resolved,
+                    "SIP binary resolved to non-SIP alternative"
+                );
+                return (resolved, args.to_vec());
+            }
             debug!(
                 original = program,
-                resolved = %prog,
-                "shebang resolved"
+                "no non-SIP alternative found for SIP-protected binary"
             );
-            (prog, resolved_args)
         }
-        None => (program.to_string(), args.to_vec()),
     }
+
+    (program.to_string(), args.to_vec())
+}
+
+/// Find a non-SIP-protected binary with the given name.
+///
+/// For shell binaries (`sh`, `bash`, `zsh`, etc.), tries compatible alternatives
+/// since macOS SIP protects all shells in `/bin/` and `/usr/bin/`.
+/// Returns `None` if no non-SIP alternative exists in PATH.
+pub fn find_non_sip_binary(name: &str) -> Option<String> {
+    let candidates: Vec<&str> = match name {
+        "sh" | "bash" | "zsh" | "dash" | "ksh" => {
+            let mut c = vec![name];
+            for fallback in &["bash", "zsh", "sh"] {
+                if !c.contains(fallback) {
+                    c.push(fallback);
+                }
+            }
+            c
+        }
+        _ => vec![name],
+    };
+
+    for candidate in candidates {
+        if let Ok(path) = which::which(candidate) {
+            if !is_sip_protected(&path) {
+                debug!(
+                    name,
+                    candidate,
+                    resolved = %path.display(),
+                    "found non-SIP binary"
+                );
+                return Some(path.to_string_lossy().into_owned());
+            }
+        }
+    }
+
+    None
 }
 
 fn resolve_recursive(
@@ -245,5 +300,68 @@ mod tests {
     fn test_parse_shebang_empty() {
         assert!(parse_shebang("#!\n").is_none());
         assert!(parse_shebang("#!  \n").is_none());
+    }
+
+    #[test]
+    fn test_find_non_sip_binary_never_returns_sip_path() {
+        // If find_non_sip_binary returns a path, it must NOT be SIP-protected
+        for name in &["sh", "bash", "zsh", "python3", "nonexistent-binary-xyz"] {
+            if let Some(ref path) = find_non_sip_binary(name) {
+                assert!(
+                    !is_sip_protected(Path::new(path)),
+                    "find_non_sip_binary({}) returned SIP path: {}",
+                    name,
+                    path
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_find_non_sip_binary_shell_fallbacks_dont_panic() {
+        // Verify the function handles all shell types without panicking
+        let _ = find_non_sip_binary("sh");
+        let _ = find_non_sip_binary("bash");
+        let _ = find_non_sip_binary("zsh");
+        let _ = find_non_sip_binary("dash");
+        let _ = find_non_sip_binary("ksh");
+    }
+
+    #[test]
+    fn test_find_non_sip_binary_nonexistent_returns_none() {
+        assert!(find_non_sip_binary("nonexistent-binary-xyz-12345").is_none());
+    }
+
+    #[test]
+    fn test_resolve_program_sip_binary_preserves_args() {
+        // Even if /bin/sh can't be resolved, args must pass through unchanged
+        let args = vec!["-c".to_string(), "echo hello".to_string()];
+        let (_, resolved_args) = resolve_program("/bin/sh", &args);
+        assert_eq!(resolved_args, args);
+    }
+
+    #[test]
+    fn test_resolve_program_sip_binary_resolves_to_non_sip() {
+        // If a non-SIP alternative is found, it should be used
+        let args = vec!["-c".to_string(), "echo hi".to_string()];
+        let (prog, _) = resolve_program("/bin/sh", &args);
+        if prog != "/bin/sh" {
+            assert!(
+                !is_sip_protected(Path::new(&prog)),
+                "resolve_program returned SIP path: {}",
+                prog
+            );
+        }
+    }
+
+    #[test]
+    fn test_resolve_program_non_sip_path_unchanged() {
+        let args = vec!["-c".to_string(), "echo hi".to_string()];
+        let (prog, resolved_args) =
+            resolve_program("/opt/homebrew/bin/bash", &args);
+        // Non-SIP path should NOT be modified (it's not a script so shebang
+        // resolution returns None, and the SIP check doesn't apply)
+        assert_eq!(prog, "/opt/homebrew/bin/bash");
+        assert_eq!(resolved_args, args);
     }
 }

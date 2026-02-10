@@ -94,22 +94,6 @@ The `connect()` rewrite ensures that when your app talks to `localhost`, it reac
 
 ### Edge cases
 
-**External services on localhost (databases, Redis, etc.)**
-
-This is the most common gotcha. If PostgreSQL is running on `127.0.0.1:5432`, and your app connects to `localhost:5432`, silo rewrites that to `127.0.1.x:5432` -- but PostgreSQL isn't listening there.
-
-Note that hardcoding `127.0.0.1` in your connection string doesn't help -- `connect()` rewrites that too. The fix depends on the situation:
-
-1. **Configure the service to listen on `0.0.0.0`** (e.g. `listen_addresses = '*'` in `postgresql.conf`), so it accepts connections on all loopback IPs including `127.0.1.x`
-2. **Run the service through `silo exec` too**, so it binds to the same `SILO_IP` as your app
-3. **Use a Unix domain socket** instead of TCP -- silo doesn't touch `AF_UNIX`
-
-For per-instance databases (e.g. one DB per branch), use `.env.silo`:
-
-```
-DATABASE_URL=postgres://localhost/myapp_${SILO_NAME}
-```
-
 **Statically linked binaries**
 
 `DYLD_INSERT_LIBRARIES` / `LD_PRELOAD` only works with dynamically linked binaries. Statically compiled programs (common in Go) bypass the interception entirely. For Go specifically, compile with `CGO_ENABLED=1` to use libc, or configure the app to bind to `$SILO_IP` directly.

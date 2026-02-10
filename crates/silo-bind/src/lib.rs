@@ -81,9 +81,10 @@ unsafe fn rewrite_bind_addr(addr: *const sockaddr) {
         let sin = addr as *mut sockaddr_in;
         let s_addr = (*sin).sin_addr.s_addr;
         if (s_addr == 0 || s_addr == u32::from(Ipv4Addr::LOCALHOST).to_be())
-            && let Some(ip_bytes) = get_silo_ip() {
-                (*sin).sin_addr.s_addr = ip_bytes;
-            }
+            && let Some(ip_bytes) = get_silo_ip()
+        {
+            (*sin).sin_addr.s_addr = ip_bytes;
+        }
     }
 
     #[cfg(target_os = "linux")]
@@ -114,9 +115,10 @@ unsafe fn rewrite_connect_addr(addr: *const sockaddr) {
     if family == AF_INET {
         let sin = addr as *mut sockaddr_in;
         if (*sin).sin_addr.s_addr == u32::from(Ipv4Addr::LOCALHOST).to_be()
-            && let Some(ip_bytes) = get_silo_ip() {
-                (*sin).sin_addr.s_addr = ip_bytes;
-            }
+            && let Some(ip_bytes) = get_silo_ip()
+        {
+            (*sin).sin_addr.s_addr = ip_bytes;
+        }
     }
 
     #[cfg(target_os = "linux")]
@@ -146,9 +148,10 @@ unsafe fn rewrite_sendto_addr(addr: *const sockaddr) {
         let sin = addr as *mut sockaddr_in;
         let s_addr = (*sin).sin_addr.s_addr;
         if (s_addr == 0 || s_addr == u32::from(Ipv4Addr::LOCALHOST).to_be())
-            && let Some(ip_bytes) = get_silo_ip() {
-                (*sin).sin_addr.s_addr = ip_bytes;
-            }
+            && let Some(ip_bytes) = get_silo_ip()
+        {
+            (*sin).sin_addr.s_addr = ip_bytes;
+        }
     }
 
     #[cfg(target_os = "linux")]
@@ -216,9 +219,10 @@ fn find_non_sip_in_path(name: &str) -> Option<CString> {
             }
             let candidate = format!("{}/{}", dir, try_name);
             if let Ok(c) = CString::new(candidate)
-                && unsafe { libc::access(c.as_ptr(), libc::X_OK) } == 0 {
-                    return Some(c);
-                }
+                && unsafe { libc::access(c.as_ptr(), libc::X_OK) } == 0
+            {
+                return Some(c);
+            }
         }
     }
     None
@@ -304,10 +308,11 @@ unsafe fn resolve_sip_exec(
 
     if !is_env
         && let Some(ref a) = arg
-            && let Ok(c) = CString::new(a.as_bytes()) {
-                ptrs.push(c.as_ptr());
-                owned.push(c);
-            }
+        && let Ok(c) = CString::new(a.as_bytes())
+    {
+        ptrs.push(c.as_ptr());
+        owned.push(c);
+    }
 
     ptrs.push(path);
 
@@ -402,19 +407,20 @@ mod platform {
                 let is_any = v6_addr == [0u8; 16];
                 let is_loopback = v6_addr == [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
                 if (is_any || is_loopback)
-                    && let Some(ip) = get_silo_ip() {
-                        let ret = rebind_as_ipv4(fd, (*sin6).sin6_port, ip);
-                        if debug_enabled() {
-                            let kind = if is_any { "::" } else { "::1" };
-                            eprintln!(
-                                "[silo-bind] pid={} bind {} → rebind_as_ipv4 → {}",
-                                std::process::id(),
-                                kind,
-                                ret
-                            );
-                        }
-                        return ret;
+                    && let Some(ip) = get_silo_ip()
+                {
+                    let ret = rebind_as_ipv4(fd, (*sin6).sin6_port, ip);
+                    if debug_enabled() {
+                        let kind = if is_any { "::" } else { "::1" };
+                        eprintln!(
+                            "[silo-bind] pid={} bind {} → rebind_as_ipv4 → {}",
+                            std::process::id(),
+                            kind,
+                            ret
+                        );
                     }
+                    return ret;
+                }
             }
         }
 
@@ -435,9 +441,10 @@ mod platform {
                 let sin6 = addr as *const libc::sockaddr_in6;
                 let loopback_v6: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
                 if (*sin6).sin6_addr.s6_addr == loopback_v6
-                    && let Some(ip) = get_silo_ip() {
-                        return reconnect_as_ipv4(fd, (*sin6).sin6_port, ip);
-                    }
+                    && let Some(ip) = get_silo_ip()
+                {
+                    return reconnect_as_ipv4(fd, (*sin6).sin6_port, ip);
+                }
             }
         }
 

@@ -7,6 +7,9 @@ publish = false
 [dependencies]
 libc = { workspace = true }
 
+[dev-dependencies]
+which = { workspace = true }
+
 [[bin]]
 name = "bind-helper"
 path = "src/bin/bind_helper.rs"

@@ -48,9 +48,10 @@ pub async fn run(
         let p = p.canonicalize().unwrap_or(p);
 
         if let Some(existing) = store.find_by_path(&p).await?
-            && existing.path == p {
-                eyre::bail!("another instance already uses path {}", p.display());
-            }
+            && existing.path == p
+        {
+            eyre::bail!("another instance already uses path {}", p.display());
+        }
         p
     };
 
@@ -76,10 +77,11 @@ pub async fn run(
         }
 
         if instance.is_worktree
-            && let Err(rb_err) = worktree::remove_worktree(&repo_root, &instance.path) {
-                ui::warn(format!("rollback failed (worktree): {rb_err}"));
-                rollback_failed = true;
-            }
+            && let Err(rb_err) = worktree::remove_worktree(&repo_root, &instance.path)
+        {
+            ui::warn(format!("rollback failed (worktree): {rb_err}"));
+            rollback_failed = true;
+        }
 
         if rollback_failed {
             ui::hint(format!(

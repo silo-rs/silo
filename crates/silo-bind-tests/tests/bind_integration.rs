@@ -168,3 +168,92 @@ fn invalid_silo_ip_passes_through() {
         "expected passthrough with invalid IP, got: {stdout}"
     );
 }
+
+// ── shell-mediated tests (macOS SIP scenario) ──
+
+/// Simulates what `silo run` does: runs bind-helper through `sh -c`.
+/// On macOS, this verifies that DYLD_INSERT_LIBRARIES works when the shell
+/// is NOT SIP-protected. The test finds a non-SIP shell (e.g. Homebrew bash)
+/// and runs the helper through it.
+#[test]
+#[cfg(target_os = "macos")]
+fn bind_through_non_sip_shell() {
+    // Find a non-SIP shell, similar to what resolve_program now does
+    let shell = find_non_sip_shell();
+    let Some(shell) = shell else {
+        eprintln!("SKIP: no non-SIP shell available (install Homebrew bash/zsh)");
+        return;
+    };
+
+    let helper = helper_path();
+    let lib = dylib_path();
+
+    let output = std::process::Command::new(&shell)
+        .args(["-c", &format!("{} bind_any", helper.display())])
+        .env(INJECT_KEY, lib.to_str().unwrap())
+        .env("SILO_IP", TEST_IP)
+        .output()
+        .expect("failed to run shell");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "shell command failed. stderr: {stderr}"
+    );
+    assert!(
+        stdout.contains(TEST_IP),
+        "bind interception failed through non-SIP shell ({shell}), got: {stdout}"
+    );
+    assert!(
+        !stdout.contains("0.0.0.0"),
+        "INADDR_ANY should have been rewritten through shell, got: {stdout}"
+    );
+}
+
+/// Verifies that DYLD_INSERT_LIBRARIES is stripped when using a SIP-protected
+/// shell (/bin/sh), causing bind interception to NOT work. This documents the
+/// known limitation that motivates the SIP resolution in shebang.rs.
+#[test]
+#[cfg(target_os = "macos")]
+fn bind_through_sip_shell_is_stripped() {
+    let helper = helper_path();
+    let lib = dylib_path();
+
+    let output = std::process::Command::new("/bin/sh")
+        .args(["-c", &format!("{} bind_any", helper.display())])
+        .env(INJECT_KEY, lib.to_str().unwrap())
+        .env("SILO_IP", TEST_IP)
+        .output()
+        .expect("failed to run /bin/sh");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    if output.status.success() {
+        // With SIP shell, DYLD_INSERT_LIBRARIES gets stripped.
+        // bind(0.0.0.0) should NOT be rewritten — it stays as 0.0.0.0
+        assert!(
+            stdout.contains("0.0.0.0"),
+            "expected SIP shell to strip DYLD_INSERT_LIBRARIES, but interception worked: {stdout}"
+        );
+    }
+    // If the process failed, that's also acceptable — SIP can cause issues
+}
+
+#[cfg(target_os = "macos")]
+fn find_non_sip_shell() -> Option<String> {
+    for name in &["bash", "zsh", "sh"] {
+        if let Ok(path) = which::which(name) {
+            let s = path.to_string_lossy();
+            if !s.starts_with("/usr/bin/")
+                && !s.starts_with("/bin/")
+                && !s.starts_with("/sbin/")
+                && !s.starts_with("/usr/sbin/")
+            {
+                return Some(s.into_owned());
+            }
+        }
+    }
+    None
+}

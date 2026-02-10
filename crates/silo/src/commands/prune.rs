@@ -68,9 +68,10 @@ pub async fn run(store: &Store, yes: bool) -> eyre::Result<()> {
         }
 
         if inst.is_worktree
-            && let Err(e) = worktree::delete_branch(&inst.repo, &inst.name) {
-                ui::warn(format!("failed to delete branch {}: {e}", inst.name));
-            }
+            && let Err(e) = worktree::delete_branch(&inst.repo, &inst.name)
+        {
+            ui::warn(format!("failed to delete branch {}: {e}", inst.name));
+        }
     }
 
     for inst in &orphans {

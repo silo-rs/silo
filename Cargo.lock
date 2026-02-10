@@ -1589,6 +1589,7 @@ name = "silo-bind-tests"
 version = "0.1.1"
 dependencies = [
  "libc",
+ "which",
 ]
 
 [[package]]

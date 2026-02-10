@@ -43,14 +43,15 @@ pub async fn run(
 
     if !no_hooks
         && let Some(cfg) = config::load_config_from(&instance.repo)?
-            && !cfg.hooks.enter.is_empty() {
-                hooks::run_hooks(
-                    &cfg.hooks.enter,
-                    &instance.path,
-                    &instance.env_vars(),
-                    "enter",
-                )?;
-            }
+        && !cfg.hooks.enter.is_empty()
+    {
+        hooks::run_hooks(
+            &cfg.hooks.enter,
+            &instance.path,
+            &instance.env_vars(),
+            "enter",
+        )?;
+    }
 
     exec_with_interception(&command[0], &command[1..], &instance.env_vars())
 }
@@ -67,6 +68,24 @@ pub fn exec_with_interception(
 
     #[cfg(not(target_os = "macos"))]
     let (program, args) = (program.to_string(), args.to_vec());
+
+    #[cfg(target_os = "macos")]
+    if silo_core::shebang::is_sip_protected(std::path::Path::new(&program)) {
+        eprintln!(
+            "{} running SIP-protected binary: {}",
+            "warning:".yellow().bold(),
+            program.dimmed(),
+        );
+        eprintln!(
+            "  {}",
+            "bind interception may not work (DYLD_INSERT_LIBRARIES stripped by macOS)"
+                .dimmed()
+        );
+        eprintln!(
+            "  {}",
+            "install a shell via Homebrew to fix: brew install bash".dimmed()
+        );
+    }
 
     let mut cmd = Command::new(&program);
     cmd.args(&args);

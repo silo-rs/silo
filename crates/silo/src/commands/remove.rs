@@ -42,14 +42,15 @@ pub async fn run(
 
     if !no_hooks
         && let Some(ref cfg) = cfg
-            && let Err(e) = hooks::run_hooks(
-                &cfg.hooks.teardown,
-                &instance.path,
-                &instance.env_vars(),
-                "teardown",
-            ) {
-                ui::warn(format!("teardown hook failed: {e}"));
-            }
+        && let Err(e) = hooks::run_hooks(
+            &cfg.hooks.teardown,
+            &instance.path,
+            &instance.env_vars(),
+            "teardown",
+        )
+    {
+        ui::warn(format!("teardown hook failed: {e}"));
+    }
 
     if let Err(e) = ip::remove_alias(instance.ip) {
         ui::warn(format!("failed to remove IP alias: {e}"));
