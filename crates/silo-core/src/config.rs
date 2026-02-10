@@ -16,7 +16,7 @@ pub struct SiloConfig {
     #[serde(default)]
     pub worktree: WorktreeConfig,
     #[serde(default)]
-    pub run: RunConfig,
+    pub scripts: ScriptsConfig,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -45,7 +45,7 @@ pub struct WorktreeConfig {
 use std::collections::HashMap;
 
 #[derive(Debug, Default, Serialize, Deserialize)]
-pub struct RunConfig {
+pub struct ScriptsConfig {
     #[serde(flatten)]
     pub commands: HashMap<String, String>,
 }
@@ -195,7 +195,7 @@ pub fn generate_for_project(ip_range: &str, project: &ProjectType) -> String {
             r#"# Commands to run after creating an instance
 # setup = ["npm install"]"#
                 .to_string(),
-            r#"# Named commands for `silo run <name>` (receives bind() interception + SILO_* env vars)
+            r#"# Named commands accessible as `silo <name>` (receives bind() interception + SILO_* env vars)
 # dev = "npm run dev"
 # test = "npm test""#
                 .to_string(),
@@ -208,7 +208,7 @@ ip_range = "{ip_range}"
 
 [hooks]
 {hooks_section}
-# Commands to run before each `silo exec` / `silo run`
+# Commands to run before each `silo run`
 # enter = []
 # Commands to run before destroying an instance
 # teardown = []
@@ -218,7 +218,7 @@ ip_range = "{ip_range}"
 # base_dir = "../"
 copy = ["**/.env*"]
 
-[run]
+[scripts]
 {run_section}
 "#
     )

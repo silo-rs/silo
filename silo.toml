@@ -3,7 +3,7 @@ ip_range = "127.0.1.0/24"
 
 [hooks]
 # setup = ["cargo build"]
-# Commands to run before each `silo exec` / `silo run`
+# Commands to run before each `silo run`
 # enter = []
 # Commands to run before destroying an instance
 # teardown = []
@@ -13,6 +13,6 @@ ip_range = "127.0.1.0/24"
 # base_dir = "../"
 copy = ["**/.env*"]
 
-[run]
+[scripts]
 # dev = "cargo run"
 # test = "cargo test"

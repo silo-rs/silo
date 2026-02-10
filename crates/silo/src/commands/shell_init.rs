@@ -92,18 +92,15 @@ silo() {
 # Dynamic completions for instance names
 _silo() {
     local -a subcmds
-    subcmds=(add list remove env info doctor prune run exec completions)
-    _arguments '1:command:compadd -a subcmds' '*::arg:->args'
+    subcmds=(add list remove env info doctor prune run scripts completions)
+    local -a scripts
+    scripts=(${(f)"$(command silo scripts --names-only 2>/dev/null)"})
+    _arguments '1:command:compadd -a -- subcmds scripts' '*::arg:->args'
     case "$words[1]" in
         remove|info|cd|dir)
             local -a instances
             instances=(${(f)"$(command silo list --json 2>/dev/null | command grep -o '"name":"[^"]*"' | command sed 's/"name":"//;s/"//')"})
             compadd -a instances
-            ;;
-        run)
-            local -a cmds
-            cmds=(${(f)"$(command silo run 2>/dev/null | command awk '/^    /{print $1}')"})
-            compadd -a cmds
             ;;
     esac
 }
@@ -145,9 +142,9 @@ function silo
 end
 
 # Dynamic completions for instance names
-complete -c silo -n '__fish_use_subcommand' -a 'add list remove env info doctor prune run exec completions'
+complete -c silo -n '__fish_use_subcommand' -a 'add list remove env info doctor prune run scripts completions'
+complete -c silo -n '__fish_use_subcommand' -a '(command silo scripts --names-only 2>/dev/null)'
 complete -c silo -n '__fish_seen_subcommand_from remove info cd dir' -a '(command silo list --json 2>/dev/null | string match -r \'"name":"[^"]*"\' | string replace -r \'"name":"([^"]*)"\' \'$1\')'
-complete -c silo -n '__fish_seen_subcommand_from run' -a '(command silo run 2>/dev/null | string match -r \'^\s+\S+\' | string trim)'
 
 # Run activate once per boot
 set -l _silo_marker "/tmp/.silo_activated_"(id -u)

@@ -46,9 +46,9 @@ silo add search
 Three terminals, three agents, same port:
 
 ```sh
-silo cd auth && silo exec claude "implement OAuth login"
-silo cd payments && silo exec claude "add Stripe integration"
-silo cd search && silo exec claude "build search API"
+silo cd auth && silo run claude "implement OAuth login"
+silo cd payments && silo run claude "add Stripe integration"
+silo cd search && silo run claude "build search API"
 ```
 
 Each agent just runs `npm run dev` as usual -- silo transparently rewrites the bind address:
@@ -62,17 +62,17 @@ search   → http://search.acme.silo:3000
 ## How it works
 
 1. **IP aliasing** — adds unique loopback IPs (e.g. `127.0.1.1`) via `ifconfig`/`ip addr`
-2. **Syscall interception** — `silo exec` injects a shared library via `DYLD_INSERT_LIBRARIES` (macOS) / `LD_PRELOAD` (Linux) that rewrites `bind()`, `connect()`, `getaddrinfo()`, and `sendto()` calls
+2. **Syscall interception** — `silo run` injects a shared library via `DYLD_INSERT_LIBRARIES` (macOS) / `LD_PRELOAD` (Linux) that rewrites `bind()`, `connect()`, `getaddrinfo()`, and `sendto()` calls
 3. **Git worktrees** — lightweight working copies that share `.git` history, not full clones
 4. **Hostname mapping** — automatic `/etc/hosts` entries for human-readable access
 
-## Deep dive: `silo exec`
+## Deep dive: `silo run`
 
-`silo exec` is where the magic happens. Understanding what it does (and doesn't do) will save you from surprises.
+`silo run` is where the magic happens. Understanding what it does (and doesn't do) will save you from surprises.
 
 ### What gets rewritten
 
-When you run `silo exec <cmd>`, silo injects a shared library into the process that intercepts network syscalls **before they reach the kernel**. The rewriting rules are:
+When you run `silo run <cmd>`, silo injects a shared library into the process that intercepts network syscalls **before they reach the kernel**. The rewriting rules are:
 
 | Syscall         | Original address                 | Rewritten to | Why                                                  |
 | --------------- | -------------------------------- | ------------ | ---------------------------------------------------- |
@@ -106,7 +106,7 @@ macOS prevents library injection into system binaries under `/usr/bin`, `/bin`, 
 Set `SILO_BIND_DEBUG=1` to see every intercepted syscall:
 
 ```sh
-SILO_BIND_DEBUG=1 silo exec npm run dev
+SILO_BIND_DEBUG=1 silo run npm run dev
 # [silo-bind] loaded pid=12345 SILO_IP=127.0.1.1
 # [silo-bind] pid=12345 bind fd=7 family=2 port=3000 SILO_IP=127.0.1.1
 ```
@@ -127,8 +127,8 @@ teardown = []                    # runs when you `silo remove`
 base_dir = "../"                 # where worktrees are created
 copy = ["**/.env*"]              # files to copy from main repo into worktrees
 
-[run]
-dev = "npm run dev"              # shortcuts for `silo run dev`
+[scripts]
+dev = "npm run dev"              # shortcuts: `silo dev`
 test = "npm test"
 ```
 
@@ -203,8 +203,9 @@ packages/web/.env.silo     → merged into packages/web/.env
 | `silo remove <name>` | Tear down instance and clean up            |
 | `silo list`          | Show instances for current repo            |
 | `silo cd <name>`     | Jump to instance directory                 |
-| `silo exec <cmd>`    | Run command with transparent IP isolation  |
-| `silo run <name>`    | Run a command defined in `[run]` config    |
+| `silo run <cmd>`     | Run command with transparent IP isolation  |
+| `silo <script>`      | Run a script defined in `[scripts]` config     |
+| `silo scripts`       | List available scripts from `[scripts]` config |
 | `silo info [name]`   | Show instance details                      |
 | `silo doctor`        | Diagnose configuration issues              |
 | `silo activate`      | Restore IP aliases after reboot            |

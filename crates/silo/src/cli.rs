@@ -1,10 +1,7 @@
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(
-    name = "silo",
-    about = "silo — syscall interception on loopback"
-)]
+#[command(name = "silo", about = "silo — syscall interception on loopback")]
 #[command(version, propagate_version = true)]
 pub struct Cli {
     /// Output results as JSON (machine-readable)
@@ -104,22 +101,8 @@ pub enum Commands {
     /// Remove orphaned instances (missing paths, stale aliases)
     Prune,
 
-    /// Run a command defined in silo.toml [run] (omit name to list available commands)
+    /// Run a command with automatic bind() interception
     Run {
-        /// Target a specific instance by name (auto-detected from cwd if omitted)
-        #[arg(long, short)]
-        instance: Option<String>,
-
-        /// Name of the command defined in silo.toml (omit to list)
-        name: Option<String>,
-
-        /// Skip enter hooks
-        #[arg(long)]
-        no_hooks: bool,
-    },
-
-    /// Execute a command with automatic bind() interception
-    Exec {
         /// Target a specific instance by name (auto-detected from cwd if omitted)
         #[arg(long, short)]
         instance: Option<String>,
@@ -135,6 +118,13 @@ pub enum Commands {
         /// Command and arguments to run
         #[arg(trailing_var_arg = true, required = true)]
         command: Vec<String>,
+    },
+
+    /// List available commands defined in silo.toml [scripts]
+    Scripts {
+        /// Output only script names (for shell completions)
+        #[arg(long, hide = true)]
+        names_only: bool,
     },
 
     /// Run hooks manually (setup, enter, teardown)

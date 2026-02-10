@@ -249,7 +249,7 @@ fn bind_v6_preserves_socket_options() {
 
 // ── shell-mediated tests (macOS SIP scenario) ──
 
-/// Simulates what `silo run` does: runs bind-helper through `sh -c`.
+/// Simulates what config scripts (e.g. `silo dev`) do: runs bind-helper through `sh -c`.
 /// On macOS, this verifies that DYLD_INSERT_LIBRARIES works when the shell
 /// is NOT SIP-protected. The test finds a non-SIP shell (e.g. Homebrew bash)
 /// and runs the helper through it.

@@ -10,6 +10,26 @@ use colored::Colorize;
 use silo_core::store;
 use tracing_subscriber::{EnvFilter, fmt};
 
+const KNOWN_SUBCOMMANDS: &[&str] = &[
+    "init",
+    "add",
+    "list",
+    "remove",
+    "env",
+    "info",
+    "doctor",
+    "prune",
+    "run",
+    "scripts",
+    "hook",
+    "activate",
+    "dir",
+    "shell-init",
+    "completions",
+    "default-config",
+    "help",
+];
+
 fn main() {
     init_tracing();
     color_eyre::install().ok();
@@ -38,7 +58,27 @@ fn init_tracing() {
         .init();
 }
 
+/// Find the first positional arg, skipping global flags.
+fn first_positional_arg() -> Option<String> {
+    for arg in std::env::args().skip(1) {
+        match arg.as_str() {
+            "--json" | "--yes" | "-y" => continue,
+            s if s.starts_with('-') => return None,
+            _ => return Some(arg),
+        }
+    }
+    None
+}
+
 async fn run() -> eyre::Result<()> {
+    // Two-phase parsing: try config script before clap
+    if let Some(candidate) = first_positional_arg()
+        && !KNOWN_SUBCOMMANDS.contains(&candidate.as_str())
+    {
+        let store = store::Store::open_default().await?;
+        return commands::run::run_script(&store, &candidate, false).await;
+    }
+
     let cli = Cli::parse();
     let json = cli.json;
     let yes = cli.yes;
@@ -48,6 +88,7 @@ async fn run() -> eyre::Result<()> {
         Commands::ShellInit => return commands::shell_init::run(),
         Commands::Completions { shell } => return commands::completions::run(shell),
         Commands::DefaultConfig => return commands::default_config::run(),
+        Commands::Scripts { names_only } => return commands::run::list_scripts(names_only),
         _ => {}
     }
 
@@ -82,11 +123,6 @@ async fn run() -> eyre::Result<()> {
         Commands::Prune => commands::prune::run(&store, yes).await,
         Commands::Run {
             instance,
-            name,
-            no_hooks,
-        } => commands::run::run(&store, instance.as_deref(), name.as_deref(), no_hooks).await,
-        Commands::Exec {
-            instance,
             quiet,
             no_hooks,
             command,
@@ -97,6 +133,7 @@ async fn run() -> eyre::Result<()> {
         Commands::Init { .. }
         | Commands::ShellInit
         | Commands::Completions { .. }
-        | Commands::DefaultConfig => unreachable!(),
+        | Commands::DefaultConfig
+        | Commands::Scripts { .. } => unreachable!(),
     }
 }
