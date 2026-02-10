@@ -64,32 +64,68 @@ pub fn apply_silo_env(
 
 /// Parse KEY=VALUE lines (skipping comments and blanks), substitute variables,
 /// and return as ordered (key, value) pairs.
+///
+/// Handles common `.env` conventions:
+/// - `export VAR=value` — `export` prefix is stripped
+/// - `VAR="hello world"` — surrounding double/single quotes are stripped
+/// - Duplicate keys — last occurrence wins
 fn parse_overrides(content: &str, vars: &HashMap<String, String>) -> Vec<(String, String)> {
-    let mut pairs = Vec::new();
+    let mut pairs: Vec<(String, String)> = Vec::new();
     for line in content.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
+        let trimmed = trimmed.strip_prefix("export ").unwrap_or(trimmed);
         if let Some((key, value)) = trimmed.split_once('=') {
-            pairs.push((key.to_string(), substitute(value, vars)));
+            let key = key.trim().to_string();
+            let value = strip_quotes(value.trim());
+            let value = substitute(&value, vars);
+
+            // Last-write-wins: remove earlier duplicate if present
+            if let Some(pos) = pairs.iter().position(|(k, _)| k == &key) {
+                pairs.remove(pos);
+            }
+            pairs.push((key, value));
         }
     }
     pairs
 }
 
+/// Strip matching surrounding quotes (double or single) from a value.
+fn strip_quotes(value: &str) -> String {
+    if value.len() >= 2
+        && ((value.starts_with('"') && value.ends_with('"'))
+            || (value.starts_with('\'') && value.ends_with('\'')))
+    {
+        value[1..value.len() - 1].to_string()
+    } else {
+        value.to_string()
+    }
+}
+
 /// Merge overrides into existing env content. If a key already exists, replace
-/// that line in-place. Otherwise append at the end.
+/// that line in-place (preserving `export` prefix if present). Otherwise append
+/// at the end.
 fn merge_env(existing: &str, overrides: &[(String, String)]) -> String {
     let mut lines: Vec<String> = existing.lines().map(String::from).collect();
     let mut appended = Vec::new();
 
     for (key, value) in overrides {
-        let prefix = format!("{key}=");
+        let prefix_plain = format!("{key}=");
+        let prefix_export = format!("export {key}=");
         let mut replaced = false;
         for line in &mut lines {
             let trimmed = line.trim();
-            if !trimmed.starts_with('#') && trimmed.starts_with(&prefix) {
+            if trimmed.starts_with('#') {
+                continue;
+            }
+            if trimmed.starts_with(&prefix_export) {
+                *line = format!("export {key}={value}");
+                replaced = true;
+                break;
+            }
+            if trimmed.starts_with(&prefix_plain) {
                 *line = format!("{key}={value}");
                 replaced = true;
                 break;
@@ -269,5 +305,135 @@ mod tests {
         let overrides = vec![("DB".into(), "new".into())];
         let result = merge_env(existing, &overrides);
         assert_eq!(result, "# database\nDB=new\n# cache\nREDIS=localhost\n");
+    }
+
+    // ── export prefix tests ──
+
+    #[test]
+    fn parse_overrides_strips_export_prefix() {
+        let vars = HashMap::new();
+        let content = "export DB=mydb\nexport PORT=3000\nHOST=localhost";
+        let pairs = parse_overrides(content, &vars);
+        assert_eq!(
+            pairs,
+            vec![
+                ("DB".into(), "mydb".into()),
+                ("PORT".into(), "3000".into()),
+                ("HOST".into(), "localhost".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn merge_env_matches_export_prefix_in_existing() {
+        let existing = "export DB=old\nexport PORT=3000\n";
+        let overrides = vec![("DB".into(), "new".into())];
+        let result = merge_env(existing, &overrides);
+        assert_eq!(result, "export DB=new\nexport PORT=3000\n");
+    }
+
+    // ── quote stripping tests ──
+
+    #[test]
+    fn parse_overrides_strips_double_quotes() {
+        let vars = HashMap::new();
+        let content = "MSG=\"hello world\"";
+        let pairs = parse_overrides(content, &vars);
+        assert_eq!(pairs, vec![("MSG".into(), "hello world".into())]);
+    }
+
+    #[test]
+    fn parse_overrides_strips_single_quotes() {
+        let vars = HashMap::new();
+        let content = "MSG='hello world'";
+        let pairs = parse_overrides(content, &vars);
+        assert_eq!(pairs, vec![("MSG".into(), "hello world".into())]);
+    }
+
+    #[test]
+    fn parse_overrides_preserves_inner_quotes() {
+        let vars = HashMap::new();
+        let content = "MSG=\"it's a 'test'\"";
+        let pairs = parse_overrides(content, &vars);
+        assert_eq!(pairs, vec![("MSG".into(), "it's a 'test'".into())]);
+    }
+
+    #[test]
+    fn parse_overrides_unmatched_quote_preserved() {
+        let vars = HashMap::new();
+        let content = "MSG=\"hello";
+        let pairs = parse_overrides(content, &vars);
+        assert_eq!(pairs, vec![("MSG".into(), "\"hello".into())]);
+    }
+
+    #[test]
+    fn parse_overrides_empty_quoted_value() {
+        let vars = HashMap::new();
+        let content = "EMPTY=\"\"";
+        let pairs = parse_overrides(content, &vars);
+        assert_eq!(pairs, vec![("EMPTY".into(), "".into())]);
+    }
+
+    // ── duplicate key tests ──
+
+    #[test]
+    fn parse_overrides_duplicate_key_last_wins() {
+        let vars = HashMap::new();
+        let content = "KEY=first\nKEY=second\nKEY=third";
+        let pairs = parse_overrides(content, &vars);
+        assert_eq!(pairs, vec![("KEY".into(), "third".into())]);
+    }
+
+    #[test]
+    fn parse_overrides_duplicate_mixed_with_export() {
+        let vars = HashMap::new();
+        let content = "export DB=old\nDB=new";
+        let pairs = parse_overrides(content, &vars);
+        assert_eq!(pairs, vec![("DB".into(), "new".into())]);
+    }
+
+    // ── strip_quotes edge cases ──
+
+    #[test]
+    fn strip_quotes_no_quotes() {
+        assert_eq!(strip_quotes("hello"), "hello");
+    }
+
+    #[test]
+    fn strip_quotes_double() {
+        assert_eq!(strip_quotes("\"hello world\""), "hello world");
+    }
+
+    #[test]
+    fn strip_quotes_single() {
+        assert_eq!(strip_quotes("'hello world'"), "hello world");
+    }
+
+    #[test]
+    fn strip_quotes_mismatched() {
+        assert_eq!(strip_quotes("\"hello'"), "\"hello'");
+    }
+
+    #[test]
+    fn strip_quotes_single_char() {
+        assert_eq!(strip_quotes("\""), "\"");
+    }
+
+    #[test]
+    fn strip_quotes_empty() {
+        assert_eq!(strip_quotes(""), "");
+    }
+
+    // ── combined tests ──
+
+    #[test]
+    fn parse_overrides_export_with_quotes_and_substitution() {
+        let vars = HashMap::from([("SILO_NAME".into(), "api".into())]);
+        let content = "export DATABASE_URL=\"postgres://localhost/${SILO_NAME}\"";
+        let pairs = parse_overrides(content, &vars);
+        assert_eq!(
+            pairs,
+            vec![("DATABASE_URL".into(), "postgres://localhost/api".into())]
+        );
     }
 }
