@@ -12,8 +12,10 @@ use libc::{AF_INET, sockaddr, sockaddr_in, socklen_t};
 
 static SILO_IP: OnceLock<Option<u32>> = OnceLock::new();
 
+#[cfg(target_os = "macos")]
 static DEBUG: OnceLock<bool> = OnceLock::new();
 
+#[cfg(target_os = "macos")]
 unsafe extern "C" {
     #[link_name = "bind"]
     fn real_bind(fd: c_int, addr: *const sockaddr, len: socklen_t) -> c_int;
@@ -177,6 +179,7 @@ fn ipv4_mapped_v6(silo_ip: u32) -> [u8; 16] {
 const V6_LOOPBACK: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
 const V6_ANY: [u8; 16] = [0u8; 16];
 
+#[cfg(target_os = "macos")]
 fn debug_enabled() -> bool {
     *DEBUG.get_or_init(|| env::var("SILO_BIND_DEBUG").is_ok())
 }
@@ -834,7 +837,7 @@ mod platform {
 
     #[unsafe(no_mangle)]
     pub unsafe extern "C" fn bind(fd: c_int, addr: *const sockaddr, len: socklen_t) -> c_int {
-        let real = libc::dlsym(libc::RTLD_NEXT, b"bind\0".as_ptr() as *const _);
+        let real = libc::dlsym(libc::RTLD_NEXT, c"bind".as_ptr());
         let real_fn: unsafe extern "C" fn(c_int, *const sockaddr, socklen_t) -> c_int =
             std::mem::transmute(real);
 
@@ -844,7 +847,7 @@ mod platform {
 
     #[unsafe(no_mangle)]
     pub unsafe extern "C" fn connect(fd: c_int, addr: *const sockaddr, len: socklen_t) -> c_int {
-        let real = libc::dlsym(libc::RTLD_NEXT, b"connect\0".as_ptr() as *const _);
+        let real = libc::dlsym(libc::RTLD_NEXT, c"connect".as_ptr());
         let real_fn: unsafe extern "C" fn(c_int, *const sockaddr, socklen_t) -> c_int =
             std::mem::transmute(real);
 
@@ -859,7 +862,7 @@ mod platform {
         hints: *const libc::addrinfo,
         res: *mut *mut libc::addrinfo,
     ) -> c_int {
-        let real = libc::dlsym(libc::RTLD_NEXT, b"getaddrinfo\0".as_ptr() as *const _);
+        let real = libc::dlsym(libc::RTLD_NEXT, c"getaddrinfo".as_ptr());
         let real_fn: unsafe extern "C" fn(
             *const libc::c_char,
             *const libc::c_char,
@@ -906,7 +909,7 @@ mod platform {
         dest_addr: *const sockaddr,
         addrlen: socklen_t,
     ) -> libc::ssize_t {
-        let real = libc::dlsym(libc::RTLD_NEXT, b"sendto\0".as_ptr() as *const _);
+        let real = libc::dlsym(libc::RTLD_NEXT, c"sendto".as_ptr());
         let real_fn: unsafe extern "C" fn(
             c_int,
             *const libc::c_void,
