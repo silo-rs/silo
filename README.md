@@ -14,9 +14,9 @@ Zero code changes. No containers. Each instance gets its own loopback IP, and yo
 
 ## Why
 
-You're running your app on `localhost:3000`. You switch to another branch to test something -- but port 3000 is taken.
+Three AI agents building three features at the same time. All need `localhost:3000`. Port taken.
 
-Now multiply that by three AI coding agents working on different features at the same time.
+Even without agents, you hit this every time you switch branches and forget to kill the old process.
 
 The usual options aren't great:
 
@@ -30,15 +30,11 @@ silo takes a different approach: give each instance its own IP on the loopback i
 
 No environment variables to set. No config files to edit. No code to change.
 
-## Install
-
-```sh
-curl -fsSL https://setup.silo.rs | sh
-```
-
 ## Quick start
 
 ```sh
+curl -fsSL https://setup.silo.rs | sh
+
 cd acme
 silo init
 

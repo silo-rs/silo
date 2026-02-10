@@ -25,9 +25,16 @@ __silo_env_hook() {
         __silo_instance_path=""
     fi
 }
-if [[ ! "$PROMPT_COMMAND" =~ __silo_env_hook ]]; then
-    PROMPT_COMMAND="__silo_env_hook${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
-fi
+case "$(declare -p PROMPT_COMMAND 2>/dev/null)" in
+    "declare -a"*)
+        # Bash 5.1+ array: append to array if not already present
+        [[ " ${PROMPT_COMMAND[*]} " =~ __silo_env_hook ]] || PROMPT_COMMAND+=('__silo_env_hook')
+        ;;
+    *)
+        # String or unset: prepend if not already present
+        [[ "${PROMPT_COMMAND:-}" =~ __silo_env_hook ]] || PROMPT_COMMAND="__silo_env_hook${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+        ;;
+esac
 
 silo() {
     if [ "$1" = "cd" ]; then
@@ -162,6 +169,13 @@ mod tests {
         assert!(BASH_INIT.contains("silo()"));
         assert!(BASH_INIT.contains("PROMPT_COMMAND"));
         assert!(BASH_INIT.contains("silo activate"));
+    }
+
+    #[test]
+    fn bash_prompt_command_handles_array() {
+        // Must handle both array (Bash 5.1+) and string PROMPT_COMMAND
+        assert!(BASH_INIT.contains("declare -a"));
+        assert!(BASH_INIT.contains("PROMPT_COMMAND+="));
     }
 
     #[test]
