@@ -4,13 +4,44 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use eyre::Context;
+use fs2::FileExt;
 use tracing::{debug, instrument};
 
 use crate::ip;
 
 const HOSTS_PATH: &str = "/etc/hosts";
+const LOCK_PATH: &str = "/tmp/silo-hosts.lock";
 const BEGIN_MARKER: &str = "# BEGIN silo managed block - do not edit";
 const END_MARKER: &str = "# END silo managed block";
+
+/// RAII file lock using flock(2) via fs2. Automatically released on drop.
+struct FileLock {
+    file: std::fs::File,
+}
+
+impl FileLock {
+    /// Acquire an exclusive lock on the given path, blocking until available.
+    fn exclusive(path: &str) -> eyre::Result<Self> {
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .open(path)
+            .with_context(|| format!("failed to open lock file: {path}"))?;
+
+        file.lock_exclusive()
+            .with_context(|| format!("failed to acquire file lock on {path}"))?;
+
+        debug!(path, "acquired hosts file lock");
+        Ok(Self { file })
+    }
+}
+
+impl Drop for FileLock {
+    fn drop(&mut self) {
+        let _ = self.file.unlock();
+    }
+}
 
 pub fn hostname(name: &str, repo: &Path) -> String {
     let repo_dir = repo
@@ -23,6 +54,7 @@ pub fn hostname(name: &str, repo: &Path) -> String {
 #[instrument]
 pub fn add_entry(ip: Ipv4Addr, hostname: &str) -> eyre::Result<()> {
     ip::ensure_sudoers()?;
+    let _lock = FileLock::exclusive(LOCK_PATH)?;
 
     let content = read_hosts()?;
     let (before, mut entries, after) = parse_block(&content);
@@ -48,6 +80,7 @@ pub fn add_entry(ip: Ipv4Addr, hostname: &str) -> eyre::Result<()> {
 #[instrument]
 pub fn remove_entry(hostname: &str) -> eyre::Result<()> {
     ip::ensure_sudoers()?;
+    let _lock = FileLock::exclusive(LOCK_PATH)?;
 
     let content = read_hosts()?;
     let (before, mut entries, after) = parse_block(&content);
@@ -70,6 +103,7 @@ pub fn remove_entry(hostname: &str) -> eyre::Result<()> {
 #[instrument(skip(entries))]
 pub fn sync_entries(entries: &[(Ipv4Addr, String)]) -> eyre::Result<()> {
     ip::ensure_sudoers()?;
+    let _lock = FileLock::exclusive(LOCK_PATH)?;
 
     let content = read_hosts()?;
     let (before, _, after) = parse_block(&content);
@@ -290,5 +324,49 @@ mod tests {
         let (before, entries, after) = parse_block(&original);
         let rebuilt = rebuild(before, &entries, after);
         assert_eq!(rebuilt, original);
+    }
+
+    #[test]
+    fn flock_acquire_and_release() {
+        let dir = tempfile::tempdir().unwrap();
+        let lock_path = dir.path().join("test.lock");
+        let lock_str = lock_path.to_str().unwrap();
+
+        // Should acquire successfully
+        let lock = FileLock::exclusive(lock_str).unwrap();
+        assert!(lock_path.exists());
+
+        // A second open file description should fail with try_lock
+        let file2 = std::fs::File::options()
+            .create(true)
+            .read(true)
+            .write(true)
+            .open(&lock_path)
+            .unwrap();
+        assert!(
+            file2.try_lock_exclusive().is_err(),
+            "expected lock to be held"
+        );
+
+        // Drop the first lock
+        drop(lock);
+
+        // Now the second should succeed
+        file2.lock_exclusive().unwrap();
+        file2.unlock().unwrap();
+    }
+
+    #[test]
+    fn flock_sequential_reacquire() {
+        let dir = tempfile::tempdir().unwrap();
+        let lock_path = dir.path().join("test.lock");
+        let lock_str = lock_path.to_str().unwrap();
+
+        let lock1 = FileLock::exclusive(lock_str).unwrap();
+        drop(lock1);
+
+        // Re-acquiring after release should work
+        let lock2 = FileLock::exclusive(lock_str).unwrap();
+        drop(lock2);
     }
 }

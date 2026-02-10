@@ -39,7 +39,7 @@ curl -fsSL https://setup.silo.rs | sh
 ## Quick start
 
 ```sh
-cd your-project
+cd acme
 silo init
 
 silo add auth
@@ -50,17 +50,17 @@ silo add search
 Three terminals, three agents, same port:
 
 ```sh
-silo cd auth && claude "implement OAuth login"
-silo cd payments && claude "add Stripe integration"
-silo cd search && claude "build search API"
+silo cd auth && silo exec claude "implement OAuth login"
+silo cd payments && silo exec claude "add Stripe integration"
+silo cd search && silo exec claude "build search API"
 ```
 
-Each agent runs `silo exec npm run dev` to test their work -- all on `:3000`, zero conflicts:
+Each agent just runs `npm run dev` as usual -- silo transparently rewrites the bind address:
 
 ```
-auth     → http://auth.your-project.silo:3000
-payments → http://payments.your-project.silo:3000
-search   → http://search.your-project.silo:3000
+auth     → http://auth.acme.silo:3000
+payments → http://payments.acme.silo:3000
+search   → http://search.acme.silo:3000
 ```
 
 ## How it works
