@@ -1,12 +1,8 @@
 # silo
 
-<b>S</b>imultaneous <b>I</b>nstances via <b>L</b>oopback <b>O</b>rchestration
+Run the same app on the same port, simultaneously -- across branches, worktrees, or AI agents.
 
-<p align="center">
-  <img src="demo.gif" alt="demo" />
-</p>
-
-<p align="center"><em>Same app, same port — across branches, worktrees, and AI agents.</em></p>
+![demo](demo.gif)
 
 ```
 feature-a → 127.0.1.1:3000
