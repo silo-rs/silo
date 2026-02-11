@@ -50,20 +50,12 @@ silo add payments
 silo add search
 ```
 
-Three terminals, three agents, same port:
+Three terminals, all at once:
 
 ```sh
-silo cd auth && silo run claude "implement OAuth login"
-silo cd payments && silo run claude "add Stripe integration"
-silo cd search && silo run claude "build search API"
-```
-
-Each agent just runs `npm run dev` as usual -- silo transparently rewrites the bind address:
-
-```
-auth     → http://auth.acme.silo:3000
-payments → http://payments.acme.silo:3000
-search   → http://search.acme.silo:3000
+silo cd auth && silo dev        # → http://auth.acme.silo:3000
+silo cd payments && silo dev    # → http://payments.acme.silo:3000
+silo cd search && silo dev      # → http://search.acme.silo:3000
 ```
 
 ## How it works
