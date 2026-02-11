@@ -53,9 +53,9 @@ silo add search
 Three terminals, all at once:
 
 ```sh
-silo cd auth && silo dev        # → http://auth.acme.silo:3000
-silo cd payments && silo dev    # → http://payments.acme.silo:3000
-silo cd search && silo dev      # → http://search.acme.silo:3000
+silo cd auth && silo run npm run dev        # → http://auth.acme.silo:3000
+silo cd payments && silo run npm run dev    # → http://payments.acme.silo:3000
+silo cd search && silo run npm run dev      # → http://search.acme.silo:3000
 ```
 
 ## How it works
