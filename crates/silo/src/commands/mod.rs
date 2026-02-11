@@ -5,7 +5,6 @@ pub mod default_config;
 pub mod dir;
 pub mod doctor;
 pub mod env;
-pub mod exec;
 pub mod hook;
 pub mod info;
 pub mod init;
@@ -13,6 +12,7 @@ pub mod list;
 pub mod prune;
 pub mod remove;
 pub mod run;
+pub mod scripts;
 pub mod shell_init;
 
 use std::io::{self, Write};

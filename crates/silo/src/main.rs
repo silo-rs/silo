@@ -76,7 +76,7 @@ async fn run() -> eyre::Result<()> {
         && !KNOWN_SUBCOMMANDS.contains(&candidate.as_str())
     {
         let store = store::Store::open_default().await?;
-        return commands::run::run_script(&store, &candidate, false).await;
+        return commands::scripts::run_script(&store, &candidate, false).await;
     }
 
     let cli = Cli::parse();
@@ -88,7 +88,7 @@ async fn run() -> eyre::Result<()> {
         Commands::ShellInit => return commands::shell_init::run(),
         Commands::Completions { shell } => return commands::completions::run(shell),
         Commands::DefaultConfig => return commands::default_config::run(),
-        Commands::Scripts { names_only } => return commands::run::list_scripts(names_only),
+        Commands::Scripts { names_only } => return commands::scripts::list_scripts(names_only),
         _ => {}
     }
 
@@ -126,7 +126,7 @@ async fn run() -> eyre::Result<()> {
             quiet,
             no_hooks,
             command,
-        } => commands::exec::run(&store, instance.as_deref(), &command, quiet, no_hooks).await,
+        } => commands::run::run(&store, instance.as_deref(), &command, quiet, no_hooks).await,
         Commands::Hook { name, instance } => {
             commands::hook::run(&store, &name, instance.as_deref()).await
         }
