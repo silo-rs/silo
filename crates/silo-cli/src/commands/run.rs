@@ -7,9 +7,9 @@ use colored::Colorize;
 use eyre::Context;
 
 use crate::ui;
-use silo_core::config;
-use silo_core::hooks;
-use silo_core::store::Store;
+use silo::config;
+use silo::hooks;
+use silo::store::Store;
 
 pub async fn run(
     store: &Store,
@@ -64,13 +64,13 @@ pub fn exec_with_interception(
     let lib_path = find_bind_lib()?;
 
     #[cfg(target_os = "macos")]
-    let (program, args) = silo_core::shebang::resolve_program(program, args);
+    let (program, args) = silo::shebang::resolve_program(program, args);
 
     #[cfg(not(target_os = "macos"))]
     let (program, args) = (program.to_string(), args.to_vec());
 
     #[cfg(target_os = "macos")]
-    if silo_core::shebang::is_sip_protected(std::path::Path::new(&program)) {
+    if silo::shebang::is_sip_protected(std::path::Path::new(&program)) {
         eprintln!(
             "{} running SIP-protected binary: {}",
             "warning:".yellow().bold(),

@@ -1,7 +1,7 @@
 use eyre::Context;
 use serde_json::json;
 
-use silo_core::store::Store;
+use silo::store::Store;
 
 pub async fn run(store: &Store, instance: Option<&str>, json_output: bool) -> eyre::Result<()> {
     let cwd = std::env::current_dir().context("failed to get current directory")?;

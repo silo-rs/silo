@@ -7,7 +7,7 @@ pub(crate) mod ui;
 use clap::Parser;
 use cli::{Cli, Commands};
 use colored::Colorize;
-use silo_core::store;
+use silo::store;
 use tracing_subscriber::{EnvFilter, fmt};
 
 const KNOWN_SUBCOMMANDS: &[&str] = &[

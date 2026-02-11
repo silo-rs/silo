@@ -1,8 +1,8 @@
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 
-use silo_core::state::Instance;
-use silo_core::store::Store;
+use silo::state::Instance;
+use silo::store::Store;
 
 fn make_instance(name: &str, ip: [u8; 4], path: &str, repo: &str) -> Instance {
     Instance::builder()

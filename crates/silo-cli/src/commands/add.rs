@@ -4,15 +4,15 @@ use colored::Colorize;
 use eyre::Context;
 
 use crate::ui;
-use silo_core::config;
-use silo_core::error::SiloError;
-use silo_core::hooks;
-use silo_core::hosts;
-use silo_core::ip;
-use silo_core::render;
-use silo_core::state::Instance;
-use silo_core::store::Store;
-use silo_core::worktree;
+use silo::config;
+use silo::error::SiloError;
+use silo::hooks;
+use silo::hosts;
+use silo::ip;
+use silo::render;
+use silo::state::Instance;
+use silo::store::Store;
+use silo::worktree;
 
 pub async fn run(
     store: &Store,

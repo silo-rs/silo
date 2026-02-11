@@ -1,9 +1,9 @@
 use eyre::Context;
 
 use crate::ui;
-use silo_core::config;
-use silo_core::hooks;
-use silo_core::store::Store;
+use silo::config;
+use silo::hooks;
+use silo::store::Store;
 
 pub async fn run(store: &Store, name: &str, instance: Option<&str>) -> eyre::Result<()> {
     let cwd = std::env::current_dir().context("failed to get current directory")?;

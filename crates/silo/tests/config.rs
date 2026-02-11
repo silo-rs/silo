@@ -1,6 +1,6 @@
 use std::fs;
 
-use silo_core::config::{generate_default, load_config_from};
+use silo::config::{generate_default, load_config_from};
 
 #[test]
 fn parse_default_config() {

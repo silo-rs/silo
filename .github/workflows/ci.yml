@@ -67,7 +67,7 @@ jobs:
           ip_path=$(command -v ip)
           echo "ip command at: $ip_path"
           # Verify our detection logic finds the same path
-          cargo test -p silo-core -- ip::tests::admin_group --nocapture
+          cargo test -p silo -- ip::tests::admin_group --nocapture
 
   shell-syntax:
     name: Shell syntax
@@ -79,7 +79,7 @@ jobs:
       - name: Install fish and zsh
         run: sudo apt-get update && sudo apt-get install -y fish zsh
       - name: Build silo
-        run: cargo build -p silo
+        run: cargo build -p silo-cli
       - name: Validate shell init scripts
         run: |
           SHELL=/bin/bash ./target/debug/silo shell-init > /tmp/bash_init.sh

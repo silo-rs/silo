@@ -2,9 +2,9 @@ use colored::Colorize;
 use eyre::Context;
 
 use crate::ui;
-use silo_core::config;
-use silo_core::hooks;
-use silo_core::store::Store;
+use silo::config;
+use silo::hooks;
+use silo::store::Store;
 
 pub async fn run_script(store: &Store, name: &str, no_hooks: bool) -> eyre::Result<()> {
     let (cfg, _) = config::load_config()?;

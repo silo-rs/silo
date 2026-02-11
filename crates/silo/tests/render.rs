@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 
-use silo_core::render;
+use silo::render;
 
 fn test_vars() -> HashMap<String, String> {
     HashMap::from([

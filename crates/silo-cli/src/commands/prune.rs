@@ -5,10 +5,10 @@ use std::path::PathBuf;
 use colored::Colorize;
 
 use crate::ui;
-use silo_core::hosts;
-use silo_core::ip;
-use silo_core::store::Store;
-use silo_core::worktree;
+use silo::hosts;
+use silo::ip;
+use silo::store::Store;
+use silo::worktree;
 
 pub async fn run(store: &Store, yes: bool) -> eyre::Result<()> {
     let all = store.list_all().await?;

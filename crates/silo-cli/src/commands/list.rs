@@ -3,9 +3,9 @@ use comfy_table::{ContentArrangement, Table};
 use serde_json::json;
 
 use crate::ui;
-use silo_core::config;
-use silo_core::ip;
-use silo_core::store::Store;
+use silo::config;
+use silo::ip;
+use silo::store::Store;
 
 pub async fn run(store: &Store, all: bool, json: bool) -> eyre::Result<()> {
     let instances = if all {

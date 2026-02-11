@@ -4,8 +4,8 @@ use colored::Colorize;
 use eyre::Context;
 
 use crate::ui;
-use silo_core::config;
-use silo_core::error::SiloError;
+use silo::config;
+use silo::error::SiloError;
 
 pub fn run(ip_range: &str) -> eyre::Result<()> {
     let cwd = std::env::current_dir().context("failed to get current directory")?;

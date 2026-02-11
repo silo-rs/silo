@@ -1,9 +1,9 @@
 use colored::Colorize;
 
 use crate::ui;
-use silo_core::hosts;
-use silo_core::ip;
-use silo_core::store::Store;
+use silo::hosts;
+use silo::ip;
+use silo::store::Store;
 
 pub async fn run(store: &Store) -> eyre::Result<()> {
     let instances = store.list_all().await?;

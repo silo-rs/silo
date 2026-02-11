@@ -21,9 +21,9 @@ use std::path::Path;
 use colored::Colorize;
 
 use crate::ui;
-use silo_core::error::SiloError;
-use silo_core::state::Instance;
-use silo_core::store::Store;
+use silo::error::SiloError;
+use silo::state::Instance;
+use silo::store::Store;
 
 pub async fn resolve_instance_interactive(
     store: &Store,

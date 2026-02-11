@@ -1,6 +1,6 @@
 use eyre::Context;
 
-use silo_core::store::Store;
+use silo::store::Store;
 
 pub async fn run(store: &Store, name: &str) -> eyre::Result<()> {
     let cwd = std::env::current_dir().context("failed to get current directory")?;
