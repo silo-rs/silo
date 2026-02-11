@@ -1,24 +1,33 @@
-# silo
+<h1 align="center">silo</h1>
 
-Run the same app on the same port, simultaneously -- across branches, worktrees, or AI agents.
+<p align="center">
+  <b>Run the same app, on the same port, at the same time.</b><br>
+  Zero config. No containers. No code changes.
+</p>
 
-![demo](demo.gif)
+<p align="center">
+  <img src="demo.gif" alt="demo" />
+</p>
 
 ```
-feature-a → 127.0.1.1:3000
-feature-b → 127.0.1.2:3000
-feature-c → 127.0.1.3:3000
+$ npm run dev
+Error: listen EADDRINUSE: address already in use :::3000
 ```
 
-Zero code changes. No containers. Each instance gets its own loopback IP, and your app never knows the difference.
+With silo, just prefix your command:
+
+```sh
+$ silo run npm run dev
+Listening on http://branch.repo.silo:3000  # each instance gets its own IP
+```
+
+Three branches, three agents, three dev servers -- all on port 3000, all at the same time.
 
 ## Why
 
-Three AI agents building three features at the same time. All need `localhost:3000`. Port taken.
+You're running 3 AI agents on 3 features. All need `localhost:3000`. Port taken.
 
-Even without agents, you know the drill: `lsof -i :3000`, find the PID, `kill -9`, try again.
-
-The usual options aren't great:
+Or maybe it's just you, switching between branches. You know the drill -- `lsof -i :3000`, find the PID, `kill -9`, try again.
 
 | Approach              | Problem                                   |
 | --------------------- | ----------------------------------------- |
@@ -26,9 +35,7 @@ The usual options aren't great:
 | Docker                | Heavy, slow, breaks native toolchains     |
 | Run one at a time     | Kills your workflow                       |
 
-silo takes a different approach: give each instance its own IP on the loopback interface, and transparently intercept `bind()` at the syscall level. Your app calls `bind("0.0.0.0", 3000)` -- silo rewrites it to `bind("127.0.1.x", 3000)` before it hits the kernel.
-
-No environment variables to set. No config files to edit. No code to change.
+silo takes a different approach: intercept `bind()` at the syscall level and give each instance its own loopback IP. Your app calls `bind("0.0.0.0", 3000)` -- silo rewrites it to `bind("127.0.1.x", 3000)` before it hits the kernel. No environment variables. No config files. No code changes.
 
 ## Quick start
 
@@ -61,10 +68,81 @@ search   → http://search.acme.silo:3000
 
 ## How it works
 
-1. **IP aliasing** — adds unique loopback IPs (e.g. `127.0.1.1`) via `ifconfig`/`ip addr`
-2. **Syscall interception** — `silo run` injects a shared library via `DYLD_INSERT_LIBRARIES` (macOS) / `LD_PRELOAD` (Linux) that rewrites `bind()`, `connect()`, `getaddrinfo()`, and `sendto()` calls
-3. **Git worktrees** — lightweight working copies that share `.git` history, not full clones
-4. **Hostname mapping** — automatic `/etc/hosts` entries for human-readable access
+```
+your app → bind("0.0.0.0:3000") → [ silo intercepts ] → bind("127.0.1.1:3000") ✅
+```
+
+`silo run` injects a shared library (`DYLD_INSERT_LIBRARIES` / `LD_PRELOAD`) that rewrites `bind()`, `connect()`, `getaddrinfo()`, and `sendto()` before they reach the kernel. Each instance gets its own loopback IP via `ifconfig`/`ip addr`, a git worktree for isolation, and an `/etc/hosts` entry for human-readable access.
+
+### Not everything needs interception
+
+A shared Postgres server doesn't need a separate IP -- just a different database name per instance. Use `$SILO_*` variables wherever you need per-instance isolation:
+
+```
+DATABASE_URL=postgres://localhost/myapp_${SILO_NAME}
+REDIS_URL=redis://localhost/1  # shared server, different DB number
+HOST=${SILO_IP}                # skip interception, bind directly
+```
+
+## Configuration
+
+`silo init` generates a `silo.toml` in your repo:
+
+```toml
+[instance]
+ip_range = "127.0.1.0/24"       # IP pool for instances
+
+[hooks]
+setup = ["npm install"]          # runs when you `silo add`
+teardown = []                    # runs when you `silo remove`
+
+[worktree]
+base_dir = "../"                 # where worktrees are created
+copy = ["**/.env*"]              # files to copy from main repo into worktrees
+
+[scripts]
+dev = "npm run dev"              # shortcuts: `silo dev`
+test = "npm test"
+```
+
+## Environment variables
+
+These are automatically set inside every instance:
+
+| Variable        | Description                        | Example                 |
+| --------------- | ---------------------------------- | ----------------------- |
+| `SILO_NAME`     | Instance name                      | `feature-a`             |
+| `SILO_IP`       | Assigned loopback IP               | `127.0.1.1`             |
+| `SILO_HOST`     | Hostname                           | `feature-a.my-app.silo` |
+| `SILO_REPO`     | Path to the main repository        | `/home/user/my-app`     |
+| `SILO_DIR`      | Path to the instance directory     | `/home/user/feature-a`  |
+| `SILO_WORKTREE` | `1` if git worktree, `0` otherwise | `1`                     |
+
+### Per-instance overrides (`.env.silo`)
+
+Create a `.env.silo` file to define per-instance overrides. On `silo add`, `${SILO_*}` variables are rendered and merged into `.env`:
+
+```
+DATABASE_URL=postgres://localhost/myapp_${SILO_NAME}
+REDIS_URL=redis://${SILO_IP}:6379
+```
+
+## Commands
+
+| Command              | Description                                    |
+| -------------------- | ---------------------------------------------- |
+| `silo init`          | Initialize silo in a git repo                  |
+| `silo add <name>`    | Create instance (worktree + IP + hostname)     |
+| `silo remove <name>` | Tear down instance and clean up                |
+| `silo list`          | Show instances for current repo                |
+| `silo cd <name>`     | Jump to instance directory                     |
+| `silo run <cmd>`     | Run command with transparent IP isolation      |
+| `silo <script>`      | Run a script defined in `[scripts]` config     |
+| `silo scripts`       | List available scripts from `[scripts]` config |
+| `silo info [name]`   | Show instance details                          |
+| `silo doctor`        | Diagnose configuration issues                  |
+| `silo activate`      | Restore IP aliases after reboot                |
+| `silo prune`         | Remove orphaned instances                      |
 
 ## Deep dive: `silo run`
 
@@ -110,103 +188,3 @@ SILO_BIND_DEBUG=1 silo run npm run dev
 # [silo-bind] loaded pid=12345 SILO_IP=127.0.1.1
 # [silo-bind] pid=12345 bind fd=7 family=2 port=3000 SILO_IP=127.0.1.1
 ```
-
-## Configuration
-
-`silo init` generates a `silo.toml` in your repo:
-
-```toml
-[instance]
-ip_range = "127.0.1.0/24"       # IP pool for instances
-
-[hooks]
-setup = ["npm install"]          # runs when you `silo add`
-teardown = []                    # runs when you `silo remove`
-
-[worktree]
-base_dir = "../"                 # where worktrees are created
-copy = ["**/.env*"]              # files to copy from main repo into worktrees
-
-[scripts]
-dev = "npm run dev"              # shortcuts: `silo dev`
-test = "npm test"
-```
-
-## Environment variables
-
-These variables are automatically set inside an instance:
-
-| Variable        | Description                        | Example                 |
-| --------------- | ---------------------------------- | ----------------------- |
-| `SILO_NAME`     | Instance name                      | `feature-a`             |
-| `SILO_IP`       | Assigned loopback IP               | `127.0.1.1`             |
-| `SILO_HOST`     | Hostname                           | `feature-a.my-app.silo` |
-| `SILO_REPO`     | Path to the main repository        | `/home/user/my-app`     |
-| `SILO_DIR`      | Path to the instance directory     | `/home/user/feature-a`  |
-| `SILO_WORKTREE` | `1` if git worktree, `0` otherwise | `1`                     |
-
-You can reference these in hooks, scripts, or your app's configuration:
-
-```toml
-[hooks]
-setup = ["echo 'Created $SILO_NAME at $SILO_IP'"]
-```
-
-## Per-instance overrides (`.env.silo`)
-
-Create a `.env.silo` file (tracked in git) to define per-instance environment variable overrides. When `silo add` creates an instance, it renders `${SILO_*}` variables and merges the result into `.env` -- replacing existing keys in-place and appending new ones.
-
-**Example**: your `.env` (gitignored) has secrets and shared config:
-
-```
-SECRET_KEY=abc123
-STRIPE_KEY=sk_test_xxx
-DATABASE_URL=postgres://localhost/myapp
-```
-
-Create `.env.silo` (tracked in git) with only the per-instance overrides:
-
-```
-DATABASE_URL=postgres://localhost/myapp_${SILO_NAME}
-REDIS_URL=redis://${SILO_IP}:6379
-```
-
-When you run `silo add feature-a`:
-
-1. `.env` is copied automatically from the main repo
-2. `.env.silo` is rendered and merged into `.env`
-
-The resulting `.env` in the worktree:
-
-```
-SECRET_KEY=abc123
-STRIPE_KEY=sk_test_xxx
-DATABASE_URL=postgres://localhost/myapp_feature-a
-REDIS_URL=redis://127.0.1.1:6379
-```
-
-`DATABASE_URL` is replaced in-place. `REDIS_URL` is appended. Secrets are preserved, and setup hooks can immediately use the correct values.
-
-Works in monorepos too:
-
-```
-packages/api/.env.silo     → merged into packages/api/.env
-packages/web/.env.silo     → merged into packages/web/.env
-```
-
-## Commands
-
-| Command              | Description                                |
-| -------------------- | ------------------------------------------ |
-| `silo init`          | Initialize silo in a git repo              |
-| `silo add <name>`    | Create instance (worktree + IP + hostname) |
-| `silo remove <name>` | Tear down instance and clean up            |
-| `silo list`          | Show instances for current repo            |
-| `silo cd <name>`     | Jump to instance directory                 |
-| `silo run <cmd>`     | Run command with transparent IP isolation  |
-| `silo <script>`      | Run a script defined in `[scripts]` config     |
-| `silo scripts`       | List available scripts from `[scripts]` config |
-| `silo info [name]`   | Show instance details                      |
-| `silo doctor`        | Diagnose configuration issues              |
-| `silo activate`      | Restore IP aliases after reboot            |
-| `silo prune`         | Remove orphaned instances                  |
