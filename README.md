@@ -29,17 +29,15 @@ silo takes a different approach: intercept `bind()` at the syscall level and giv
 curl -fsSL https://setup.silo.rs | sh
 ```
 
-That's it. No `init`, no `add`. Just run:
-
 ```sh
-cd ~/projects/my-app
+cd ~/projects/acme
 silo npm run dev            # → bound to 127.1.42.7:3000
 ```
 
 In another terminal, on a different branch:
 
 ```sh
-cd ~/worktrees/my-app-feature
+cd ~/worktrees/acme-feature
 silo npm run dev            # → bound to 127.1.183.12:3000
 ```
 
@@ -58,7 +56,7 @@ your app → bind("0.0.0.0:3000") → [ silo intercepts ] → bind("127.1.42.7:3
 3. **Registers a hostname** in `/etc/hosts` (e.g. `main.myapp.silo` → `127.1.x.x`)
 4. **Injects a shared library** (`DYLD_INSERT_LIBRARIES` / `LD_PRELOAD`) that rewrites `bind()`, `connect()`, `getaddrinfo()`, and `sendto()` to use that IP
 
-No database, no state files. The IP is a pure function of your directory path -- deterministic and stable across reboots.
+The IP is a pure function of your directory path -- deterministic and stable across reboots.
 
 ## Environment variables
 
