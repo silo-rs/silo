@@ -1,32 +1,13 @@
-use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use tracing::debug;
 
+use crate::context::Context;
 use crate::error::{Error, Result};
 
-#[derive(Debug, Clone)]
-pub struct SiloContext {
-    pub name: String,
-    pub ip: Ipv4Addr,
-    pub dir: PathBuf,
-    pub hostname: String,
-}
-
-impl SiloContext {
-    pub fn env_vars(&self) -> HashMap<String, String> {
-        HashMap::from([
-            ("SILO_IP".into(), self.ip.to_string()),
-            ("SILO_NAME".into(), self.name.clone()),
-            ("SILO_DIR".into(), self.dir.display().to_string()),
-            ("SILO_HOST".into(), self.hostname.clone()),
-        ])
-    }
-}
-
-pub fn resolve(cwd: &Path, name_override: Option<&str>) -> Result<SiloContext> {
+pub fn resolve(cwd: &Path, name_override: Option<&str>) -> Result<Context> {
     let git_root = find_git_root(cwd)?;
     let canonical = git_root.canonicalize().unwrap_or_else(|_| git_root.clone());
 
@@ -45,7 +26,7 @@ pub fn resolve(cwd: &Path, name_override: Option<&str>) -> Result<SiloContext> {
 
     debug!(%ip, %name, %hostname, dir = %git_root.display(), "resolved silo context");
 
-    Ok(SiloContext {
+    Ok(Context {
         name,
         ip,
         dir: git_root,
@@ -225,7 +206,7 @@ mod tests {
 
     #[test]
     fn env_vars_complete() {
-        let ctx = SiloContext {
+        let ctx = Context {
             name: "feature-auth".into(),
             ip: Ipv4Addr::new(127, 42, 0, 7),
             dir: PathBuf::from("/home/user/project"),

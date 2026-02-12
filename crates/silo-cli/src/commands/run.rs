@@ -16,8 +16,15 @@ pub fn run(name: Option<&str>, command: &[String], quiet: bool) -> eyre::Result<
         );
     }
 
-    ensure_bind_lib()?;
-    let session = Session::new(name)?;
+    let bind_lib_path = find_bind_lib()?;
+    let ctx = silo::Context::current(name)?;
+    let session = Session::activate(
+        ctx,
+        silo::ActivateOptions {
+            bind_lib: Some(bind_lib_path),
+            ..Default::default()
+        },
+    )?;
 
     let quiet = quiet || std::env::var("SILO_QUIET").is_ok();
 
@@ -114,9 +121,4 @@ pub fn find_bind_lib() -> eyre::Result<PathBuf> {
     }
 
     Ok(lib_path)
-}
-
-fn ensure_bind_lib() -> eyre::Result<()> {
-    find_bind_lib()?;
-    Ok(())
 }

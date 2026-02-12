@@ -84,7 +84,12 @@ unsafe extern "C" {
     fn real_sendmsg(fd: c_int, msg: *const libc::msghdr, flags: c_int) -> libc::ssize_t;
 }
 
-unsafe fn rewrite_bind_addr(addr: *const sockaddr) {
+/// Rewrite a sockaddr in-place to point at `SILO_IP`.
+///
+/// When `match_any` is true, INADDR_ANY (`0.0.0.0`) and `::` are also
+/// rewritten (appropriate for `bind`/`sendto`). When false, only
+/// localhost (`127.0.0.1` / `::1`) is rewritten (appropriate for `connect`).
+unsafe fn rewrite_addr(addr: *const sockaddr, match_any: bool) {
     if addr.is_null() {
         return;
     }
@@ -94,7 +99,7 @@ unsafe fn rewrite_bind_addr(addr: *const sockaddr) {
     if family == AF_INET {
         let sin = addr as *mut sockaddr_in;
         let s_addr = (*sin).sin_addr.s_addr;
-        if (s_addr == 0 || s_addr == u32::from(Ipv4Addr::LOCALHOST).to_be())
+        if ((match_any && s_addr == 0) || s_addr == u32::from(Ipv4Addr::LOCALHOST).to_be())
             && let Some(ip_bytes) = get_silo_ip()
         {
             (*sin).sin_addr.s_addr = ip_bytes;
@@ -105,7 +110,7 @@ unsafe fn rewrite_bind_addr(addr: *const sockaddr) {
     if family == libc::AF_INET6 as c_int {
         let sin6 = addr as *mut libc::sockaddr_in6;
         let v6_addr = (*sin6).sin6_addr.s6_addr;
-        if (v6_addr == V6_ANY || v6_addr == V6_LOOPBACK)
+        if ((match_any && v6_addr == V6_ANY) || v6_addr == V6_LOOPBACK)
             && let Some(ip_bytes) = get_silo_ip()
         {
             (*sin6).sin6_addr.s6_addr = ipv4_mapped_v6(ip_bytes);
@@ -113,58 +118,27 @@ unsafe fn rewrite_bind_addr(addr: *const sockaddr) {
     }
 }
 
-unsafe fn rewrite_connect_addr(addr: *const sockaddr) {
-    if addr.is_null() {
-        return;
-    }
-
-    let family = (*addr).sa_family as c_int;
-
-    if family == AF_INET {
-        let sin = addr as *mut sockaddr_in;
-        if (*sin).sin_addr.s_addr == u32::from(Ipv4Addr::LOCALHOST).to_be()
-            && let Some(ip_bytes) = get_silo_ip()
-        {
-            (*sin).sin_addr.s_addr = ip_bytes;
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    if family == libc::AF_INET6 as c_int {
-        let sin6 = addr as *mut libc::sockaddr_in6;
-        if (*sin6).sin6_addr.s6_addr == V6_LOOPBACK
-            && let Some(ip_bytes) = get_silo_ip()
-        {
-            (*sin6).sin6_addr.s6_addr = ipv4_mapped_v6(ip_bytes);
-        }
-    }
-}
-
-unsafe fn rewrite_sendto_addr(addr: *const sockaddr) {
-    if addr.is_null() {
-        return;
-    }
-
-    let family = (*addr).sa_family as c_int;
-
-    if family == AF_INET {
-        let sin = addr as *mut sockaddr_in;
-        let s_addr = (*sin).sin_addr.s_addr;
-        if (s_addr == 0 || s_addr == u32::from(Ipv4Addr::LOCALHOST).to_be())
-            && let Some(ip_bytes) = get_silo_ip()
-        {
-            (*sin).sin_addr.s_addr = ip_bytes;
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    if family == libc::AF_INET6 as c_int {
-        let sin6 = addr as *mut libc::sockaddr_in6;
-        let v6_addr = (*sin6).sin6_addr.s6_addr;
-        if (v6_addr == V6_ANY || v6_addr == V6_LOOPBACK)
-            && let Some(ip_bytes) = get_silo_ip()
-        {
-            (*sin6).sin6_addr.s6_addr = ipv4_mapped_v6(ip_bytes);
+/// Rewrite addresses in a `getaddrinfo` result linked list.
+unsafe fn rewrite_addrinfo_results(res: *mut *mut libc::addrinfo) {
+    if let Some(silo_ip) = get_silo_ip() {
+        let localhost_be = u32::from(Ipv4Addr::LOCALHOST).to_be();
+        let mapped = ipv4_mapped_v6(silo_ip);
+        let mut cur = *res;
+        while !cur.is_null() {
+            let ai = &mut *cur;
+            if ai.ai_family == AF_INET && !ai.ai_addr.is_null() {
+                let sin = ai.ai_addr as *mut sockaddr_in;
+                let addr = (*sin).sin_addr.s_addr;
+                if addr == localhost_be || addr == 0 {
+                    (*sin).sin_addr.s_addr = silo_ip;
+                }
+            } else if ai.ai_family == libc::AF_INET6 as c_int && !ai.ai_addr.is_null() {
+                let sin6 = ai.ai_addr as *mut libc::sockaddr_in6;
+                if (*sin6).sin6_addr.s6_addr == V6_LOOPBACK {
+                    (*sin6).sin6_addr.s6_addr = mapped;
+                }
+            }
+            cur = ai.ai_next;
         }
     }
 }
@@ -510,7 +484,7 @@ mod platform {
             }
         }
 
-        rewrite_bind_addr(addr);
+        rewrite_addr(addr, true);
         real_bind(fd, addr, len)
     }
 
@@ -534,7 +508,7 @@ mod platform {
             }
         }
 
-        rewrite_connect_addr(addr);
+        rewrite_addr(addr, false);
         real_connect(fd, addr, len)
     }
 
@@ -763,39 +737,16 @@ mod platform {
             return ret;
         }
 
-        if let Some(silo_ip) = get_silo_ip() {
-            let localhost_be = u32::from(Ipv4Addr::LOCALHOST).to_be();
-            let mapped = ipv4_mapped_v6(silo_ip);
-            let mut cur = *res;
-            while !cur.is_null() {
-                let ai = &mut *cur;
-                if ai.ai_family == AF_INET && !ai.ai_addr.is_null() {
-                    let sin = ai.ai_addr as *mut sockaddr_in;
-                    let addr = (*sin).sin_addr.s_addr;
-                    if addr == localhost_be || addr == 0 {
-                        if debug_enabled() {
-                            let node_str = if !node.is_null() {
-                                CStr::from_ptr(node).to_string_lossy().into_owned()
-                            } else {
-                                "(null)".into()
-                            };
-                            eprintln!(
-                                "[silo-bind] getaddrinfo: {} rewriting {:?} → SILO_IP",
-                                node_str,
-                                Ipv4Addr::from(u32::from_be(addr)),
-                            );
-                        }
-                        (*sin).sin_addr.s_addr = silo_ip;
-                    }
-                } else if ai.ai_family == libc::AF_INET6 as c_int && !ai.ai_addr.is_null() {
-                    let sin6 = ai.ai_addr as *mut libc::sockaddr_in6;
-                    if (*sin6).sin6_addr.s6_addr == V6_LOOPBACK {
-                        (*sin6).sin6_addr.s6_addr = mapped;
-                    }
-                }
-                cur = ai.ai_next;
-            }
+        if debug_enabled() && !res.is_null() {
+            let node_str = if !node.is_null() {
+                CStr::from_ptr(node).to_string_lossy().into_owned()
+            } else {
+                "(null)".into()
+            };
+            eprintln!("[silo-bind] getaddrinfo: {} rewriting → SILO_IP", node_str);
         }
+
+        rewrite_addrinfo_results(res);
         ret
     }
 
@@ -886,7 +837,7 @@ mod platform {
         dest_addr: *const sockaddr,
         addrlen: socklen_t,
     ) -> libc::ssize_t {
-        rewrite_sendto_addr(dest_addr);
+        rewrite_addr(dest_addr, true);
         real_sendto(fd, buf, len, flags, dest_addr, addrlen)
     }
 
@@ -943,7 +894,7 @@ mod platform {
         flags: c_int,
     ) -> libc::ssize_t {
         if !msg.is_null() && !(*msg).msg_name.is_null() && (*msg).msg_namelen > 0 {
-            rewrite_sendto_addr((*msg).msg_name as *const sockaddr);
+            rewrite_addr((*msg).msg_name as *const sockaddr, true);
         }
         real_sendmsg(fd, msg, flags)
     }
@@ -1035,7 +986,7 @@ mod platform {
         let real_fn: unsafe extern "C" fn(c_int, *const sockaddr, socklen_t) -> c_int =
             std::mem::transmute(real);
 
-        rewrite_bind_addr(addr);
+        rewrite_addr(addr, true);
         real_fn(fd, addr, len)
     }
 
@@ -1045,7 +996,7 @@ mod platform {
         let real_fn: unsafe extern "C" fn(c_int, *const sockaddr, socklen_t) -> c_int =
             std::mem::transmute(real);
 
-        rewrite_connect_addr(addr);
+        rewrite_addr(addr, false);
         real_fn(fd, addr, len)
     }
 
@@ -1069,27 +1020,7 @@ mod platform {
             return ret;
         }
 
-        if let Some(silo_ip) = get_silo_ip() {
-            let localhost_be = u32::from(Ipv4Addr::LOCALHOST).to_be();
-            let mapped = ipv4_mapped_v6(silo_ip);
-            let mut cur = *res;
-            while !cur.is_null() {
-                let ai = &mut *cur;
-                if ai.ai_family == AF_INET && !ai.ai_addr.is_null() {
-                    let sin = ai.ai_addr as *mut sockaddr_in;
-                    let addr = (*sin).sin_addr.s_addr;
-                    if addr == localhost_be || addr == 0 {
-                        (*sin).sin_addr.s_addr = silo_ip;
-                    }
-                } else if ai.ai_family == libc::AF_INET6 as c_int && !ai.ai_addr.is_null() {
-                    let sin6 = ai.ai_addr as *mut libc::sockaddr_in6;
-                    if (*sin6).sin6_addr.s6_addr == V6_LOOPBACK {
-                        (*sin6).sin6_addr.s6_addr = mapped;
-                    }
-                }
-                cur = ai.ai_next;
-            }
-        }
+        rewrite_addrinfo_results(res);
         ret
     }
 
@@ -1150,7 +1081,7 @@ mod platform {
             socklen_t,
         ) -> libc::ssize_t = std::mem::transmute(real);
 
-        rewrite_sendto_addr(dest_addr);
+        rewrite_addr(dest_addr, true);
         real_fn(fd, buf, len, flags, dest_addr, addrlen)
     }
 
@@ -1165,7 +1096,7 @@ mod platform {
             std::mem::transmute(real);
 
         if !msg.is_null() && !(*msg).msg_name.is_null() && (*msg).msg_namelen > 0 {
-            rewrite_sendto_addr((*msg).msg_name as *const sockaddr);
+            rewrite_addr((*msg).msg_name as *const sockaddr, true);
         }
         real_fn(fd, msg, flags)
     }

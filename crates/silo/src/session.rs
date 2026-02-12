@@ -11,7 +11,7 @@ use crate::{hosts, ip};
 
 /// Controls which side effects [`Session::activate`] performs.
 ///
-/// All options default to `true`, matching the behavior of
+/// All options default to enabled, matching the behavior of
 /// [`Session::new`] and [`Session::in_dir`].
 #[derive(Debug, Clone)]
 pub struct ActivateOptions {
@@ -19,9 +19,11 @@ pub struct ActivateOptions {
     pub ip_alias: bool,
     /// Add/update an entry in `/etc/hosts` (requires sudo).
     pub hosts_entry: bool,
-    /// Locate the bind library (required for [`Session::env`] and
-    /// [`Session::apply`] to include `LD_PRELOAD` / `DYLD_INSERT_LIBRARIES`).
-    pub bind_lib: bool,
+    /// Bind library path. When `Some`, [`Session::env`] and [`Session::apply`]
+    /// will include `LD_PRELOAD` / `DYLD_INSERT_LIBRARIES`.
+    ///
+    /// Use [`find_bind_lib`] to auto-discover, or supply a known path directly.
+    pub bind_lib: Option<PathBuf>,
 }
 
 impl Default for ActivateOptions {
@@ -31,12 +33,12 @@ impl Default for ActivateOptions {
 }
 
 impl ActivateOptions {
-    /// All side effects enabled.
+    /// All side effects enabled. Auto-discovers the bind library.
     pub fn all() -> Self {
         Self {
             ip_alias: true,
             hosts_entry: true,
-            bind_lib: true,
+            bind_lib: find_bind_lib().ok(),
         }
     }
 
@@ -45,7 +47,7 @@ impl ActivateOptions {
         Self {
             ip_alias: false,
             hosts_entry: false,
-            bind_lib: false,
+            bind_lib: None,
         }
     }
 }
@@ -97,12 +99,10 @@ impl Session {
         {
             warn!("failed to update /etc/hosts: {e} (run `silo doctor` to diagnose)");
         }
-        let bind_lib_path = if opts.bind_lib {
-            Some(find_bind_lib()?)
-        } else {
-            None
-        };
-        Ok(Self { ctx, bind_lib_path })
+        Ok(Self {
+            ctx,
+            bind_lib_path: opts.bind_lib,
+        })
     }
 
     /// Access the underlying pure-computation context.

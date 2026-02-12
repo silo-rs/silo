@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
 use crate::resolve;
@@ -25,7 +25,10 @@ use crate::resolve;
 /// ```
 #[derive(Debug, Clone)]
 pub struct Context {
-    pub(crate) inner: resolve::SiloContext,
+    pub(crate) name: String,
+    pub(crate) ip: Ipv4Addr,
+    pub(crate) dir: PathBuf,
+    pub(crate) hostname: String,
 }
 
 impl Context {
@@ -41,28 +44,27 @@ impl Context {
     /// Walks up from `dir` to find the git root, reads the branch name
     /// (or uses `name` if provided), and computes the deterministic IP.
     pub fn for_dir(dir: &Path, name: Option<&str>) -> Result<Self> {
-        let inner = resolve::resolve(dir, name)?;
-        Ok(Self { inner })
+        resolve::resolve(dir, name)
     }
 
     /// The deterministic loopback IP (`127.x.y.z`) for this project.
     pub fn ip(&self) -> Ipv4Addr {
-        self.inner.ip
+        self.ip
     }
 
     /// The resolved session name (sanitized branch name or override).
     pub fn name(&self) -> &str {
-        &self.inner.name
+        &self.name
     }
 
     /// The hostname (`{name}.{project}.silo`) for service discovery.
     pub fn hostname(&self) -> &str {
-        &self.inner.hostname
+        &self.hostname
     }
 
     /// The git root directory.
     pub fn dir(&self) -> &Path {
-        &self.inner.dir
+        &self.dir
     }
 
     /// Environment variables: `SILO_IP`, `SILO_NAME`, `SILO_DIR`, `SILO_HOST`.
@@ -70,7 +72,12 @@ impl Context {
     /// Does **not** include `DYLD_INSERT_LIBRARIES` / `LD_PRELOAD`.
     /// Use [`Session::env`] for the full set including the bind library.
     pub fn env_vars(&self) -> HashMap<String, String> {
-        self.inner.env_vars()
+        HashMap::from([
+            ("SILO_IP".into(), self.ip.to_string()),
+            ("SILO_NAME".into(), self.name.clone()),
+            ("SILO_DIR".into(), self.dir.display().to_string()),
+            ("SILO_HOST".into(), self.hostname.clone()),
+        ])
     }
 }
 
