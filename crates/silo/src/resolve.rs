@@ -40,11 +40,8 @@ pub fn resolve(cwd: &Path, name_override: Option<&str>) -> eyre::Result<SiloCont
 
     let ip = compute_ip(&canonical);
 
-    let repo_dir = git_root
-        .file_name()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let hostname = format!("{}.{}.silo", name, repo_dir);
+    let project_name = main_repo_name(&git_root);
+    let hostname = format!("{}.{}.silo", name, project_name);
 
     debug!(%ip, %name, %hostname, dir = %git_root.display(), "resolved silo context");
 
@@ -118,6 +115,28 @@ pub fn sanitize_name(raw: &str) -> String {
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()
         .join("-")
+}
+
+fn main_repo_name(git_root: &Path) -> String {
+    let dot_git = git_root.join(".git");
+    if dot_git.is_file()
+        && let Ok(content) = std::fs::read_to_string(&dot_git)
+        && let Some(gitdir) = content.strip_prefix("gitdir: ")
+    {
+        let gitdir = gitdir.trim();
+        if let Some(name) = Path::new(gitdir)
+            .ancestors()
+            .find(|p| p.ends_with(".git"))
+            .and_then(|p| p.parent())
+            .and_then(|p| p.file_name())
+        {
+            return name.to_string_lossy().into_owned();
+        }
+    }
+    git_root
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 pub fn compute_ip(canonical_path: &Path) -> Ipv4Addr {
