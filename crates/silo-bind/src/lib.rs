@@ -73,6 +73,9 @@ unsafe extern "C" {
         dest_addr: *const sockaddr,
         addrlen: socklen_t,
     ) -> libc::ssize_t;
+
+    #[link_name = "sendmsg"]
+    fn real_sendmsg(fd: c_int, msg: *const libc::msghdr, flags: c_int) -> libc::ssize_t;
 }
 
 unsafe fn rewrite_bind_addr(addr: *const sockaddr) {
@@ -807,6 +810,36 @@ mod platform {
         ret
     }
 
+    // --- sendmsg ---
+
+    type SendmsgFn = unsafe extern "C" fn(c_int, *const libc::msghdr, c_int) -> libc::ssize_t;
+
+    #[repr(C)]
+    struct InterposeSendmsg {
+        replacement: SendmsgFn,
+        original: SendmsgFn,
+    }
+
+    #[unsafe(no_mangle)]
+    #[used]
+    #[unsafe(link_section = "__DATA,__interpose")]
+    static INTERPOSE_SENDMSG: InterposeSendmsg = InterposeSendmsg {
+        replacement: silo_sendmsg_entry,
+        original: real_sendmsg,
+    };
+
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn silo_sendmsg_entry(
+        fd: c_int,
+        msg: *const libc::msghdr,
+        flags: c_int,
+    ) -> libc::ssize_t {
+        if !msg.is_null() && !(*msg).msg_name.is_null() && (*msg).msg_namelen > 0 {
+            rewrite_sendto_addr((*msg).msg_name as *const sockaddr);
+        }
+        real_sendmsg(fd, msg, flags)
+    }
+
     unsafe fn replace_with_ipv4(fd: c_int) -> Result<c_int, c_int> {
         let mut sock_type: c_int = 0;
         let mut optlen: socklen_t = std::mem::size_of::<c_int>() as socklen_t;
@@ -986,5 +1019,21 @@ mod platform {
 
         rewrite_sendto_addr(dest_addr);
         real_fn(fd, buf, len, flags, dest_addr, addrlen)
+    }
+
+    #[unsafe(no_mangle)]
+    pub unsafe extern "C" fn sendmsg(
+        fd: c_int,
+        msg: *const libc::msghdr,
+        flags: c_int,
+    ) -> libc::ssize_t {
+        let real = libc::dlsym(libc::RTLD_NEXT, c"sendmsg".as_ptr());
+        let real_fn: unsafe extern "C" fn(c_int, *const libc::msghdr, c_int) -> libc::ssize_t =
+            std::mem::transmute(real);
+
+        if !msg.is_null() && !(*msg).msg_name.is_null() && (*msg).msg_namelen > 0 {
+            rewrite_sendto_addr((*msg).msg_name as *const sockaddr);
+        }
+        real_fn(fd, msg, flags)
     }
 }
