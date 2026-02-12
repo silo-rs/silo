@@ -3,6 +3,7 @@ use std::net::Ipv4Addr;
 use std::process::Command;
 
 use eyre::Context;
+use tracing::debug;
 
 pub fn active_loopback_aliases() -> eyre::Result<Vec<Ipv4Addr>> {
     let output = loopback_output()?;
@@ -34,7 +35,10 @@ pub fn active_loopback_aliases() -> eyre::Result<Vec<Ipv4Addr>> {
 pub fn listening_ports() -> HashMap<Ipv4Addr, Vec<u16>> {
     let output = match listening_ports_output() {
         Ok(o) => o,
-        Err(_) => return HashMap::new(),
+        Err(e) => {
+            debug!("failed to get listening ports: {e}");
+            return HashMap::new();
+        }
     };
     parse_listening_ports(&output)
 }

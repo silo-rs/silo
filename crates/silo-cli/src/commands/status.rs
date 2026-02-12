@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::net::Ipv4Addr;
 
 use colored::Colorize;
+use tracing::debug;
 
 use super::query;
 
@@ -37,6 +38,7 @@ pub fn run() -> eyre::Result<()> {
 fn load_silo_hosts() -> HashMap<Ipv4Addr, String> {
     let mut map = HashMap::new();
     let Ok(content) = std::fs::read_to_string("/etc/hosts") else {
+        debug!("failed to read /etc/hosts for status display");
         return map;
     };
     for line in content.lines() {
