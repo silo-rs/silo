@@ -141,12 +141,17 @@ pub(crate) fn compute_ip(canonical_path: &Path) -> Ipv4Addr {
     let bytes = canonical_path.as_os_str().as_encoded_bytes();
     let hash = fnv1a_hash(bytes);
 
-    // Map to 127.1.{hi}.{lo}, avoiding .0.0 and .255.255
-    let raw = (hash % 65534) + 1; // 1..=65534
-    let hi = ((raw >> 8) & 0xFF) as u8;
-    let lo = (raw & 0xFF) as u8;
+    const OCTET1_RANGE: u64 = 254;
+    const OCTET2_RANGE: u64 = 256;
+    const OCTET3_RANGE: u64 = 254;
+    const SPACE: u64 = OCTET1_RANGE * OCTET2_RANGE * OCTET3_RANGE;
 
-    Ipv4Addr::new(127, 1, hi, lo)
+    let raw = hash % SPACE;
+    let o1 = (raw / (OCTET2_RANGE * OCTET3_RANGE)) as u8 + 1;
+    let o2 = ((raw / OCTET3_RANGE) % OCTET2_RANGE) as u8;
+    let o3 = (raw % OCTET3_RANGE) as u8 + 1;
+
+    Ipv4Addr::new(127, o1, o2, o3)
 }
 
 fn fnv1a_hash(bytes: &[u8]) -> u64 {
@@ -207,17 +212,13 @@ mod tests {
 
     #[test]
     fn compute_ip_in_range() {
-        let ip = compute_ip(Path::new("/some/path"));
-        assert_eq!(ip.octets()[0], 127);
-        assert_eq!(ip.octets()[1], 1);
-    }
-
-    #[test]
-    fn compute_ip_not_zero() {
         for i in 0..1000 {
             let path = format!("/test/path/{}", i);
             let ip = compute_ip(Path::new(&path));
-            assert!(ip != Ipv4Addr::new(127, 1, 0, 0));
+            let [o0, o1, _o2, o3] = ip.octets();
+            assert_eq!(o0, 127);
+            assert!((1..=254).contains(&o1), "second octet {o1} out of range");
+            assert!((1..=254).contains(&o3), "fourth octet {o3} out of range");
         }
     }
 
@@ -225,13 +226,13 @@ mod tests {
     fn env_vars_complete() {
         let ctx = SiloContext {
             name: "feature-auth".into(),
-            ip: Ipv4Addr::new(127, 1, 0, 42),
+            ip: Ipv4Addr::new(127, 42, 0, 7),
             dir: PathBuf::from("/home/user/project"),
             hostname: "feature-auth.project.silo".into(),
         };
         let vars = ctx.env_vars();
         assert_eq!(vars.len(), 4);
-        assert_eq!(vars["SILO_IP"], "127.1.0.42");
+        assert_eq!(vars["SILO_IP"], "127.42.0.7");
         assert_eq!(vars["SILO_NAME"], "feature-auth");
         assert_eq!(vars["SILO_DIR"], "/home/user/project");
         assert_eq!(vars["SILO_HOST"], "feature-auth.project.silo");
