@@ -167,6 +167,30 @@ fn getaddrinfo_v6_localhost_is_rewritten() {
     );
 }
 
+// ── gethostbyname() tests ──
+
+/// gethostbyname("localhost") results should have 127.0.0.1 rewritten to SILO_IP.
+#[test]
+fn gethostbyname_localhost_is_rewritten() {
+    let (stdout, _, success) = run_helper("gethostbyname", Some(TEST_IP));
+    assert!(success, "helper failed");
+    assert!(
+        stdout.contains(TEST_IP),
+        "expected gethostbyname to resolve to {TEST_IP}, got: {stdout}"
+    );
+}
+
+/// gethostbyname2("localhost", AF_INET) results should have 127.0.0.1 rewritten to SILO_IP.
+#[test]
+fn gethostbyname2_localhost_is_rewritten() {
+    let (stdout, _, success) = run_helper("gethostbyname2", Some(TEST_IP));
+    assert!(success, "helper failed");
+    assert!(
+        stdout.contains(TEST_IP),
+        "expected gethostbyname2 to resolve to {TEST_IP}, got: {stdout}"
+    );
+}
+
 // ── sendto() tests ──
 
 /// UDP bind(0.0.0.0) used for sendto should be rewritten to SILO_IP.

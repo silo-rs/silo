@@ -26,6 +26,8 @@ fn main() {
         "getaddrinfo" => cmd_getaddrinfo(),
         "getaddrinfo_v6" => cmd_getaddrinfo_v6(),
         "sendto_any" => cmd_sendto(Ipv4Addr::UNSPECIFIED),
+        "gethostbyname" => cmd_gethostbyname(),
+        "gethostbyname2" => cmd_gethostbyname2(),
         "sendmsg_localhost" => cmd_sendmsg_localhost(),
         #[cfg(target_os = "macos")]
         "bind_v6_opts" => cmd_bind_v6_opts(),
@@ -266,6 +268,89 @@ fn cmd_bind_v6_opts() -> io::Result<()> {
     }
 
     Ok(())
+}
+
+/// Call gethostbyname for "localhost" and print all IPv4 results.
+fn cmd_gethostbyname() -> io::Result<()> {
+    use std::ffi::CString;
+
+    unsafe extern "C" {
+        fn gethostbyname(name: *const libc::c_char) -> *mut libc::hostent;
+    }
+
+    let name = CString::new("localhost").unwrap();
+    let hp = unsafe { gethostbyname(name.as_ptr()) };
+
+    if hp.is_null() {
+        eprintln!("gethostbyname failed");
+        std::process::exit(1);
+    }
+
+    // Use addr_of! + read_unaligned because macOS gethostbyname may return
+    // a misaligned hostent pointer.
+    unsafe {
+        print_hostent_v4(hp, "gethostbyname");
+    }
+
+    Ok(())
+}
+
+/// Call gethostbyname2 for "localhost" with AF_INET and print all results.
+fn cmd_gethostbyname2() -> io::Result<()> {
+    use std::ffi::CString;
+
+    unsafe extern "C" {
+        fn gethostbyname2(name: *const libc::c_char, af: libc::c_int) -> *mut libc::hostent;
+    }
+
+    let name = CString::new("localhost").unwrap();
+    let hp = unsafe { gethostbyname2(name.as_ptr(), libc::AF_INET) };
+
+    if hp.is_null() {
+        eprintln!("gethostbyname2 failed");
+        std::process::exit(1);
+    }
+
+    unsafe {
+        print_hostent_v4(hp, "gethostbyname2");
+    }
+
+    Ok(())
+}
+
+/// Read hostent fields via raw pointer access (avoids misaligned reference UB)
+/// and print all IPv4 addresses.
+unsafe fn print_hostent_v4(hp: *mut libc::hostent, fn_name: &str) {
+    unsafe {
+        let h_addrtype = std::ptr::addr_of!((*hp).h_addrtype).read_unaligned();
+        let h_length = std::ptr::addr_of!((*hp).h_length).read_unaligned();
+        let h_addr_list = std::ptr::addr_of!((*hp).h_addr_list).read_unaligned();
+
+        if h_addrtype != libc::AF_INET || h_length != 4 {
+            eprintln!("unexpected address type: {h_addrtype} len: {h_length}");
+            std::process::exit(1);
+        }
+
+        let mut i = 0usize;
+        let mut printed = false;
+        loop {
+            let entry = h_addr_list.add(i).read_unaligned();
+            if entry.is_null() {
+                break;
+            }
+            let mut bytes = [0u8; 4];
+            std::ptr::copy_nonoverlapping(entry as *const u8, bytes.as_mut_ptr(), 4);
+            let ip = Ipv4Addr::from(bytes);
+            println!("resolved={ip}");
+            printed = true;
+            i += 1;
+        }
+
+        if !printed {
+            eprintln!("no addresses from {fn_name}");
+            std::process::exit(1);
+        }
+    }
 }
 
 /// Create a UDP socket, bind to SILO_IP, then use raw sendmsg() with
