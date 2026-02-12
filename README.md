@@ -60,7 +60,7 @@ your app → bind("0.0.0.0:3000") → [ silo intercepts ] → bind("127.1.42.7:3
 1. **Computes a deterministic IP** from your git root path (FNV-1a hash → `127.1.x.x`)
 2. **Creates a loopback alias** for that IP (`ifconfig lo0 alias` / `ip addr add`)
 3. **Registers a hostname** in `/etc/hosts` (e.g. `main.myapp.silo` → `127.1.x.x`)
-4. **Injects a shared library** (`DYLD_INSERT_LIBRARIES` / `LD_PRELOAD`) that rewrites `bind()`, `connect()`, `getaddrinfo()`, and `sendto()` to use that IP
+4. **Injects a shared library** (`DYLD_INSERT_LIBRARIES` / `LD_PRELOAD`) that rewrites `bind()`, `connect()`, `getaddrinfo()`, `gethostbyname()`, `sendto()`, and more to use that IP
 
 The IP is a pure function of your directory path -- deterministic and stable across reboots.
 
@@ -92,7 +92,8 @@ On every run, variables are rendered and merged into `.env` -- existing keys are
 | ------------- | ------------------------------------------ |
 | `silo <cmd>`  | Run command with transparent IP isolation  |
 | `silo ip`     | Show the resolved IP for current directory |
-| `silo status` | List active loopback aliases               |
+| `silo ls`     | List active silo sessions                  |
+| `silo prune`  | Remove unused aliases and /etc/hosts entries |
 | `silo doctor` | Diagnose environment issues                |
 
 ### Options
@@ -111,12 +112,15 @@ Options:
 
 ### What gets rewritten
 
-| Syscall         | Original address                 | Rewritten to | Why                                                |
-| --------------- | -------------------------------- | ------------ | -------------------------------------------------- |
-| `bind()`        | `0.0.0.0` or `127.0.0.1`         | `SILO_IP`    | Server listens on its own loopback IP              |
-| `connect()`     | `127.0.0.1`                      | `SILO_IP`    | Client talks to its own server, not someone else's |
-| `getaddrinfo()` | Results resolving to `127.0.0.1` | `SILO_IP`    | DNS-based localhost lookups get the same treatment |
-| `sendto()`      | `0.0.0.0` or `127.0.0.1`         | `SILO_IP`    | UDP traffic goes to the right place                |
+| Syscall                              | Original address                 | Rewritten to | Why                                                |
+| ------------------------------------ | -------------------------------- | ------------ | -------------------------------------------------- |
+| `bind()`                             | `0.0.0.0` or `127.0.0.1`         | `SILO_IP`    | Server listens on its own loopback IP              |
+| `connect()`                          | `127.0.0.1`                      | `SILO_IP`    | Client talks to its own server, not someone else's |
+| `getaddrinfo()`                      | Results resolving to `127.0.0.1` | `SILO_IP`    | DNS-based localhost lookups get the same treatment |
+| `gethostbyname()` / `gethostbyname2()` | Results resolving to `127.0.0.1` | `SILO_IP`    | Legacy DNS lookups don't leak to the wrong IP      |
+| `sendto()`                           | `0.0.0.0` or `127.0.0.1`         | `SILO_IP`    | UDP traffic goes to the right place                |
+| `sendmsg()`                          | `0.0.0.0` or `127.0.0.1`         | `SILO_IP`    | Datagram messages go to the right place            |
+| `getifaddrs()` (macOS)               | Other silo aliases               | Hidden       | Each session only sees its own loopback alias      |
 
 On macOS, IPv6 sockets binding to `::` or `::1` are **downgraded to IPv4** and rewritten to `SILO_IP`. On Linux, they're rewritten to the IPv4-mapped IPv6 address (`::ffff:SILO_IP`).
 

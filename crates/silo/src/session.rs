@@ -96,15 +96,15 @@ impl Session {
         if opts.ip_alias {
             ip::add_alias(ctx.ip())?;
         }
-        if opts.hosts_entry {
-            if let Err(e) = hosts::ensure_entry(ctx.ip(), ctx.hostname()) {
-                warn!("failed to update /etc/hosts: {e} (run `silo doctor` to diagnose)");
-            }
+        if opts.hosts_entry
+            && let Err(e) = hosts::ensure_entry(ctx.ip(), ctx.hostname())
+        {
+            warn!("failed to update /etc/hosts: {e} (run `silo doctor` to diagnose)");
         }
-        if opts.silo_env {
-            if let Err(e) = render::apply_silo_env(ctx.dir(), &ctx.env_vars()) {
-                warn!("failed to apply .silo env files: {e}");
-            }
+        if opts.silo_env
+            && let Err(e) = render::apply_silo_env(ctx.dir(), &ctx.env_vars())
+        {
+            warn!("failed to apply .silo env files: {e}");
         }
         let bind_lib_path = if opts.bind_lib {
             Some(find_bind_lib()?)
