@@ -14,4 +14,4 @@
 !.github/
 !.github/**/*
 !dist-workspace.toml
-!CLAUDE.md
+!AGENTS.md

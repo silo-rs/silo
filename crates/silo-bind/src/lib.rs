@@ -917,11 +917,13 @@ mod platform {
             return Err(-1);
         }
 
+        // Boolean socket options (copy if non-zero)
         for opt in [
             libc::SO_REUSEADDR,
             libc::SO_REUSEPORT,
             libc::SO_KEEPALIVE,
             libc::SO_NOSIGPIPE,
+            libc::SO_OOBINLINE,
         ] {
             let mut optval: c_int = 0;
             optlen = std::mem::size_of::<c_int>() as socklen_t;
@@ -944,7 +946,13 @@ mod platform {
             }
         }
 
-        for opt in [libc::SO_RCVBUF, libc::SO_SNDBUF] {
+        // Integer socket options (copy unconditionally)
+        for opt in [
+            libc::SO_RCVBUF,
+            libc::SO_SNDBUF,
+            libc::SO_RCVLOWAT,
+            libc::SO_SNDLOWAT,
+        ] {
             let mut optval: c_int = 0;
             optlen = std::mem::size_of::<c_int>() as socklen_t;
             if libc::getsockopt(
@@ -962,6 +970,77 @@ mod platform {
                     &optval as *const _ as *const libc::c_void,
                     std::mem::size_of::<c_int>() as socklen_t,
                 );
+            }
+        }
+
+        // SO_LINGER (struct linger)
+        {
+            let mut linger_val: libc::linger = std::mem::zeroed();
+            optlen = std::mem::size_of::<libc::linger>() as socklen_t;
+            if libc::getsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_LINGER,
+                &mut linger_val as *mut _ as *mut libc::c_void,
+                &mut optlen,
+            ) == 0
+                && linger_val.l_onoff != 0
+            {
+                libc::setsockopt(
+                    new_fd,
+                    libc::SOL_SOCKET,
+                    libc::SO_LINGER,
+                    &linger_val as *const _ as *const libc::c_void,
+                    std::mem::size_of::<libc::linger>() as socklen_t,
+                );
+            }
+        }
+
+        // SO_RCVTIMEO / SO_SNDTIMEO (struct timeval)
+        for opt in [libc::SO_RCVTIMEO, libc::SO_SNDTIMEO] {
+            let mut tv: libc::timeval = std::mem::zeroed();
+            optlen = std::mem::size_of::<libc::timeval>() as socklen_t;
+            if libc::getsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                opt,
+                &mut tv as *mut _ as *mut libc::c_void,
+                &mut optlen,
+            ) == 0
+                && (tv.tv_sec != 0 || tv.tv_usec != 0)
+            {
+                libc::setsockopt(
+                    new_fd,
+                    libc::SOL_SOCKET,
+                    opt,
+                    &tv as *const _ as *const libc::c_void,
+                    std::mem::size_of::<libc::timeval>() as socklen_t,
+                );
+            }
+        }
+
+        // TCP-level options (only for stream sockets)
+        if sock_type == libc::SOCK_STREAM {
+            for opt in [libc::TCP_NODELAY, libc::TCP_KEEPALIVE] {
+                let mut optval: c_int = 0;
+                optlen = std::mem::size_of::<c_int>() as socklen_t;
+                if libc::getsockopt(
+                    fd,
+                    libc::IPPROTO_TCP,
+                    opt,
+                    &mut optval as *mut _ as *mut libc::c_void,
+                    &mut optlen,
+                ) == 0
+                    && optval != 0
+                {
+                    libc::setsockopt(
+                        new_fd,
+                        libc::IPPROTO_TCP,
+                        opt,
+                        &optval as *const _ as *const libc::c_void,
+                        std::mem::size_of::<c_int>() as socklen_t,
+                    );
+                }
             }
         }
 

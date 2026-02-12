@@ -25,10 +25,16 @@ IP is computed via FNV-1a hash of the canonical git root path → `resolve::comp
 ## Build and test
 
 ```sh
-cargo build -p silo-bind          # bind library must be built separately
+cargo build -p silo-bind          # must be built separately before tests
 cargo test --workspace
+```
+
+Verify before submitting:
+
+```sh
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
 ```
 
 ## Conventions
@@ -36,6 +42,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 - `crates/silo/` uses `#![forbid(unsafe_code)]`. Only `silo-bind` allows unsafe.
 - Error handling: `thiserror` in libraries, `eyre`/`color-eyre` in binaries.
 - Rust edition 2024.
+- Commit messages: imperative mood, concise (e.g., `feat: add branch-aware IP resolution`).
+- PRs: keep changes focused. One logical change per PR.
 
 ## Key files
 
