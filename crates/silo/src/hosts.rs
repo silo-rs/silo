@@ -2,9 +2,9 @@ use std::io::Write;
 use std::net::Ipv4Addr;
 use std::process::{Command, Stdio};
 
-use eyre::Context;
 use tracing::debug;
 
+use crate::error::{Error, Result};
 use crate::ip;
 
 const HOSTS_PATH: &str = "/etc/hosts";
@@ -13,10 +13,11 @@ const END_MARKER: &str = "# END silo managed block";
 
 /// Ensure an entry exists in /etc/hosts for the given IP and hostname.
 /// Idempotent: updates existing entry or adds a new one.
-pub fn ensure_entry(ip: Ipv4Addr, hostname: &str) -> eyre::Result<()> {
+pub fn ensure_entry(ip: Ipv4Addr, hostname: &str) -> Result<()> {
     ip::ensure_sudoers()?;
 
-    let content = std::fs::read_to_string(HOSTS_PATH).context("failed to read /etc/hosts")?;
+    let content = std::fs::read_to_string(HOSTS_PATH)
+        .map_err(|e| Error::io("failed to read /etc/hosts", e))?;
     let (before, mut entries, after) = parse_block(&content);
 
     let new_line = format!("{}\t{}", ip, hostname);
@@ -41,24 +42,28 @@ pub fn ensure_entry(ip: Ipv4Addr, hostname: &str) -> eyre::Result<()> {
     Ok(())
 }
 
-fn write_hosts(content: &str) -> eyre::Result<()> {
+fn write_hosts(content: &str) -> Result<()> {
     let mut child = Command::new("sudo")
         .args(["tee", HOSTS_PATH])
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())
         .spawn()
-        .context("failed to run sudo tee /etc/hosts")?;
+        .map_err(|e| Error::io("failed to run sudo tee /etc/hosts", e))?;
 
     if let Some(ref mut stdin) = child.stdin {
         stdin
             .write_all(content.as_bytes())
-            .context("failed to write to sudo tee stdin")?;
+            .map_err(|e| Error::io("failed to write to sudo tee stdin", e))?;
     }
 
-    let status = child.wait().context("failed to wait for sudo tee")?;
+    let status = child
+        .wait()
+        .map_err(|e| Error::io("failed to wait for sudo tee", e))?;
     if !status.success() {
-        eyre::bail!("sudo tee /etc/hosts failed");
+        return Err(Error::CommandFailed {
+            command: "sudo tee /etc/hosts".into(),
+        });
     }
 
     Ok(())

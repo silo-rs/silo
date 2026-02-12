@@ -26,6 +26,7 @@ fn main() {
         "getaddrinfo" => cmd_getaddrinfo(),
         "getaddrinfo_v6" => cmd_getaddrinfo_v6(),
         "sendto_any" => cmd_sendto(Ipv4Addr::UNSPECIFIED),
+        "sendmsg_localhost" => cmd_sendmsg_localhost(),
         #[cfg(target_os = "macos")]
         "bind_v6_opts" => cmd_bind_v6_opts(),
         "passthrough" => cmd_bind(Ipv4Addr::UNSPECIFIED),
@@ -264,6 +265,112 @@ fn cmd_bind_v6_opts() -> io::Result<()> {
         libc::close(fd);
     }
 
+    Ok(())
+}
+
+/// Create a UDP socket, bind to SILO_IP, then use raw sendmsg() with
+/// msg_name pointing to 127.0.0.1. Verify that the bind was rewritten
+/// (proving sendmsg's msg_name address rewriting works alongside bind).
+fn cmd_sendmsg_localhost() -> io::Result<()> {
+    unsafe {
+        let fd = libc::socket(libc::AF_INET, libc::SOCK_DGRAM, 0);
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        // Bind to 0.0.0.0:0 — will be rewritten to SILO_IP:port
+        let mut bind_addr: libc::sockaddr_in = std::mem::zeroed();
+        #[cfg(target_os = "macos")]
+        {
+            bind_addr.sin_len = std::mem::size_of::<libc::sockaddr_in>() as u8;
+        }
+        bind_addr.sin_family = libc::AF_INET as _;
+        bind_addr.sin_port = 0;
+        bind_addr.sin_addr.s_addr = 0; // INADDR_ANY
+
+        let ret = libc::bind(
+            fd,
+            &bind_addr as *const _ as *const libc::sockaddr,
+            std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+        );
+        if ret != 0 {
+            let err = io::Error::last_os_error();
+            libc::close(fd);
+            return Err(err);
+        }
+
+        // Get the actual bound address
+        let mut local_addr: libc::sockaddr_in = std::mem::zeroed();
+        let mut local_len = std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t;
+        libc::getsockname(
+            fd,
+            &mut local_addr as *mut _ as *mut libc::sockaddr,
+            &mut local_len,
+        );
+        let bound_ip = Ipv4Addr::from(u32::from_be(local_addr.sin_addr.s_addr));
+        let bound_port = u16::from_be(local_addr.sin_port);
+        println!("bound={bound_ip}:{bound_port}");
+
+        // Now use sendmsg with msg_name pointing to 127.0.0.1
+        // (which should be rewritten to SILO_IP)
+        let mut dest_addr: libc::sockaddr_in = std::mem::zeroed();
+        #[cfg(target_os = "macos")]
+        {
+            dest_addr.sin_len = std::mem::size_of::<libc::sockaddr_in>() as u8;
+        }
+        dest_addr.sin_family = libc::AF_INET as _;
+        dest_addr.sin_port = u16::to_be(bound_port);
+        dest_addr.sin_addr.s_addr = u32::from(Ipv4Addr::LOCALHOST).to_be();
+
+        let data = b"silo-test";
+        let mut iov = libc::iovec {
+            iov_base: data.as_ptr() as *mut libc::c_void,
+            iov_len: data.len(),
+        };
+
+        let msg = libc::msghdr {
+            msg_name: &mut dest_addr as *mut _ as *mut libc::c_void,
+            msg_namelen: std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+            msg_iov: &mut iov,
+            msg_iovlen: 1,
+            msg_control: std::ptr::null_mut(),
+            msg_controllen: 0,
+            msg_flags: 0,
+        };
+
+        let sent = libc::sendmsg(fd, &msg, 0);
+        if sent < 0 {
+            let err = io::Error::last_os_error();
+            libc::close(fd);
+            return Err(err);
+        }
+
+        // Receive the packet we sent to ourselves
+        let mut buf = [0u8; 64];
+        let mut recv_iov = libc::iovec {
+            iov_base: buf.as_mut_ptr() as *mut libc::c_void,
+            iov_len: buf.len(),
+        };
+        let mut src_addr: libc::sockaddr_in = std::mem::zeroed();
+        let mut recv_msg = libc::msghdr {
+            msg_name: &mut src_addr as *mut _ as *mut libc::c_void,
+            msg_namelen: std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+            msg_iov: &mut recv_iov,
+            msg_iovlen: 1,
+            msg_control: std::ptr::null_mut(),
+            msg_controllen: 0,
+            msg_flags: 0,
+        };
+
+        let recvd = libc::recvmsg(fd, &mut recv_msg, 0);
+        if recvd > 0 {
+            println!("sendmsg=ok");
+        } else {
+            println!("sendmsg=failed");
+        }
+
+        libc::close(fd);
+    }
     Ok(())
 }
 

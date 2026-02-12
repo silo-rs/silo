@@ -14,4 +14,3 @@
 !.github/
 !.github/**/*
 !dist-workspace.toml
-!silo.toml

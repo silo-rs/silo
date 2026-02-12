@@ -3,10 +3,9 @@ use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use eyre::Context;
 use tracing::debug;
 
-use crate::error::SiloError;
+use crate::error::{Error, Result};
 
 pub struct SiloContext {
     pub name: String,
@@ -26,7 +25,7 @@ impl SiloContext {
     }
 }
 
-pub fn resolve(cwd: &Path, name_override: Option<&str>) -> eyre::Result<SiloContext> {
+pub fn resolve(cwd: &Path, name_override: Option<&str>) -> Result<SiloContext> {
     let git_root = find_git_root(cwd)?;
     let canonical = git_root.canonicalize().unwrap_or_else(|_| git_root.clone());
 
@@ -53,7 +52,7 @@ pub fn resolve(cwd: &Path, name_override: Option<&str>) -> eyre::Result<SiloCont
     })
 }
 
-pub fn find_git_root(start: &Path) -> Result<PathBuf, SiloError> {
+pub(crate) fn find_git_root(start: &Path) -> std::result::Result<PathBuf, Error> {
     let mut dir = start.to_path_buf();
     loop {
         let candidate = dir.join(".git");
@@ -61,17 +60,17 @@ pub fn find_git_root(start: &Path) -> Result<PathBuf, SiloError> {
             return Ok(dir);
         }
         if !dir.pop() {
-            return Err(SiloError::NotGitRepo);
+            return Err(Error::NotGitRepo);
         }
     }
 }
 
-pub fn get_branch_name(git_root: &Path) -> eyre::Result<String> {
+pub(crate) fn get_branch_name(git_root: &Path) -> Result<String> {
     let output = Command::new("git")
         .args(["branch", "--show-current"])
         .current_dir(git_root)
         .output()
-        .context("failed to run git")?;
+        .map_err(|e| Error::io("failed to run git", e))?;
 
     if output.status.success() {
         let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -82,26 +81,25 @@ pub fn get_branch_name(git_root: &Path) -> eyre::Result<String> {
 
     let head_path = git_root.join(".git");
     let head_ref = if head_path.is_file() {
-        // Git worktree: .git is a file like "gitdir: /path/to/.git/worktrees/name"
-        let content = std::fs::read_to_string(&head_path).context("failed to read .git file")?;
+        let content = std::fs::read_to_string(&head_path)
+            .map_err(|e| Error::io("failed to read .git file", e))?;
         let gitdir = content.strip_prefix("gitdir: ").unwrap_or(&content).trim();
         let head = Path::new(gitdir).join("HEAD");
-        std::fs::read_to_string(&head).context("failed to read HEAD")?
+        std::fs::read_to_string(&head).map_err(|e| Error::io("failed to read HEAD", e))?
     } else {
         let head = head_path.join("HEAD");
-        std::fs::read_to_string(&head).context("failed to read HEAD")?
+        std::fs::read_to_string(&head).map_err(|e| Error::io("failed to read HEAD", e))?
     };
 
     let head_ref = head_ref.trim();
     if let Some(branch) = head_ref.strip_prefix("ref: refs/heads/") {
         Ok(branch.to_string())
     } else {
-        // Detached HEAD — use short hash
         Ok(head_ref.chars().take(8).collect())
     }
 }
 
-pub fn sanitize_name(raw: &str) -> String {
+pub(crate) fn sanitize_name(raw: &str) -> String {
     raw.chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
@@ -139,7 +137,7 @@ fn main_repo_name(git_root: &Path) -> String {
         .unwrap_or_default()
 }
 
-pub fn compute_ip(canonical_path: &Path) -> Ipv4Addr {
+pub(crate) fn compute_ip(canonical_path: &Path) -> Ipv4Addr {
     let bytes = canonical_path.as_os_str().as_encoded_bytes();
     let hash = fnv1a_hash(bytes);
 
@@ -216,7 +214,6 @@ mod tests {
 
     #[test]
     fn compute_ip_not_zero() {
-        // Should never produce 127.1.0.0
         for i in 0..1000 {
             let path = format!("/test/path/{}", i);
             let ip = compute_ip(Path::new(&path));

@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use eyre::Context;
 use tracing::{debug, instrument};
+
+use crate::error::{Error, Result};
 
 /// Scan for `**/*.silo` files under `root_path`, substitute `${VAR}` references,
 /// and merge the resulting KEY=VALUE lines into the corresponding target file
@@ -10,21 +11,21 @@ use tracing::{debug, instrument};
 /// is replaced in-place. New keys are appended. Creates the target if it doesn't exist.
 /// Returns the number of `.silo` files processed.
 #[instrument(skip(env_vars), fields(dir = %root_path.display()))]
-pub fn apply_silo_env(root_path: &Path, env_vars: &HashMap<String, String>) -> eyre::Result<usize> {
+pub fn apply_silo_env(root_path: &Path, env_vars: &HashMap<String, String>) -> Result<usize> {
     let pattern = format!("{}/**/*.silo", root_path.display());
-    let entries = glob::glob(&pattern).context("invalid glob pattern for .silo files")?;
+    let entries = glob::glob(&pattern)?;
 
     let mut applied = 0;
 
     for entry in entries {
-        let path = entry.context("glob error while scanning .silo files")?;
+        let path = entry?;
 
         if path.is_dir() {
             continue;
         }
 
         let content = std::fs::read_to_string(&path)
-            .with_context(|| format!("failed to read {}", path.display()))?;
+            .map_err(|e| Error::io(format!("failed to read {}", path.display()), e))?;
 
         let target = path.with_extension("");
 
@@ -35,7 +36,7 @@ pub fn apply_silo_env(root_path: &Path, env_vars: &HashMap<String, String>) -> e
 
         let output = if target.exists() {
             let existing = std::fs::read_to_string(&target)
-                .with_context(|| format!("failed to read {}", target.display()))?;
+                .map_err(|e| Error::io(format!("failed to read {}", target.display()), e))?;
             merge_env(&existing, &overrides)
         } else {
             let mut out = String::new();
@@ -46,7 +47,7 @@ pub fn apply_silo_env(root_path: &Path, env_vars: &HashMap<String, String>) -> e
         };
 
         std::fs::write(&target, &output)
-            .with_context(|| format!("failed to write {}", target.display()))?;
+            .map_err(|e| Error::io(format!("failed to write {}", target.display()), e))?;
 
         let relative = path.strip_prefix(root_path).unwrap_or(&path);
         let target_relative = target.strip_prefix(root_path).unwrap_or(&target);
@@ -356,5 +357,153 @@ mod tests {
             pairs,
             vec![("DATABASE_URL".into(), "postgres://localhost/api".into())]
         );
+    }
+
+    fn test_vars() -> HashMap<String, String> {
+        HashMap::from([
+            ("SILO_NAME".into(), "feature-a".into()),
+            ("SILO_IP".into(), "127.1.0.42".into()),
+            ("SILO_DIR".into(), "/work/feature-a".into()),
+            ("SILO_HOST".into(), "feature-a.project.silo".into()),
+        ])
+    }
+
+    #[test]
+    fn apply_creates_env_from_silo() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(".env.silo"),
+            "DATABASE_URL=postgres://localhost/myapp_${SILO_NAME}\nHOST=${SILO_IP}\n",
+        )
+        .unwrap();
+
+        let count = apply_silo_env(dir.path(), &test_vars()).unwrap();
+        assert_eq!(count, 1);
+
+        let output = std::fs::read_to_string(dir.path().join(".env")).unwrap();
+        assert_eq!(
+            output,
+            "DATABASE_URL=postgres://localhost/myapp_feature-a\nHOST=127.1.0.42\n"
+        );
+    }
+
+    #[test]
+    fn apply_appends_new_keys_to_existing_env() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(".env"),
+            "SECRET_KEY=abc123\nSTRIPE_KEY=sk_test_xxx\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join(".env.silo"),
+            "DATABASE_URL=postgres://localhost/myapp_${SILO_NAME}",
+        )
+        .unwrap();
+
+        let count = apply_silo_env(dir.path(), &test_vars()).unwrap();
+        assert_eq!(count, 1);
+
+        let output = std::fs::read_to_string(dir.path().join(".env")).unwrap();
+        assert_eq!(
+            output,
+            "SECRET_KEY=abc123\nSTRIPE_KEY=sk_test_xxx\nDATABASE_URL=postgres://localhost/myapp_feature-a\n"
+        );
+    }
+
+    #[test]
+    fn apply_replaces_existing_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(".env"),
+            "SECRET_KEY=abc123\nDATABASE_URL=postgres://localhost/myapp\nSTRIPE_KEY=sk_test_xxx\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join(".env.silo"),
+            "DATABASE_URL=postgres://localhost/myapp_${SILO_NAME}",
+        )
+        .unwrap();
+
+        let count = apply_silo_env(dir.path(), &test_vars()).unwrap();
+        assert_eq!(count, 1);
+
+        let output = std::fs::read_to_string(dir.path().join(".env")).unwrap();
+        assert_eq!(
+            output,
+            "SECRET_KEY=abc123\nDATABASE_URL=postgres://localhost/myapp_feature-a\nSTRIPE_KEY=sk_test_xxx\n"
+        );
+    }
+
+    #[test]
+    fn apply_skips_comments_and_blanks() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(".env.silo"),
+            "# this is a comment\n\nKEY=value\n  # another comment\n",
+        )
+        .unwrap();
+
+        let count = apply_silo_env(dir.path(), &test_vars()).unwrap();
+        assert_eq!(count, 1);
+
+        let output = std::fs::read_to_string(dir.path().join(".env")).unwrap();
+        assert_eq!(output, "KEY=value\n");
+    }
+
+    #[test]
+    fn apply_nested_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let api_dir = dir.path().join("packages/api");
+        let web_dir = dir.path().join("packages/web");
+        std::fs::create_dir_all(&api_dir).unwrap();
+        std::fs::create_dir_all(&web_dir).unwrap();
+
+        std::fs::write(api_dir.join(".env.silo"), "DB=api_${SILO_NAME}").unwrap();
+        std::fs::write(web_dir.join(".env.silo"), "DB=web_${SILO_NAME}").unwrap();
+
+        let count = apply_silo_env(dir.path(), &test_vars()).unwrap();
+        assert_eq!(count, 2);
+
+        assert_eq!(
+            std::fs::read_to_string(api_dir.join(".env")).unwrap(),
+            "DB=api_feature-a\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(web_dir.join(".env")).unwrap(),
+            "DB=web_feature-a\n"
+        );
+    }
+
+    #[test]
+    fn apply_no_silo_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let count = apply_silo_env(dir.path(), &test_vars()).unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn apply_preserves_equals_in_value() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(".env.silo"),
+            "DATABASE_URL=postgres://user:pass@host/db?sslmode=require",
+        )
+        .unwrap();
+
+        apply_silo_env(dir.path(), &test_vars()).unwrap();
+
+        let output = std::fs::read_to_string(dir.path().join(".env")).unwrap();
+        assert!(output.contains("DATABASE_URL=postgres://user:pass@host/db?sslmode=require"));
+    }
+
+    #[test]
+    fn apply_only_comments_produces_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".env.silo"), "# only comments\n\n").unwrap();
+
+        let count = apply_silo_env(dir.path(), &test_vars()).unwrap();
+        assert_eq!(count, 0);
+        assert!(!dir.path().join(".env").exists());
     }
 }

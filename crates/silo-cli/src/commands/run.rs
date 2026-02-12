@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
@@ -7,10 +6,7 @@ use colored::Colorize;
 use eyre::Context;
 
 use crate::ui;
-use silo::hosts;
-use silo::ip;
-use silo::render;
-use silo::resolve;
+use silo::Session;
 
 pub fn run(name: Option<&str>, command: &[String], quiet: bool) -> eyre::Result<()> {
     if std::env::var("SILO_IP").is_ok() {
@@ -20,23 +16,8 @@ pub fn run(name: Option<&str>, command: &[String], quiet: bool) -> eyre::Result<
         );
     }
 
-    let cwd = std::env::current_dir().context("failed to get current directory")?;
-    let cwd = cwd.canonicalize().unwrap_or(cwd);
-
-    let ctx = resolve::resolve(&cwd, name)?;
-
-    ip::add_alias(ctx.ip)?;
-
-    if let Err(e) = hosts::ensure_entry(ctx.ip, &ctx.hostname) {
-        eprintln!(
-            "{} failed to update /etc/hosts: {e}",
-            "warning:".yellow().bold(),
-        );
-    }
-
-    let env_vars = ctx.env_vars();
-
-    let _ = render::apply_silo_env(&ctx.dir, &env_vars);
+    ensure_bind_lib()?;
+    let session = Session::new(name)?;
 
     let quiet = quiet || std::env::var("SILO_QUIET").is_ok();
 
@@ -45,26 +26,24 @@ pub fn run(name: Option<&str>, command: &[String], quiet: bool) -> eyre::Result<
             "{} {} {}",
             ui::accent("silo"),
             "●".green(),
-            ui::accent(&ctx.name).bold(),
+            ui::accent(session.name()).bold(),
         );
         eprintln!(
             "     {} {} {}",
-            ctx.ip.to_string().dimmed(),
+            session.ip().to_string().dimmed(),
             "·".dimmed(),
-            ctx.hostname.dimmed(),
+            session.hostname().dimmed(),
         );
     }
 
-    exec_with_interception(&command[0], &command[1..], &env_vars)
+    exec_with_interception(&session, &command[0], &command[1..])
 }
 
 pub fn exec_with_interception(
+    session: &Session,
     program: &str,
     args: &[String],
-    env_vars: &HashMap<String, String>,
 ) -> eyre::Result<()> {
-    let lib_path = find_bind_lib()?;
-
     #[cfg(target_os = "macos")]
     let (program, args) = silo::shebang::resolve_program(program, args);
 
@@ -90,30 +69,7 @@ pub fn exec_with_interception(
 
     let mut cmd = Command::new(&program);
     cmd.args(&args);
-
-    for (key, val) in env_vars {
-        cmd.env(key, val);
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        let key = "DYLD_INSERT_LIBRARIES";
-        let val = match std::env::var(key) {
-            Ok(existing) => format!("{}:{}", lib_path.display(), existing),
-            Err(_) => lib_path.display().to_string(),
-        };
-        cmd.env(key, val);
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        let key = "LD_PRELOAD";
-        let val = match std::env::var(key) {
-            Ok(existing) => format!("{}:{}", lib_path.display(), existing),
-            Err(_) => lib_path.display().to_string(),
-        };
-        cmd.env(key, val);
-    }
+    session.apply(&mut cmd);
 
     let err = cmd.exec();
     Err(err).context(format!("failed to exec: {}", program))
@@ -158,4 +114,9 @@ pub fn find_bind_lib() -> eyre::Result<PathBuf> {
     }
 
     Ok(lib_path)
+}
+
+fn ensure_bind_lib() -> eyre::Result<()> {
+    find_bind_lib()?;
+    Ok(())
 }

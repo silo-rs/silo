@@ -180,6 +180,25 @@ fn sendto_udp_bind_is_rewritten() {
     );
 }
 
+// ── sendmsg() tests ──
+
+/// sendmsg() with msg_name pointing to 127.0.0.1 should have the destination
+/// rewritten to SILO_IP. We verify by sending to ourselves (bind was also
+/// rewritten to SILO_IP) and successfully receiving the packet.
+#[test]
+fn sendmsg_localhost_is_rewritten() {
+    let (stdout, _, success) = run_helper("sendmsg_localhost", Some(TEST_IP));
+    assert!(success, "helper failed");
+    assert!(
+        stdout.contains(TEST_IP),
+        "expected bind to {TEST_IP}, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("sendmsg=ok"),
+        "sendmsg should have delivered the packet (address rewritten), got: {stdout}"
+    );
+}
+
 // ── passthrough tests (no SILO_IP) ──
 
 /// Without SILO_IP set, bind(0.0.0.0) should pass through unchanged.
