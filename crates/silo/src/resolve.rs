@@ -7,6 +7,7 @@ use tracing::debug;
 
 use crate::error::{Error, Result};
 
+#[derive(Debug, Clone)]
 pub struct SiloContext {
     pub name: String,
     pub ip: Ipv4Addr,

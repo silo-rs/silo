@@ -20,11 +20,8 @@ pub enum Error {
     #[error("command failed: {command}")]
     CommandFailed { command: String },
 
-    #[error(transparent)]
-    Glob(#[from] glob::GlobError),
-
-    #[error(transparent)]
-    GlobPattern(#[from] glob::PatternError),
+    #[error("file pattern error: {message}")]
+    Pattern { message: String },
 }
 
 impl Error {
@@ -32,6 +29,22 @@ impl Error {
         Self::Io {
             context: context.into(),
             source,
+        }
+    }
+}
+
+impl From<glob::GlobError> for Error {
+    fn from(e: glob::GlobError) -> Self {
+        Self::Pattern {
+            message: e.to_string(),
+        }
+    }
+}
+
+impl From<glob::PatternError> for Error {
+    fn from(e: glob::PatternError) -> Self {
+        Self::Pattern {
+            message: e.to_string(),
         }
     }
 }
