@@ -13,6 +13,7 @@ dirs = { workspace = true }
 glob = { workspace = true }
 which = { workspace = true }
 tracing = { workspace = true }
+fd-lock = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

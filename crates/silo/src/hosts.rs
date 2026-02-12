@@ -2,6 +2,7 @@ use std::io::Write;
 use std::net::Ipv4Addr;
 use std::process::{Command, Stdio};
 
+use fd_lock::RwLock;
 use tracing::debug;
 
 use crate::error::{Error, Result};
@@ -13,8 +14,21 @@ const END_MARKER: &str = "# END silo managed block";
 
 /// Ensure an entry exists in /etc/hosts for the given IP and hostname.
 /// Idempotent: updates existing entry or adds a new one.
+///
+/// Uses an advisory exclusive lock on /etc/hosts to prevent concurrent
+/// silo instances from racing on the read-modify-write cycle.
 pub fn ensure_entry(ip: Ipv4Addr, hostname: &str) -> Result<()> {
     ip::ensure_sudoers()?;
+
+    // Advisory exclusive lock on /etc/hosts to prevent TOCTOU races
+    // between concurrent silo sessions. flock(2) allows exclusive locks
+    // on files opened read-only.
+    let lock_file = std::fs::File::open(HOSTS_PATH)
+        .map_err(|e| Error::io("failed to open /etc/hosts for locking", e))?;
+    let mut lock = RwLock::new(lock_file);
+    let _guard = lock
+        .write()
+        .map_err(|e| Error::io("failed to acquire /etc/hosts lock", e))?;
 
     let content = std::fs::read_to_string(HOSTS_PATH)
         .map_err(|e| Error::io("failed to read /etc/hosts", e))?;
