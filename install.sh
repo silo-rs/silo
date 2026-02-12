@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-echo "silo — development environment isolation via loopback IP aliasing"
+echo "silo — syscall interception on loopback"
 echo "https://github.com/silo-rs/silo"
 echo ""
 
@@ -20,12 +20,12 @@ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/silo-rs/silo/releases/l
 
 configure_sudoers() {
     if [ "$(uname)" = "Darwin" ]; then
-        SUDOERS_RULE='%admin ALL=(root) NOPASSWD: /sbin/ifconfig lo0 alias 127.0.* netmask 255.0.0.0
-%admin ALL=(root) NOPASSWD: /sbin/ifconfig lo0 -alias 127.0.*
+        SUDOERS_RULE='%admin ALL=(root) NOPASSWD: /sbin/ifconfig lo0 alias 127.* netmask 255.0.0.0
+%admin ALL=(root) NOPASSWD: /sbin/ifconfig lo0 -alias 127.*
 %admin ALL=(root) NOPASSWD: /usr/bin/tee /etc/hosts'
     else
-        SUDOERS_RULE='%sudo ALL=(root) NOPASSWD: /sbin/ip addr add 127.0.*/8 dev lo
-%sudo ALL=(root) NOPASSWD: /sbin/ip addr del 127.0.*/8 dev lo
+        SUDOERS_RULE='%sudo ALL=(root) NOPASSWD: /sbin/ip addr add 127.*/8 dev lo
+%sudo ALL=(root) NOPASSWD: /sbin/ip addr del 127.*/8 dev lo
 %sudo ALL=(root) NOPASSWD: /usr/bin/tee /etc/hosts'
     fi
 
@@ -44,52 +44,9 @@ configure_sudoers() {
 
 configure_sudoers
 
-# --- 3. Shell integration ---
-
-add_shell_init() {
-    SHELL_INIT='eval "$(silo shell-init)"'
-
-    # zsh
-    ZSHRC="${ZDOTDIR:-$HOME}/.zshrc"
-    if [ -f "$ZSHRC" ] || [ -n "${ZSH_VERSION:-}" ]; then
-        if ! grep -q "silo shell-init" "$ZSHRC" 2>/dev/null; then
-            printf '\n%s\n' "$SHELL_INIT" >> "$ZSHRC"
-            echo "Added silo init to $ZSHRC"
-        else
-            echo "$ZSHRC already configured."
-        fi
-    fi
-
-    # bash
-    if [ -f "$HOME/.bashrc" ]; then
-        if ! grep -q "silo shell-init" "$HOME/.bashrc" 2>/dev/null; then
-            printf '\n%s\n' "$SHELL_INIT" >> "$HOME/.bashrc"
-            echo "Added silo init to ~/.bashrc"
-        else
-            echo "~/.bashrc already configured."
-        fi
-    fi
-
-    # fish
-    FISH_CONFIG="$HOME/.config/fish/config.fish"
-    if [ -f "$FISH_CONFIG" ]; then
-        if ! grep -q "silo shell-init" "$FISH_CONFIG" 2>/dev/null; then
-            printf '\nsilo shell-init | source\nsilo activate 2>/dev/null\n' >> "$FISH_CONFIG"
-            echo "Added silo init to $FISH_CONFIG"
-        else
-            echo "$FISH_CONFIG already configured."
-        fi
-    fi
-}
-
 echo ""
-echo "Setting up shell integration..."
-add_shell_init
-
-echo ""
-echo "Setup complete! Restart your shell, then:"
+echo "Setup complete! Try it out:"
 echo ""
 echo "  cd <your-repo>"
-echo "  silo init"
-echo "  silo add <name>"
+echo "  silo run npm run dev"
 echo ""

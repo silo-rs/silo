@@ -7,53 +7,55 @@ use colored::Colorize;
 use eyre::Context;
 
 use crate::ui;
-use silo::config;
-use silo::hooks;
-use silo::store::Store;
+use silo::hosts;
+use silo::ip;
+use silo::render;
+use silo::resolve;
 
-pub async fn run(
-    store: &Store,
-    instance: Option<&str>,
-    command: &[String],
-    quiet: bool,
-    no_hooks: bool,
-) -> eyre::Result<()> {
+pub fn run(name: Option<&str>, command: &[String], quiet: bool) -> eyre::Result<()> {
+    if std::env::var("SILO_IP").is_ok() {
+        eprintln!(
+            "{} already inside a silo session (SILO_IP is set)",
+            "warning:".yellow().bold(),
+        );
+    }
+
     let cwd = std::env::current_dir().context("failed to get current directory")?;
     let cwd = cwd.canonicalize().unwrap_or(cwd);
 
-    let instance = super::resolve_instance_interactive(store, instance, &cwd).await?;
+    let ctx = resolve::resolve(&cwd, name)?;
+
+    ip::add_alias(ctx.ip)?;
+
+    if let Err(e) = hosts::ensure_entry(ctx.ip, &ctx.hostname) {
+        eprintln!(
+            "{} failed to update /etc/hosts: {e}",
+            "warning:".yellow().bold(),
+        );
+    }
+
+    let env_vars = ctx.env_vars();
+
+    let _ = render::apply_silo_env(&ctx.dir, &env_vars);
 
     let quiet = quiet || std::env::var("SILO_QUIET").is_ok();
 
     if !quiet {
-        let host = instance.hostname();
         eprintln!(
             "{} {} {}",
             ui::accent("silo"),
             "●".green(),
-            ui::accent(&instance.name).bold(),
+            ui::accent(&ctx.name).bold(),
         );
         eprintln!(
             "     {} {} {}",
-            instance.ip.to_string().dimmed(),
+            ctx.ip.to_string().dimmed(),
             "·".dimmed(),
-            host.dimmed(),
+            ctx.hostname.dimmed(),
         );
     }
 
-    if !no_hooks
-        && let Some(cfg) = config::load_config_from(&instance.repo)?
-        && !cfg.hooks.enter.is_empty()
-    {
-        hooks::run_hooks(
-            &cfg.hooks.enter,
-            &instance.path,
-            &instance.env_vars(),
-            "enter",
-        )?;
-    }
-
-    exec_with_interception(&command[0], &command[1..], &instance.env_vars())
+    exec_with_interception(&command[0], &command[1..], &env_vars)
 }
 
 pub fn exec_with_interception(

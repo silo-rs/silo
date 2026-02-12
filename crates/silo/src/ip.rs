@@ -4,10 +4,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use eyre::Context;
-use ipnet::Ipv4Net;
-use tracing::{debug, info, instrument, warn};
-
-use crate::error::SiloError;
+use tracing::{debug, instrument};
 
 /// Locate the `ip` command on Linux. Tries `which` first, then falls back to
 /// well-known paths across distributions (Debian, Fedora, Arch, etc.).
@@ -49,31 +46,6 @@ pub(crate) fn admin_group_from_etc_group(content: &str) -> &'static str {
     }
     // Default to %sudo (Debian-family is the most common CI/server environment)
     "%sudo"
-}
-
-#[instrument(skip(used))]
-pub fn allocate_ip(range: &str, used: &HashSet<Ipv4Addr>) -> Result<Ipv4Addr, SiloError> {
-    let network: Ipv4Net = range.parse().map_err(|e: ipnet::AddrParseError| {
-        SiloError::InvalidCidrRange(range.to_string(), e.to_string())
-    })?;
-
-    if network.network().octets()[0] != 127 {
-        return Err(SiloError::IpNotLoopback(network.network()));
-    }
-
-    debug!(used_count = used.len(), "scanning for available IP");
-
-    for ip in network.hosts() {
-        if ip == Ipv4Addr::new(127, 0, 0, 1) {
-            continue;
-        }
-        if !used.contains(&ip) {
-            info!(%ip, "allocated IP");
-            return Ok(ip);
-        }
-    }
-
-    Err(SiloError::IpRangeExhausted(range.to_string()))
 }
 
 #[instrument]
@@ -192,8 +164,8 @@ fn install_sudoers() -> eyre::Result<()> {
     eprintln!();
 
     #[cfg(target_os = "macos")]
-    let rules = "%admin ALL=(root) NOPASSWD: /sbin/ifconfig lo0 alias 127.0.* netmask 255.0.0.0\n\
-                 %admin ALL=(root) NOPASSWD: /sbin/ifconfig lo0 -alias 127.0.*\n\
+    let rules = "%admin ALL=(root) NOPASSWD: /sbin/ifconfig lo0 alias 127.* netmask 255.0.0.0\n\
+                 %admin ALL=(root) NOPASSWD: /sbin/ifconfig lo0 -alias 127.*\n\
                  %admin ALL=(root) NOPASSWD: /usr/bin/tee /etc/hosts\n";
 
     #[cfg(target_os = "linux")]
@@ -204,8 +176,8 @@ fn install_sudoers() -> eyre::Result<()> {
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|_| "/usr/bin/tee".to_string());
         format!(
-            "{group} ALL=(root) NOPASSWD: {ip_cmd} addr add 127.0.*/8 dev lo\n\
-             {group} ALL=(root) NOPASSWD: {ip_cmd} addr del 127.0.*/8 dev lo\n\
+            "{group} ALL=(root) NOPASSWD: {ip_cmd} addr add 127.*/8 dev lo\n\
+             {group} ALL=(root) NOPASSWD: {ip_cmd} addr del 127.*/8 dev lo\n\
              {group} ALL=(root) NOPASSWD: {tee_cmd} /etc/hosts\n"
         )
     };
@@ -271,14 +243,6 @@ fn run_sudo(args: &[&str]) -> eyre::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn empty_used() -> HashSet<Ipv4Addr> {
-        HashSet::new()
-    }
-
-    fn used_set(ips: &[Ipv4Addr]) -> HashSet<Ipv4Addr> {
-        ips.iter().copied().collect()
-    }
 
     #[test]
     fn ip_exact_match() {
@@ -356,48 +320,6 @@ lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384
         // "inet6" should not match "inet 6.x.x.x" — the space after "inet" matters
         let output = "    inet6 ::1/128 scope host\n";
         assert!(!is_ip_in_output(output, Ipv4Addr::new(127, 0, 0, 1)));
-    }
-
-    #[test]
-    fn allocate_first_ip() {
-        let used = empty_used();
-        let ip = allocate_ip("127.0.1.0/24", &used).unwrap();
-        assert_eq!(ip, Ipv4Addr::new(127, 0, 1, 1));
-    }
-
-    #[test]
-    fn allocate_skips_used() {
-        let used = used_set(&[Ipv4Addr::new(127, 0, 1, 1)]);
-        let ip = allocate_ip("127.0.1.0/24", &used).unwrap();
-        assert_eq!(ip, Ipv4Addr::new(127, 0, 1, 2));
-    }
-
-    #[test]
-    fn allocate_skips_localhost() {
-        let used = empty_used();
-        let ip = allocate_ip("127.0.0.0/24", &used).unwrap();
-        assert_eq!(ip, Ipv4Addr::new(127, 0, 0, 2));
-    }
-
-    #[test]
-    fn allocate_rejects_non_loopback() {
-        let used = empty_used();
-        let err = allocate_ip("192.168.1.0/24", &used).unwrap_err();
-        assert!(matches!(err, SiloError::IpNotLoopback(_)));
-    }
-
-    #[test]
-    fn allocate_exhausted() {
-        let used = used_set(&[Ipv4Addr::new(127, 0, 1, 1), Ipv4Addr::new(127, 0, 1, 2)]);
-        let err = allocate_ip("127.0.1.0/30", &used).unwrap_err();
-        assert!(matches!(err, SiloError::IpRangeExhausted(_)));
-    }
-
-    #[test]
-    fn allocate_invalid_cidr() {
-        let used = empty_used();
-        let err = allocate_ip("not-a-cidr", &used).unwrap_err();
-        assert!(matches!(err, SiloError::InvalidCidrRange(_, _)));
     }
 
     #[test]

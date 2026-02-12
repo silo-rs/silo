@@ -4,17 +4,14 @@ use std::path::Path;
 use eyre::Context;
 use tracing::{debug, instrument};
 
-/// Scan for `**/*.silo` files under `worktree_path`, substitute `${VAR}` references,
+/// Scan for `**/*.silo` files under `root_path`, substitute `${VAR}` references,
 /// and merge the resulting KEY=VALUE lines into the corresponding target file
 /// (e.g. `.env.silo` → `.env`). If a key already exists in the target, its value
 /// is replaced in-place. New keys are appended. Creates the target if it doesn't exist.
 /// Returns the number of `.silo` files processed.
-#[instrument(skip(env_vars), fields(worktree = %worktree_path.display()))]
-pub fn apply_silo_env(
-    worktree_path: &Path,
-    env_vars: &HashMap<String, String>,
-) -> eyre::Result<usize> {
-    let pattern = format!("{}/**/*.silo", worktree_path.display());
+#[instrument(skip(env_vars), fields(dir = %root_path.display()))]
+pub fn apply_silo_env(root_path: &Path, env_vars: &HashMap<String, String>) -> eyre::Result<usize> {
+    let pattern = format!("{}/**/*.silo", root_path.display());
     let entries = glob::glob(&pattern).context("invalid glob pattern for .silo files")?;
 
     let mut applied = 0;
@@ -51,8 +48,8 @@ pub fn apply_silo_env(
         std::fs::write(&target, &output)
             .with_context(|| format!("failed to write {}", target.display()))?;
 
-        let relative = path.strip_prefix(worktree_path).unwrap_or(&path);
-        let target_relative = target.strip_prefix(worktree_path).unwrap_or(&target);
+        let relative = path.strip_prefix(root_path).unwrap_or(&path);
+        let target_relative = target.strip_prefix(root_path).unwrap_or(&target);
 
         debug!(source = %relative.display(), target = %target_relative.display(), "silo env applied");
         eprintln!("  apply {}", target_relative.display());
@@ -143,72 +140,6 @@ fn merge_env(existing: &str, overrides: &[(String, String)]) -> String {
         result.push('\n');
     }
     result
-}
-
-/// Copy files matching `patterns` from `repo_root` into `worktree_path`,
-/// preserving relative paths. Skips files that already exist in the target.
-#[instrument(skip(patterns), fields(pattern_count = patterns.len(), repo = %repo_root.display(), worktree = %worktree_path.display()))]
-pub fn copy_files(
-    repo_root: &Path,
-    worktree_path: &Path,
-    patterns: &[String],
-) -> eyre::Result<usize> {
-    if patterns.is_empty() {
-        debug!("no copy patterns configured");
-        return Ok(0);
-    }
-
-    let mut copied = 0;
-
-    for pattern in patterns {
-        let full_pattern = repo_root.join(pattern);
-        let full_pattern_str = full_pattern.to_string_lossy().to_string();
-
-        let entries = glob::glob(&full_pattern_str)
-            .with_context(|| format!("invalid glob pattern: {}", pattern))?;
-
-        for entry in entries {
-            let source = entry.with_context(|| format!("glob error for pattern: {}", pattern))?;
-
-            if source.is_dir() {
-                continue;
-            }
-
-            let relative = source.strip_prefix(repo_root).with_context(|| {
-                format!(
-                    "path {} is not under repo root {}",
-                    source.display(),
-                    repo_root.display()
-                )
-            })?;
-
-            let target = worktree_path.join(relative);
-
-            if target.exists() {
-                debug!(target = %target.display(), "skipping copy (already exists)");
-                continue;
-            }
-
-            if let Some(parent) = target.parent() {
-                std::fs::create_dir_all(parent)
-                    .with_context(|| format!("failed to create directory {}", parent.display()))?;
-            }
-
-            std::fs::copy(&source, &target).with_context(|| {
-                format!(
-                    "failed to copy {} -> {}",
-                    source.display(),
-                    target.display()
-                )
-            })?;
-
-            debug!(source = %source.display(), target = %target.display(), "file copied");
-            eprintln!("  copy {}", relative.display());
-            copied += 1;
-        }
-    }
-
-    Ok(copied)
 }
 
 fn substitute(content: &str, vars: &HashMap<String, String>) -> String {
