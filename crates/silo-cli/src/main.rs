@@ -33,6 +33,11 @@ fn main() {
 
     if let Err(err) = run() {
         eprintln!("  {} {}: {:#}", "✗".red(), "error".red(), err);
+        eprintln!();
+        eprintln!(
+            "  {}",
+            "Run `silo doctor` to check your environment.".dimmed()
+        );
         std::process::exit(1);
     }
 }

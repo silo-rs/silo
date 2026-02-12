@@ -32,9 +32,11 @@ impl Session {
         let ctx = resolve::resolve(dir, name)?;
         ip::add_alias(ctx.ip)?;
         if let Err(e) = hosts::ensure_entry(ctx.ip, &ctx.hostname) {
-            warn!("failed to update /etc/hosts: {e}");
+            warn!("failed to update /etc/hosts: {e} (run `silo doctor` to diagnose)");
         }
-        let _ = render::apply_silo_env(&ctx.dir, &ctx.env_vars());
+        if let Err(e) = render::apply_silo_env(&ctx.dir, &ctx.env_vars()) {
+            warn!("failed to apply .silo env files: {e}");
+        }
         let bind_lib_path = find_bind_lib()?;
         Ok(Self { ctx, bind_lib_path })
     }
