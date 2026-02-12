@@ -56,6 +56,12 @@ unsafe extern "C" {
         envp: *const *const libc::c_char,
     ) -> c_int;
 
+    #[link_name = "gethostbyname"]
+    fn real_gethostbyname(name: *const libc::c_char) -> *mut libc::hostent;
+
+    #[link_name = "gethostbyname2"]
+    fn real_gethostbyname2(name: *const libc::c_char, af: c_int) -> *mut libc::hostent;
+
     #[link_name = "getaddrinfo"]
     fn real_getaddrinfo(
         node: *const libc::c_char,
@@ -159,6 +165,53 @@ unsafe fn rewrite_sendto_addr(addr: *const sockaddr) {
             && let Some(ip_bytes) = get_silo_ip()
         {
             (*sin6).sin6_addr.s6_addr = ipv4_mapped_v6(ip_bytes);
+        }
+    }
+}
+
+unsafe fn rewrite_hostent(hp: *mut libc::hostent) {
+    if hp.is_null() {
+        return;
+    }
+    let Some(silo_ip) = get_silo_ip() else {
+        return;
+    };
+
+    // Use addr_of! to avoid creating a reference to a potentially misaligned
+    // hostent struct (macOS gethostbyname may return misaligned pointers).
+    let h_addrtype = std::ptr::addr_of!((*hp).h_addrtype).read_unaligned();
+    let h_length = std::ptr::addr_of!((*hp).h_length).read_unaligned();
+    let h_addr_list = std::ptr::addr_of!((*hp).h_addr_list).read_unaligned();
+
+    if h_addrtype == AF_INET && h_length == 4 {
+        let localhost_be = u32::from(Ipv4Addr::LOCALHOST).to_be();
+        let mut i = 0usize;
+        loop {
+            let entry = h_addr_list.add(i).read_unaligned();
+            if entry.is_null() {
+                break;
+            }
+            let addr = std::ptr::read_unaligned(entry as *const u32);
+            if addr == localhost_be || addr == 0 {
+                std::ptr::write_unaligned(entry as *mut u32, silo_ip);
+            }
+            i += 1;
+        }
+    } else if h_addrtype == libc::AF_INET6 && h_length == 16 {
+        let mapped = ipv4_mapped_v6(silo_ip);
+        let mut i = 0usize;
+        loop {
+            let entry = h_addr_list.add(i).read_unaligned();
+            if entry.is_null() {
+                break;
+            }
+            let ptr = entry as *mut u8;
+            let mut v6 = [0u8; 16];
+            std::ptr::copy_nonoverlapping(ptr, v6.as_mut_ptr(), 16);
+            if v6 == V6_LOOPBACK {
+                std::ptr::copy_nonoverlapping(mapped.as_ptr(), ptr, 16);
+            }
+            i += 1;
         }
     }
 }
@@ -746,6 +799,61 @@ mod platform {
         ret
     }
 
+    // --- gethostbyname ---
+
+    type GethostbynameFn = unsafe extern "C" fn(*const libc::c_char) -> *mut libc::hostent;
+
+    #[repr(C)]
+    struct InterposeGethostbyname {
+        replacement: GethostbynameFn,
+        original: GethostbynameFn,
+    }
+
+    #[unsafe(no_mangle)]
+    #[used]
+    #[unsafe(link_section = "__DATA,__interpose")]
+    static INTERPOSE_GETHOSTBYNAME: InterposeGethostbyname = InterposeGethostbyname {
+        replacement: silo_gethostbyname_entry,
+        original: real_gethostbyname,
+    };
+
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn silo_gethostbyname_entry(name: *const libc::c_char) -> *mut libc::hostent {
+        let result = real_gethostbyname(name);
+        rewrite_hostent(result);
+        result
+    }
+
+    // --- gethostbyname2 ---
+
+    type Gethostbyname2Fn = unsafe extern "C" fn(*const libc::c_char, c_int) -> *mut libc::hostent;
+
+    #[repr(C)]
+    struct InterposeGethostbyname2 {
+        replacement: Gethostbyname2Fn,
+        original: Gethostbyname2Fn,
+    }
+
+    #[unsafe(no_mangle)]
+    #[used]
+    #[unsafe(link_section = "__DATA,__interpose")]
+    static INTERPOSE_GETHOSTBYNAME2: InterposeGethostbyname2 = InterposeGethostbyname2 {
+        replacement: silo_gethostbyname2_entry,
+        original: real_gethostbyname2,
+    };
+
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn silo_gethostbyname2_entry(
+        name: *const libc::c_char,
+        af: c_int,
+    ) -> *mut libc::hostent {
+        let result = real_gethostbyname2(name, af);
+        rewrite_hostent(result);
+        result
+    }
+
+    // --- sendto ---
+
     type SendtoFn = unsafe extern "C" fn(
         c_int,
         *const libc::c_void,
@@ -983,6 +1091,31 @@ mod platform {
             }
         }
         ret
+    }
+
+    #[unsafe(no_mangle)]
+    pub unsafe extern "C" fn gethostbyname(name: *const libc::c_char) -> *mut libc::hostent {
+        let real = libc::dlsym(libc::RTLD_NEXT, c"gethostbyname".as_ptr());
+        let real_fn: unsafe extern "C" fn(*const libc::c_char) -> *mut libc::hostent =
+            std::mem::transmute(real);
+
+        let result = real_fn(name);
+        rewrite_hostent(result);
+        result
+    }
+
+    #[unsafe(no_mangle)]
+    pub unsafe extern "C" fn gethostbyname2(
+        name: *const libc::c_char,
+        af: c_int,
+    ) -> *mut libc::hostent {
+        let real = libc::dlsym(libc::RTLD_NEXT, c"gethostbyname2".as_ptr());
+        let real_fn: unsafe extern "C" fn(*const libc::c_char, c_int) -> *mut libc::hostent =
+            std::mem::transmute(real);
+
+        let result = real_fn(name, af);
+        rewrite_hostent(result);
+        result
     }
 
     #[unsafe(no_mangle)]
