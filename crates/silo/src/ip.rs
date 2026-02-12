@@ -77,7 +77,6 @@ pub fn add_alias(ip: Ipv4Addr) -> Result<()> {
     Ok(())
 }
 
-#[allow(dead_code)]
 #[instrument]
 pub fn remove_alias(ip: Ipv4Addr) -> Result<()> {
     if !alias_exists(ip)? {
@@ -106,7 +105,6 @@ pub fn alias_exists(ip: Ipv4Addr) -> Result<bool> {
     Ok(is_ip_in_output(&lo_output, ip))
 }
 
-#[allow(dead_code)]
 pub fn active_ips(ips: &[Ipv4Addr]) -> Result<HashSet<Ipv4Addr>> {
     let lo_output = loopback_output()?;
     Ok(ips

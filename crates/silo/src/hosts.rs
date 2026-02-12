@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::io::Write;
 use std::net::Ipv4Addr;
 use std::process::{Command, Stdio};
@@ -54,6 +55,67 @@ pub fn ensure_entry(ip: Ipv4Addr, hostname: &str) -> Result<()> {
 
     debug!(%hostname, %ip, "hosts entry ensured");
     Ok(())
+}
+
+/// Parse the silo managed block and return all (ip, hostname) pairs.
+pub fn list_entries() -> Result<Vec<(Ipv4Addr, String)>> {
+    let content = std::fs::read_to_string(HOSTS_PATH)
+        .map_err(|e| Error::io("failed to read /etc/hosts", e))?;
+    let (_, entries, _) = parse_block(&content);
+
+    let mut result = Vec::new();
+    for entry in &entries {
+        if let Some((ip_str, hostname)) = entry.split_once('\t')
+            && let Ok(ip) = ip_str.parse::<Ipv4Addr>()
+        {
+            result.push((ip, hostname.to_string()));
+        }
+    }
+    Ok(result)
+}
+
+/// Remove all /etc/hosts entries whose IP is in the given set.
+/// Uses the same flock pattern as `ensure_entry` for safety.
+/// Returns the list of (ip, hostname) pairs that were removed.
+pub fn remove_entries(ips_to_remove: &HashSet<Ipv4Addr>) -> Result<Vec<(Ipv4Addr, String)>> {
+    ip::ensure_sudoers()?;
+
+    let lock_file = std::fs::File::open(HOSTS_PATH)
+        .map_err(|e| Error::io("failed to open /etc/hosts for locking", e))?;
+    let mut lock = RwLock::new(lock_file);
+    let _guard = lock
+        .write()
+        .map_err(|e| Error::io("failed to acquire /etc/hosts lock", e))?;
+
+    let content = std::fs::read_to_string(HOSTS_PATH)
+        .map_err(|e| Error::io("failed to read /etc/hosts", e))?;
+    let (before, entries, after) = parse_block(&content);
+
+    let mut removed = Vec::new();
+    let mut kept = Vec::new();
+
+    for entry in &entries {
+        let ip: Option<Ipv4Addr> = entry.split('\t').next().and_then(|s| s.parse().ok());
+
+        if let Some(ip) = ip
+            && ips_to_remove.contains(&ip)
+        {
+            let hostname = entry.split('\t').nth(1).unwrap_or("").to_string();
+            removed.push((ip, hostname));
+            continue;
+        }
+        kept.push(entry.clone());
+    }
+
+    if removed.is_empty() {
+        return Ok(removed);
+    }
+
+    let output = rebuild(before, &kept, after);
+    write_hosts(&output)?;
+
+    debug!(count = removed.len(), "removed hosts entries");
+    Ok(removed)
 }
 
 fn write_hosts(content: &str) -> Result<()> {

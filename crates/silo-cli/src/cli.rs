@@ -37,4 +37,15 @@ pub enum Commands {
 
     /// Show status of active loopback aliases
     Status,
+
+    /// Remove unused loopback aliases and /etc/hosts entries
+    Prune {
+        /// Remove ALL aliases and hosts entries, even those with active ports
+        #[arg(long)]
+        all: bool,
+
+        /// Skip confirmation prompt
+        #[arg(long, short)]
+        yes: bool,
+    },
 }
