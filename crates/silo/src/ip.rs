@@ -18,7 +18,6 @@ fn find_ip_command() -> String {
             return candidate.to_string();
         }
     }
-    // Last resort — let the OS resolve it
     "ip".to_string()
 }
 

@@ -22,6 +22,9 @@ unsafe extern "C" {
 
     #[link_name = "connect"]
     fn real_connect(fd: c_int, addr: *const sockaddr, len: socklen_t) -> c_int;
+
+    #[link_name = "getifaddrs"]
+    fn real_getifaddrs(ifap: *mut *mut libc::ifaddrs) -> c_int;
 }
 
 #[cfg(target_os = "macos")]
@@ -178,6 +181,31 @@ fn ipv4_mapped_v6(silo_ip: u32) -> [u8; 16] {
 
 const V6_LOOPBACK: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
 const V6_ANY: [u8; 16] = [0u8; 16];
+
+/// Hide other silo loopback aliases from getifaddrs results.
+/// For any AF_INET entry on lo0 whose address is 127.x.x.x but is neither
+/// 127.0.0.1 nor SILO_IP, rewrite the address to 127.0.0.1 so that
+/// `os.networkInterfaces()` (Node.js etc.) only sees the current session's IP.
+unsafe fn hide_other_silo_aliases(ifap: *mut libc::ifaddrs) {
+    let Some(silo_ip) = get_silo_ip() else {
+        return;
+    };
+    let localhost_be = u32::from(Ipv4Addr::LOCALHOST).to_be();
+
+    let mut cur = ifap;
+    while !cur.is_null() {
+        let ifa = &*cur;
+        if !ifa.ifa_addr.is_null() && (*ifa.ifa_addr).sa_family as c_int == AF_INET {
+            let sin = ifa.ifa_addr as *mut sockaddr_in;
+            let addr = (*sin).sin_addr.s_addr;
+            let octets = addr.to_ne_bytes();
+            if octets[0] == 127 && addr != localhost_be && addr != silo_ip {
+                (*sin).sin_addr.s_addr = localhost_be;
+            }
+        }
+        cur = (*cur).ifa_next;
+    }
+}
 
 #[cfg(target_os = "macos")]
 fn debug_enabled() -> bool {
@@ -750,6 +778,34 @@ mod platform {
         real_sendto(fd, buf, len, flags, dest_addr, addrlen)
     }
 
+    type GetifaddrsFn = unsafe extern "C" fn(*mut *mut libc::ifaddrs) -> c_int;
+
+    #[repr(C)]
+    struct InterposeGetifaddrs {
+        replacement: GetifaddrsFn,
+        original: GetifaddrsFn,
+    }
+
+    #[unsafe(no_mangle)]
+    #[used]
+    #[unsafe(link_section = "__DATA,__interpose")]
+    static INTERPOSE_GETIFADDRS: InterposeGetifaddrs = InterposeGetifaddrs {
+        replacement: silo_getifaddrs_entry,
+        original: real_getifaddrs,
+    };
+
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn silo_getifaddrs_entry(ifap: *mut *mut libc::ifaddrs) -> c_int {
+        let ret = real_getifaddrs(ifap);
+        if ret == 0 && !ifap.is_null() && !(*ifap).is_null() {
+            if debug_enabled() {
+                eprintln!("[silo-bind] getifaddrs intercepted, filtering aliases");
+            }
+            hide_other_silo_aliases(*ifap);
+        }
+        ret
+    }
+
     unsafe fn replace_with_ipv4(fd: c_int) -> Result<c_int, c_int> {
         let mut sock_type: c_int = 0;
         let mut optlen: socklen_t = std::mem::size_of::<c_int>() as socklen_t;
@@ -761,7 +817,6 @@ mod platform {
             &mut optlen,
         );
 
-        // Save file descriptor flags (O_NONBLOCK, O_CLOEXEC, etc.)
         let fd_flags = libc::fcntl(fd, libc::F_GETFL);
 
         let new_fd = libc::socket(AF_INET, sock_type, 0);
@@ -769,7 +824,6 @@ mod platform {
             return Err(-1);
         }
 
-        // Copy boolean socket options
         for opt in [
             libc::SO_REUSEADDR,
             libc::SO_REUSEPORT,
@@ -797,7 +851,6 @@ mod platform {
             }
         }
 
-        // Copy buffer sizes
         for opt in [libc::SO_RCVBUF, libc::SO_SNDBUF] {
             let mut optval: c_int = 0;
             optlen = std::mem::size_of::<c_int>() as socklen_t;
@@ -822,7 +875,6 @@ mod platform {
         libc::dup2(new_fd, fd);
         libc::close(new_fd);
 
-        // Restore file descriptor flags (O_NONBLOCK, etc.)
         if fd_flags >= 0 {
             libc::fcntl(fd, libc::F_SETFL, fd_flags);
         }
@@ -896,6 +948,19 @@ mod platform {
                 }
                 cur = ai.ai_next;
             }
+        }
+        ret
+    }
+
+    #[unsafe(no_mangle)]
+    pub unsafe extern "C" fn getifaddrs(ifap: *mut *mut libc::ifaddrs) -> c_int {
+        let real = libc::dlsym(libc::RTLD_NEXT, c"getifaddrs".as_ptr());
+        let real_fn: unsafe extern "C" fn(*mut *mut libc::ifaddrs) -> c_int =
+            std::mem::transmute(real);
+
+        let ret = real_fn(ifap);
+        if ret == 0 && !ifap.is_null() && !(*ifap).is_null() {
+            hide_other_silo_aliases(*ifap);
         }
         ret
     }

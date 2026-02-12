@@ -10,11 +10,9 @@ fn main() {
     let lib_name = lib_name();
     let lib_path = workspace_dir.join("target").join(&profile).join(lib_name);
 
-    // Fast path: dylib already built (workspace build or prior `cargo build -p silo-bind`)
     if lib_path.exists() {
         fs::copy(&lib_path, out_dir.join(lib_name)).expect("failed to copy dylib");
     } else {
-        // Fallback: build silo-bind with a separate target-dir to avoid cargo lock deadlock
         let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".into());
         let tmp_target = out_dir.join("silo-bind-build");
 
@@ -38,6 +36,7 @@ fn main() {
 
     println!("cargo:rerun-if-changed=../silo-bind/src");
     println!("cargo:rerun-if-changed=../silo-bind/Cargo.toml");
+    println!("cargo:rerun-if-changed={}", lib_path.display());
 }
 
 fn lib_name() -> &'static str {

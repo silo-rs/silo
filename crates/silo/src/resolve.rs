@@ -83,7 +83,6 @@ pub fn get_branch_name(git_root: &Path) -> eyre::Result<String> {
         }
     }
 
-    // Fallback: parse HEAD directly (detached HEAD → short SHA)
     let head_path = git_root.join(".git");
     let head_ref = if head_path.is_file() {
         // Git worktree: .git is a file like "gitdir: /path/to/.git/worktrees/name"

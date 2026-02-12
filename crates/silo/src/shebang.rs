@@ -15,7 +15,6 @@ pub fn is_sip_protected(path: &Path) -> bool {
 }
 
 pub fn resolve_program(program: &str, args: &[String]) -> (String, Vec<String>) {
-    // First: try shebang-based resolution (for scripts)
     if let Some((prog, resolved_args)) = resolve_recursive(program, args, 0) {
         debug!(
             original = program,
@@ -25,7 +24,6 @@ pub fn resolve_program(program: &str, args: &[String]) -> (String, Vec<String>) 
         return (prog, resolved_args);
     }
 
-    // Second: if program is a SIP-protected binary, find a non-SIP alternative
     let program_path = Path::new(program);
     if is_sip_protected(program_path)
         && let Some(name) = program_path.file_name().and_then(|n| n.to_str())

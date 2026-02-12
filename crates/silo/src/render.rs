@@ -238,8 +238,6 @@ mod tests {
         assert_eq!(result, "# database\nDB=new\n# cache\nREDIS=localhost\n");
     }
 
-    // ── export prefix tests ──
-
     #[test]
     fn parse_overrides_strips_export_prefix() {
         let vars = HashMap::new();
@@ -262,8 +260,6 @@ mod tests {
         let result = merge_env(existing, &overrides);
         assert_eq!(result, "export DB=new\nexport PORT=3000\n");
     }
-
-    // ── quote stripping tests ──
 
     #[test]
     fn parse_overrides_strips_double_quotes() {
@@ -305,8 +301,6 @@ mod tests {
         assert_eq!(pairs, vec![("EMPTY".into(), "".into())]);
     }
 
-    // ── duplicate key tests ──
-
     #[test]
     fn parse_overrides_duplicate_key_last_wins() {
         let vars = HashMap::new();
@@ -322,8 +316,6 @@ mod tests {
         let pairs = parse_overrides(content, &vars);
         assert_eq!(pairs, vec![("DB".into(), "new".into())]);
     }
-
-    // ── strip_quotes edge cases ──
 
     #[test]
     fn strip_quotes_no_quotes() {
@@ -354,8 +346,6 @@ mod tests {
     fn strip_quotes_empty() {
         assert_eq!(strip_quotes(""), "");
     }
-
-    // ── combined tests ──
 
     #[test]
     fn parse_overrides_export_with_quotes_and_substitution() {
