@@ -5,19 +5,9 @@
   Zero config. No containers. No code changes.
 </p>
 
-```
-$ npm run dev
-Error: listen EADDRINUSE: address already in use :::3000
-```
-
-With silo, just prefix your command:
-
-```sh
-$ silo npm run dev
-silo ● main
-     127.1.42.7 · main.myapp.silo
-Listening on http://localhost:3000  # transparently bound to 127.1.42.7:3000
-```
+<p align="center">
+  <img src="demo.gif" width="100%" />
+</p>
 
 Three branches, three dev servers -- all on port 3000, all at the same time.
 
@@ -96,12 +86,12 @@ On every run, variables are rendered and merged into `.env` -- existing keys are
 
 ## Commands
 
-| Command        | Description                                |
-| -------------- | ------------------------------------------ |
-| `silo <cmd>`   | Run command with transparent IP isolation  |
-| `silo ip`      | Show the resolved IP for current directory |
-| `silo status`  | List active loopback aliases               |
-| `silo doctor`  | Diagnose environment issues                |
+| Command       | Description                                |
+| ------------- | ------------------------------------------ |
+| `silo <cmd>`  | Run command with transparent IP isolation  |
+| `silo ip`     | Show the resolved IP for current directory |
+| `silo status` | List active loopback aliases               |
+| `silo doctor` | Diagnose environment issues                |
 
 ### Options
 
@@ -130,12 +120,12 @@ Or set the `SILO_IP_RANGE` environment variable.
 
 ### What gets rewritten
 
-| Syscall         | Original address                 | Rewritten to | Why                                                  |
-| --------------- | -------------------------------- | ------------ | ---------------------------------------------------- |
-| `bind()`        | `0.0.0.0` or `127.0.0.1`         | `SILO_IP`    | Server listens on its own loopback IP                |
-| `connect()`     | `127.0.0.1`                      | `SILO_IP`    | Client talks to its own server, not someone else's   |
-| `getaddrinfo()` | Results resolving to `127.0.0.1` | `SILO_IP`    | DNS-based localhost lookups get the same treatment   |
-| `sendto()`      | `0.0.0.0` or `127.0.0.1`         | `SILO_IP`    | UDP traffic goes to the right place                  |
+| Syscall         | Original address                 | Rewritten to | Why                                                |
+| --------------- | -------------------------------- | ------------ | -------------------------------------------------- |
+| `bind()`        | `0.0.0.0` or `127.0.0.1`         | `SILO_IP`    | Server listens on its own loopback IP              |
+| `connect()`     | `127.0.0.1`                      | `SILO_IP`    | Client talks to its own server, not someone else's |
+| `getaddrinfo()` | Results resolving to `127.0.0.1` | `SILO_IP`    | DNS-based localhost lookups get the same treatment |
+| `sendto()`      | `0.0.0.0` or `127.0.0.1`         | `SILO_IP`    | UDP traffic goes to the right place                |
 
 On macOS, IPv6 sockets binding to `::` or `::1` are **downgraded to IPv4** and rewritten to `SILO_IP`. On Linux, they're rewritten to the IPv4-mapped IPv6 address (`::ffff:SILO_IP`).
 
