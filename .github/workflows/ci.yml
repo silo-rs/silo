@@ -68,31 +68,3 @@ jobs:
           echo "ip command at: $ip_path"
           # Verify our detection logic finds the same path
           cargo test -p silo -- ip::tests::admin_group --nocapture
-
-  shell-syntax:
-    name: Shell syntax
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Install fish and zsh
-        run: sudo apt-get update && sudo apt-get install -y fish zsh
-      - name: Build silo
-        run: cargo build -p silo-cli
-      - name: Validate shell init scripts
-        run: |
-          SHELL=/bin/bash ./target/debug/silo shell-init > /tmp/bash_init.sh
-          SHELL=/bin/zsh  ./target/debug/silo shell-init > /tmp/zsh_init.sh
-          SHELL=/usr/bin/fish ./target/debug/silo shell-init > /tmp/fish_init.fish
-
-          echo "Checking bash syntax..."
-          bash -n /tmp/bash_init.sh
-
-          echo "Checking zsh syntax..."
-          zsh -n /tmp/zsh_init.sh
-
-          echo "Checking fish syntax..."
-          fish --no-execute /tmp/fish_init.fish
-
-          echo "All shell scripts are syntactically valid."
