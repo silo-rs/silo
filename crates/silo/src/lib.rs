@@ -4,8 +4,8 @@ pub mod error;
 pub(crate) mod resolve;
 pub mod session;
 
-pub(crate) mod hosts;
-pub(crate) mod ip;
+pub mod hosts;
+pub mod ip;
 pub(crate) mod render;
 
 #[cfg(target_os = "macos")]
