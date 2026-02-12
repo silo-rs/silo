@@ -75,17 +75,6 @@ These are automatically set inside every silo session:
 | `SILO_DIR`  | Git root path             | `/home/user/my-app`        |
 | `SILO_HOST` | Hostname                  | `feature-auth.my-app.silo` |
 
-### Per-project overrides (`.env.silo`)
-
-Not everything needs syscall interception. A shared Postgres server just needs a different database name per branch. Create a `.env.silo` file in your repo:
-
-```
-DATABASE_URL=postgres://localhost/myapp_${SILO_NAME}
-REDIS_URL=redis://${SILO_IP}:6379
-```
-
-On every run, variables are rendered and merged into `.env` -- existing keys are replaced in-place, new keys are appended.
-
 ## Commands
 
 | Command       | Description                                |
@@ -132,8 +121,8 @@ In a monorepo, all services share the same `SILO_IP` -- cross-service `localhost
 
 For separate repos (e.g. `frontend` + `backend`), use `.silo` hostnames as service discovery. Each silo session registers a hostname in `/etc/hosts` with the format `{branch}.{repo}.silo`:
 
-```
-# frontend repo's .env.silo
+```sh
+# frontend repo's .env
 BACKEND_URL=http://${SILO_NAME}.backend.silo:4000
 ```
 

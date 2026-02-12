@@ -7,7 +7,6 @@ pub mod session;
 
 pub mod hosts;
 pub mod ip;
-pub(crate) mod render;
 
 #[cfg(target_os = "macos")]
 pub mod shebang;
