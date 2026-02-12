@@ -7,7 +7,7 @@ pub enum Error {
     #[error("not inside a git repository")]
     NotGitRepo,
 
-    #[error("silo bind library not found (install silo CLI or set SILO_BIND_LIB)")]
+    #[error("silo bind library not found (run `silo doctor` to diagnose, or set SILO_BIND_LIB)")]
     BindLibNotFound,
 
     #[error("{context}")]

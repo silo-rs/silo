@@ -4,6 +4,7 @@ use std::process::Command;
 
 use colored::Colorize;
 use eyre::Context;
+use tracing::debug;
 
 pub fn run() -> eyre::Result<()> {
     let aliases = active_loopback_aliases()?;
@@ -64,6 +65,7 @@ fn active_loopback_aliases() -> eyre::Result<Vec<Ipv4Addr>> {
 fn load_silo_hosts() -> HashMap<Ipv4Addr, String> {
     let mut map = HashMap::new();
     let Ok(content) = std::fs::read_to_string("/etc/hosts") else {
+        debug!("failed to read /etc/hosts for status display");
         return map;
     };
     for line in content.lines() {
@@ -107,7 +109,10 @@ fn loopback_output() -> eyre::Result<String> {
 fn listening_ports() -> HashMap<Ipv4Addr, Vec<u16>> {
     let output = match listening_ports_output() {
         Ok(o) => o,
-        Err(_) => return HashMap::new(),
+        Err(e) => {
+            debug!("failed to get listening ports: {e}");
+            return HashMap::new();
+        }
     };
     parse_listening_ports(&output)
 }
