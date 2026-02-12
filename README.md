@@ -9,8 +9,6 @@
   <img src="demo.gif" width="100%" />
 </p>
 
-Three branches, three dev servers -- all on port 3000, all at the same time.
-
 ## Why
 
 You're running 3 AI agents on 3 features. All need `localhost:3000`. Port taken.
@@ -130,6 +128,21 @@ Or set the `SILO_IP_RANGE` environment variable.
 On macOS, IPv6 sockets binding to `::` or `::1` are **downgraded to IPv4** and rewritten to `SILO_IP`. On Linux, they're rewritten to the IPv4-mapped IPv6 address (`::ffff:SILO_IP`).
 
 Anything else -- specific IPs like `192.168.x.x`, Unix domain sockets, non-loopback addresses -- passes through untouched.
+
+### Multi-repo services
+
+In a monorepo, all services share the same `SILO_IP` -- cross-service `localhost` calls just work.
+
+For separate repos (e.g. `frontend` + `backend`), use `.silo` hostnames as service discovery. Each silo session registers a hostname in `/etc/hosts` with the format `{branch}.{repo}.silo`:
+
+```
+# frontend repo's .env.silo
+BACKEND_URL=http://${SILO_NAME}.backend.silo:4000
+```
+
+On the `main` branch this resolves to `main.backend.silo` → the backend's silo IP. Switch to `feature-auth` and it becomes `feature-auth.backend.silo` -- automatically pointing to the right instance.
+
+This works because silo only rewrites `127.0.0.1` -- connections to other silo IPs (like `127.1.x.x` resolved from a `.silo` hostname) pass through untouched.
 
 ### Edge cases
 
