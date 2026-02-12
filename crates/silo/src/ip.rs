@@ -3,8 +3,9 @@ use std::net::Ipv4Addr;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use eyre::Context;
 use tracing::{debug, instrument};
+
+use crate::error::{Error, Result};
 
 /// Locate the `ip` command on Linux. Tries `which` first, then falls back to
 /// well-known paths across distributions (Debian, Fedora, Arch, etc.).
@@ -43,12 +44,11 @@ pub(crate) fn admin_group_from_etc_group(content: &str) -> &'static str {
     if has_wheel {
         return "%wheel";
     }
-    // Default to %sudo (Debian-family is the most common CI/server environment)
     "%sudo"
 }
 
 #[instrument]
-pub fn add_alias(ip: Ipv4Addr) -> eyre::Result<()> {
+pub fn add_alias(ip: Ipv4Addr) -> Result<()> {
     if alias_exists(ip)? {
         debug!(%ip, "alias already exists, skipping");
         return Ok(());
@@ -77,8 +77,9 @@ pub fn add_alias(ip: Ipv4Addr) -> eyre::Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 #[instrument]
-pub fn remove_alias(ip: Ipv4Addr) -> eyre::Result<()> {
+pub fn remove_alias(ip: Ipv4Addr) -> Result<()> {
     if !alias_exists(ip)? {
         debug!(%ip, "alias does not exist, skipping");
         return Ok(());
@@ -100,12 +101,13 @@ pub fn remove_alias(ip: Ipv4Addr) -> eyre::Result<()> {
     Ok(())
 }
 
-pub fn alias_exists(ip: Ipv4Addr) -> eyre::Result<bool> {
+pub fn alias_exists(ip: Ipv4Addr) -> Result<bool> {
     let lo_output = loopback_output()?;
     Ok(is_ip_in_output(&lo_output, ip))
 }
 
-pub fn active_ips(ips: &[Ipv4Addr]) -> eyre::Result<HashSet<Ipv4Addr>> {
+#[allow(dead_code)]
+pub fn active_ips(ips: &[Ipv4Addr]) -> Result<HashSet<Ipv4Addr>> {
     let lo_output = loopback_output()?;
     Ok(ips
         .iter()
@@ -129,13 +131,13 @@ pub(crate) fn is_ip_in_output(output: &str, ip: Ipv4Addr) -> bool {
     })
 }
 
-fn loopback_output() -> eyre::Result<String> {
+fn loopback_output() -> Result<String> {
     #[cfg(target_os = "macos")]
     {
         let output = Command::new("ifconfig")
             .arg("lo0")
             .output()
-            .context("failed to run ifconfig")?;
+            .map_err(|e| Error::io("failed to run ifconfig", e))?;
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 
@@ -145,7 +147,7 @@ fn loopback_output() -> eyre::Result<String> {
         let output = Command::new(&ip_cmd)
             .args(["addr", "show", "lo"])
             .output()
-            .with_context(|| format!("failed to run {} addr show lo", ip_cmd))?;
+            .map_err(|e| Error::io(format!("failed to run {} addr show lo", ip_cmd), e))?;
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 }
@@ -156,7 +158,7 @@ fn sudoers_configured() -> bool {
     exists
 }
 
-fn install_sudoers() -> eyre::Result<()> {
+fn install_sudoers() -> Result<()> {
     eprintln!();
     eprintln!("silo needs passwordless sudo for loopback IP aliases (one-time setup)");
     eprintln!("this will create /etc/sudoers.d/silo");
@@ -194,19 +196,23 @@ fn install_sudoers() -> eyre::Result<()> {
             }
             child.wait()
         })
-        .context("failed to install sudoers rule")?;
+        .map_err(|e| Error::io("failed to install sudoers rule", e))?;
 
     if !status.success() {
-        eyre::bail!("failed to install sudoers rule");
+        return Err(Error::CommandFailed {
+            command: "sudo tee /etc/sudoers.d/silo".into(),
+        });
     }
 
     let status = Command::new("sudo")
         .args(["chmod", "0440", "/etc/sudoers.d/silo"])
         .status()
-        .context("failed to chmod sudoers rule")?;
+        .map_err(|e| Error::io("failed to chmod sudoers rule", e))?;
 
     if !status.success() {
-        eyre::bail!("failed to chmod sudoers rule");
+        return Err(Error::CommandFailed {
+            command: "sudo chmod 0440 /etc/sudoers.d/silo".into(),
+        });
     }
 
     eprintln!("  configured. future commands won't ask for a password");
@@ -215,14 +221,14 @@ fn install_sudoers() -> eyre::Result<()> {
     Ok(())
 }
 
-pub fn ensure_sudoers() -> eyre::Result<()> {
+pub fn ensure_sudoers() -> Result<()> {
     if !sudoers_configured() {
         install_sudoers()?;
     }
     Ok(())
 }
 
-fn run_sudo(args: &[&str]) -> eyre::Result<()> {
+fn run_sudo(args: &[&str]) -> Result<()> {
     debug!(cmd = %args.join(" "), "running sudo");
     let status = Command::new("sudo")
         .args(args)
@@ -230,10 +236,12 @@ fn run_sudo(args: &[&str]) -> eyre::Result<()> {
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .status()
-        .context("failed to run sudo")?;
+        .map_err(|e| Error::io("failed to run sudo", e))?;
 
     if !status.success() {
-        eyre::bail!("command failed: sudo {}", args.join(" "));
+        return Err(Error::CommandFailed {
+            command: format!("sudo {}", args.join(" ")),
+        });
     }
 
     Ok(())
@@ -316,7 +324,6 @@ lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384
 
     #[test]
     fn ip_no_false_positive_inet6() {
-        // "inet6" should not match "inet 6.x.x.x" — the space after "inet" matters
         let output = "    inet6 ::1/128 scope host\n";
         assert!(!is_ip_in_output(output, Ipv4Addr::new(127, 0, 0, 1)));
     }
@@ -335,7 +342,6 @@ lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384
 
     #[test]
     fn admin_group_both_prefers_sudo() {
-        // Unlikely but possible — prefer sudo if both exist
         let etc_group = "root:x:0:\nsudo:x:27:user\nwheel:x:10:user\n";
         assert_eq!(admin_group_from_etc_group(etc_group), "%sudo");
     }

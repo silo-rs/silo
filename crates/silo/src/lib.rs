@@ -1,10 +1,16 @@
 #![forbid(unsafe_code)]
 
-pub mod config;
 pub mod error;
-pub mod hosts;
-pub mod ip;
-pub mod render;
-pub mod resolve;
+pub(crate) mod resolve;
+pub mod session;
+
+pub(crate) mod config;
+pub(crate) mod hosts;
+pub(crate) mod ip;
+pub(crate) mod render;
+
 #[cfg(target_os = "macos")]
 pub mod shebang;
+
+pub use error::Error;
+pub use session::Session;
