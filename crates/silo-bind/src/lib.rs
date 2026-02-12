@@ -179,7 +179,9 @@ fn ipv4_mapped_v6(silo_ip: u32) -> [u8; 16] {
     ]
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const V6_LOOPBACK: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+#[cfg(target_os = "linux")]
 const V6_ANY: [u8; 16] = [0u8; 16];
 
 /// Hide other silo loopback aliases from getifaddrs results.
@@ -731,8 +733,7 @@ mod platform {
                     }
                 } else if ai.ai_family == libc::AF_INET6 as c_int && !ai.ai_addr.is_null() {
                     let sin6 = ai.ai_addr as *mut libc::sockaddr_in6;
-                    let v6_addr = (*sin6).sin6_addr.s6_addr;
-                    if v6_addr == V6_LOOPBACK || v6_addr == V6_ANY {
+                    if (*sin6).sin6_addr.s6_addr == V6_LOOPBACK {
                         (*sin6).sin6_addr.s6_addr = mapped;
                     }
                 }
@@ -941,8 +942,7 @@ mod platform {
                     }
                 } else if ai.ai_family == libc::AF_INET6 as c_int && !ai.ai_addr.is_null() {
                     let sin6 = ai.ai_addr as *mut libc::sockaddr_in6;
-                    let v6_addr = (*sin6).sin6_addr.s6_addr;
-                    if v6_addr == V6_LOOPBACK || v6_addr == V6_ANY {
+                    if (*sin6).sin6_addr.s6_addr == V6_LOOPBACK {
                         (*sin6).sin6_addr.s6_addr = mapped;
                     }
                 }
