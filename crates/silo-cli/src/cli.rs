@@ -35,8 +35,8 @@ pub enum Commands {
     /// Check environment and diagnose common problems
     Doctor,
 
-    /// Show status of active loopback aliases
-    Status,
+    /// List active silo sessions
+    Ls,
 
     /// Remove unused loopback aliases and /etc/hosts entries
     Prune {
