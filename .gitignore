@@ -14,3 +14,4 @@
 !.github/
 !.github/**/*
 !dist-workspace.toml
+!CLAUDE.md
