@@ -13,7 +13,7 @@ Error: listen EADDRINUSE: address already in use :::3000
 With silo, just prefix your command:
 
 ```sh
-$ silo run npm run dev
+$ silo npm run dev
 silo ● main
      127.1.42.7 · main.myapp.silo
 Listening on http://localhost:3000  # transparently bound to 127.1.42.7:3000
@@ -45,14 +45,14 @@ That's it. No `init`, no `add`. Just run:
 
 ```sh
 cd ~/projects/my-app
-silo run npm run dev        # → bound to 127.1.42.7:3000
+silo npm run dev            # → bound to 127.1.42.7:3000
 ```
 
 In another terminal, on a different branch:
 
 ```sh
 cd ~/worktrees/my-app-feature
-silo run npm run dev        # → bound to 127.1.183.12:3000
+silo npm run dev            # → bound to 127.1.183.12:3000
 ```
 
 Both on port 3000. No conflict.
@@ -63,7 +63,7 @@ Both on port 3000. No conflict.
 your app → bind("0.0.0.0:3000") → [ silo intercepts ] → bind("127.1.42.7:3000") ✅
 ```
 
-`silo run` does four things:
+`silo` does four things:
 
 1. **Computes a deterministic IP** from your git root path (FNV-1a hash → `127.1.x.x`)
 2. **Creates a loopback alias** for that IP (`ifconfig lo0 alias` / `ip addr add`)
@@ -74,7 +74,7 @@ No database, no state files. The IP is a pure function of your directory path --
 
 ## Environment variables
 
-These are automatically set inside every `silo run` session:
+These are automatically set inside every silo session:
 
 | Variable    | Description               | Example                    |
 | ----------- | ------------------------- | -------------------------- |
@@ -92,26 +92,28 @@ DATABASE_URL=postgres://localhost/myapp_${SILO_NAME}
 REDIS_URL=redis://${SILO_IP}:6379
 ```
 
-On every `silo run`, variables are rendered and merged into `.env` -- existing keys are replaced in-place, new keys are appended.
+On every run, variables are rendered and merged into `.env` -- existing keys are replaced in-place, new keys are appended.
 
 ## Commands
 
-| Command          | Description                                |
-| ---------------- | ------------------------------------------ |
-| `silo run <cmd>` | Run command with transparent IP isolation  |
-| `silo ip`        | Show the resolved IP for current directory |
-| `silo status`    | List active loopback aliases               |
-| `silo doctor`    | Diagnose environment issues                |
+| Command        | Description                                |
+| -------------- | ------------------------------------------ |
+| `silo <cmd>`   | Run command with transparent IP isolation  |
+| `silo ip`      | Show the resolved IP for current directory |
+| `silo status`  | List active loopback aliases               |
+| `silo doctor`  | Diagnose environment issues                |
 
-### `silo run` options
+### Options
 
 ```
-silo run [OPTIONS] <COMMAND>...
+silo [OPTIONS] <COMMAND>...
 
 Options:
   -n, --name <NAME>   Override name (default: git branch)
   -q, --quiet         Suppress the silo banner
 ```
+
+`silo run <cmd>` also works as an explicit form.
 
 ## Configuration
 
@@ -124,7 +126,7 @@ range = "127.1.0.0/16"   # default; 65,534 unique IPs
 
 Or set the `SILO_IP_RANGE` environment variable.
 
-## Deep dive: `silo run`
+## Deep dive
 
 ### What gets rewritten
 
@@ -154,7 +156,7 @@ macOS prevents library injection into system binaries under `/usr/bin`, `/bin`, 
 Set `SILO_BIND_DEBUG=1` to see every intercepted syscall:
 
 ```sh
-SILO_BIND_DEBUG=1 silo run npm run dev
+SILO_BIND_DEBUG=1 silo npm run dev
 # [silo-bind] loaded pid=12345 SILO_IP=127.1.42.7
 # [silo-bind] pid=12345 bind fd=7 family=2 port=3000 SILO_IP=127.1.42.7
 ```

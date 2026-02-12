@@ -1,7 +1,11 @@
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "silo", about = "silo — syscall interception on loopback")]
+#[command(
+    name = "silo",
+    about = "silo — syscall interception on loopback",
+    after_help = "Tip: `silo <cmd>` is shorthand for `silo run <cmd>`"
+)]
 #[command(version, propagate_version = true)]
 pub struct Cli {
     #[command(subcommand)]

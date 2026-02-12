@@ -7,6 +7,24 @@ pub(crate) mod ui;
 use clap::Parser;
 use cli::{Cli, Commands};
 use colored::Colorize;
+
+const KNOWN_SUBCOMMANDS: &[&str] = &["run", "ip", "status", "doctor", "help"];
+
+/// If the first positional arg isn't a known subcommand, treat the entire
+/// invocation as `silo run <args>`.  This lets users write `silo npm run dev`
+/// instead of `silo run npm run dev`.
+fn auto_run_args() -> Vec<String> {
+    let args: Vec<String> = std::env::args().collect();
+
+    if args.len() > 1 && !args[1].starts_with('-') && !KNOWN_SUBCOMMANDS.contains(&args[1].as_str())
+    {
+        let mut new_args = vec![args[0].clone(), "run".into()];
+        new_args.extend_from_slice(&args[1..]);
+        new_args
+    } else {
+        args
+    }
+}
 use tracing_subscriber::{EnvFilter, fmt};
 
 fn main() {
@@ -33,7 +51,7 @@ fn init_tracing() {
 }
 
 fn run() -> eyre::Result<()> {
-    let cli = Cli::parse();
+    let cli = Cli::parse_from(auto_run_args());
 
     match cli.command {
         Commands::Run {
