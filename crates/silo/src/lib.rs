@@ -4,7 +4,6 @@ pub mod error;
 pub(crate) mod resolve;
 pub mod session;
 
-pub(crate) mod config;
 pub(crate) mod hosts;
 pub(crate) mod ip;
 pub(crate) mod render;

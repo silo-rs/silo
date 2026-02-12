@@ -107,17 +107,6 @@ Options:
 
 `silo run <cmd>` also works as an explicit form.
 
-## Configuration
-
-silo works with zero configuration. Optionally, create `~/.config/silo/config.toml`:
-
-```toml
-[network]
-range = "127.1.0.0/16"   # default; 65,534 unique IPs
-```
-
-Or set the `SILO_IP_RANGE` environment variable.
-
 ## Deep dive
 
 ### What gets rewritten

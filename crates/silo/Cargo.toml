@@ -8,8 +8,6 @@ repository = { workspace = true }
 homepage = { workspace = true }
 
 [dependencies]
-serde = { workspace = true }
-toml = { workspace = true }
 thiserror = { workspace = true }
 dirs = { workspace = true }
 glob = { workspace = true }
