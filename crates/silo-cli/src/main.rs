@@ -8,7 +8,7 @@ use clap::Parser;
 use cli::{Cli, Commands};
 use colored::Colorize;
 
-const KNOWN_SUBCOMMANDS: &[&str] = &["run", "ip", "status", "doctor", "prune", "help"];
+const KNOWN_SUBCOMMANDS: &[&str] = &["run", "ip", "ls", "doctor", "prune", "help"];
 
 /// If the first positional arg isn't a known subcommand, treat the entire
 /// invocation as `silo run <args>`.  This lets users write `silo npm run dev`
@@ -66,7 +66,7 @@ fn run() -> eyre::Result<()> {
         } => commands::run::run(name.as_deref(), &command, quiet),
         Commands::Ip => commands::ip::run(),
         Commands::Doctor => commands::doctor::run(),
-        Commands::Status => commands::status::run(),
+        Commands::Ls => commands::ls::run(),
         Commands::Prune { all, yes } => commands::prune::run(all, yes),
     }
 }
