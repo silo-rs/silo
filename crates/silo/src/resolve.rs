@@ -81,7 +81,18 @@ pub(crate) fn get_branch_name(git_root: &Path) -> Result<String> {
     }
 }
 
-pub(crate) fn sanitize_name(raw: &str) -> String {
+/// Sanitize a raw name (e.g. git branch) into a silo-safe identifier.
+///
+/// Replaces non-alphanumeric characters (except `-` and `_`) with `-`,
+/// collapses consecutive dashes, and strips leading/trailing dashes.
+///
+/// # Examples
+///
+/// ```
+/// assert_eq!(silo::sanitize_name("feature/auth"), "feature-auth");
+/// assert_eq!(silo::sanitize_name("release/v1.0.0"), "release-v1-0-0");
+/// ```
+pub fn sanitize_name(raw: &str) -> String {
     raw.chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
@@ -119,8 +130,27 @@ fn main_repo_name(git_root: &Path) -> String {
         .unwrap_or_default()
 }
 
-pub(crate) fn compute_ip(canonical_path: &Path, name: &str) -> Ipv4Addr {
-    let mut hash = fnv1a_hash(canonical_path.as_os_str().as_encoded_bytes());
+/// Compute the deterministic loopback IP for a `(path, name)` pair.
+///
+/// Uses FNV-1a to hash the canonical path and name into the `127.0.0.0/8`
+/// address space, yielding one of ~16.6 million unique addresses.
+///
+/// # Stability guarantee
+///
+/// The mapping from `(path, name)` to IP address is a stable contract.
+/// Existing `/etc/hosts` entries, user configurations, and external tooling
+/// depend on this mapping being consistent across versions. **Any change to
+/// this algorithm requires a major version bump** (and a bump to
+/// [`IP_VERSION`]).
+pub fn compute_ip(canonical_path: &Path, name: &str) -> Ipv4Addr {
+    let mut hash = FNV_OFFSET;
+    // Version prefix — bump this (and update golden tests) for algorithm changes.
+    hash ^= IP_VERSION as u64;
+    hash = hash.wrapping_mul(FNV_PRIME);
+    for &byte in canonical_path.as_os_str().as_encoded_bytes() {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
     // Separator byte to avoid collisions between path="a",name="b" and path="ab",name=""
     hash ^= 0xff_u64;
     hash = hash.wrapping_mul(FNV_PRIME);
@@ -142,17 +172,12 @@ pub(crate) fn compute_ip(canonical_path: &Path, name: &str) -> Ipv4Addr {
     Ipv4Addr::new(127, o1, o2, o3)
 }
 
+/// Hash version prefix. Bump when changing the IP computation algorithm
+/// so that old and new mappings are explicitly distinguishable.
+const IP_VERSION: u8 = 1;
+
 const FNV_OFFSET: u64 = 0xcbf29ce484222325;
 const FNV_PRIME: u64 = 0x100000001b3;
-
-fn fnv1a_hash(bytes: &[u8]) -> u64 {
-    let mut hash = FNV_OFFSET;
-    for &byte in bytes {
-        hash ^= byte as u64;
-        hash = hash.wrapping_mul(FNV_PRIME);
-    }
-    hash
-}
 
 #[cfg(test)]
 mod tests {
@@ -232,6 +257,24 @@ mod tests {
         assert_eq!(vars["SILO_NAME"], "feature-auth");
         assert_eq!(vars["SILO_DIR"], "/home/user/project");
         assert_eq!(vars["SILO_HOST"], "feature-auth.project.silo");
+    }
+
+    /// Golden test for IP stability. These values are part of the public contract.
+    /// Do NOT change them without a major version bump (and [`IP_VERSION`] bump).
+    #[test]
+    fn compute_ip_golden() {
+        assert_eq!(
+            compute_ip(Path::new("/home/user/project"), "main"),
+            Ipv4Addr::new(127, 120, 134, 3),
+        );
+        assert_eq!(
+            compute_ip(Path::new("/home/user/project"), "feature-auth"),
+            Ipv4Addr::new(127, 185, 176, 25),
+        );
+        assert_eq!(
+            compute_ip(Path::new("/tmp/myapp"), "develop"),
+            Ipv4Addr::new(127, 139, 94, 75),
+        );
     }
 
     #[test]

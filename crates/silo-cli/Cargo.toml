@@ -18,6 +18,8 @@ eyre = { workspace = true }
 color-eyre = { workspace = true }
 colored = { workspace = true }
 dirs = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 

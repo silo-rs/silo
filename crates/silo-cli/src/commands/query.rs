@@ -2,34 +2,10 @@ use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::process::Command;
 
-use eyre::Context;
 use tracing::debug;
 
 pub fn active_loopback_aliases() -> eyre::Result<Vec<Ipv4Addr>> {
-    let output = loopback_output()?;
-    let mut aliases = Vec::new();
-
-    for line in output.lines() {
-        let trimmed = line.trim();
-
-        let rest = if let Some(r) = trimmed.strip_prefix("inet ") {
-            r
-        } else {
-            continue;
-        };
-
-        let ip_str = rest.split_whitespace().next().unwrap_or("");
-        let ip_str = ip_str.split('/').next().unwrap_or(ip_str);
-
-        if let Ok(ip) = ip_str.parse::<Ipv4Addr>()
-            && ip != Ipv4Addr::new(127, 0, 0, 1)
-            && ip.octets()[0] == 127
-        {
-            aliases.push(ip);
-        }
-    }
-
-    Ok(aliases)
+    Ok(silo::ip::active_aliases()?)
 }
 
 pub fn listening_ports() -> HashMap<Ipv4Addr, Vec<u16>> {
@@ -43,42 +19,18 @@ pub fn listening_ports() -> HashMap<Ipv4Addr, Vec<u16>> {
     parse_listening_ports(&output)
 }
 
-fn loopback_output() -> eyre::Result<String> {
-    #[cfg(target_os = "macos")]
-    {
-        let output = Command::new("ifconfig")
-            .arg("lo0")
-            .output()
-            .context("failed to run ifconfig")?;
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        let output = Command::new("ip")
-            .args(["addr", "show", "lo"])
-            .output()
-            .context("failed to run ip addr show lo")?;
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-    }
-}
-
 fn listening_ports_output() -> eyre::Result<String> {
     #[cfg(target_os = "macos")]
     {
         let output = Command::new("lsof")
             .args(["-nP", "-iTCP", "-sTCP:LISTEN"])
-            .output()
-            .context("failed to run lsof")?;
+            .output()?;
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 
     #[cfg(target_os = "linux")]
     {
-        let output = Command::new("ss")
-            .args(["-tlnH"])
-            .output()
-            .context("failed to run ss")?;
+        let output = Command::new("ss").args(["-tlnH"]).output()?;
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 }

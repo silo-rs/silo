@@ -1,6 +1,5 @@
 use std::collections::HashSet;
 use std::net::Ipv4Addr;
-use std::path::Path;
 use std::process::{Command, Stdio};
 
 use tracing::{debug, info, instrument};
@@ -15,36 +14,11 @@ fn find_ip_command() -> String {
         return p.to_string_lossy().into_owned();
     }
     for candidate in ["/usr/sbin/ip", "/sbin/ip", "/usr/bin/ip", "/bin/ip"] {
-        if Path::new(candidate).exists() {
+        if std::path::Path::new(candidate).exists() {
             return candidate.to_string();
         }
     }
     "ip".to_string()
-}
-
-/// Detect the admin group for sudoers rules on Linux.
-/// Debian/Ubuntu use `sudo`, RHEL/Fedora/Arch use `wheel`.
-#[cfg(target_os = "linux")]
-pub(crate) fn detect_admin_group() -> &'static str {
-    if let Ok(content) = std::fs::read_to_string("/etc/group") {
-        return admin_group_from_etc_group(&content);
-    }
-    "%sudo"
-}
-
-/// Parse /etc/group content and return the appropriate sudoers group.
-/// Extracted for testability.
-#[cfg(any(target_os = "linux", test))]
-pub(crate) fn admin_group_from_etc_group(content: &str) -> &'static str {
-    let has_sudo = content.lines().any(|l| l.starts_with("sudo:"));
-    let has_wheel = content.lines().any(|l| l.starts_with("wheel:"));
-    if has_sudo {
-        return "%sudo";
-    }
-    if has_wheel {
-        return "%wheel";
-    }
-    "%sudo"
 }
 
 #[instrument]
@@ -53,8 +27,6 @@ pub fn add_alias(ip: Ipv4Addr) -> Result<()> {
         debug!(%ip, "alias already exists, skipping");
         return Ok(());
     }
-
-    ensure_sudoers()?;
 
     info!(%ip, "adding loopback alias");
 
@@ -84,8 +56,6 @@ pub fn remove_alias(ip: Ipv4Addr) -> Result<()> {
         return Ok(());
     }
 
-    ensure_sudoers()?;
-
     info!(%ip, "removing loopback alias");
 
     #[cfg(target_os = "macos")]
@@ -103,6 +73,37 @@ pub fn remove_alias(ip: Ipv4Addr) -> Result<()> {
 pub fn alias_exists(ip: Ipv4Addr) -> Result<bool> {
     let lo_output = loopback_output()?;
     Ok(is_ip_in_output(&lo_output, ip))
+}
+
+/// Return all active silo loopback aliases (127.x.y.z, excluding 127.0.0.1).
+///
+/// Queries the loopback interface and returns every address in the
+/// `127.0.0.0/8` range that is not the default `127.0.0.1`.
+pub fn active_aliases() -> Result<Vec<Ipv4Addr>> {
+    let output = loopback_output()?;
+    let mut aliases = Vec::new();
+
+    for line in output.lines() {
+        let trimmed = line.trim();
+
+        let rest = if let Some(r) = trimmed.strip_prefix("inet ") {
+            r
+        } else {
+            continue;
+        };
+
+        let ip_str = rest.split_whitespace().next().unwrap_or("");
+        let ip_str = ip_str.split('/').next().unwrap_or(ip_str);
+
+        if let Ok(ip) = ip_str.parse::<Ipv4Addr>()
+            && ip != Ipv4Addr::new(127, 0, 0, 1)
+            && ip.octets()[0] == 127
+        {
+            aliases.push(ip);
+        }
+    }
+
+    Ok(aliases)
 }
 
 pub fn active_ips(ips: &[Ipv4Addr]) -> Result<HashSet<Ipv4Addr>> {
@@ -148,82 +149,6 @@ fn loopback_output() -> Result<String> {
             .map_err(|e| Error::io(format!("failed to run {} addr show lo", ip_cmd), e))?;
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
-}
-
-fn sudoers_configured() -> bool {
-    let exists = Path::new("/etc/sudoers.d/silo").exists();
-    debug!(exists, "checking /etc/sudoers.d/silo");
-    exists
-}
-
-fn install_sudoers() -> Result<()> {
-    eprintln!();
-    eprintln!("silo needs passwordless sudo for loopback IP aliases (one-time setup)");
-    eprintln!("this will create /etc/sudoers.d/silo");
-    eprintln!();
-
-    #[cfg(target_os = "macos")]
-    let rules = "%admin ALL=(root) NOPASSWD: /sbin/ifconfig lo0 alias 127.* netmask 255.0.0.0\n\
-                 %admin ALL=(root) NOPASSWD: /sbin/ifconfig lo0 -alias 127.*\n\
-                 %admin ALL=(root) NOPASSWD: /usr/bin/tee /etc/hosts\n";
-
-    #[cfg(target_os = "linux")]
-    let rules = {
-        let group = detect_admin_group();
-        let ip_cmd = find_ip_command();
-        let tee_cmd = which::which("tee")
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_else(|_| "/usr/bin/tee".to_string());
-        format!(
-            "{group} ALL=(root) NOPASSWD: {ip_cmd} addr add 127.*/8 dev lo\n\
-             {group} ALL=(root) NOPASSWD: {ip_cmd} addr del 127.*/8 dev lo\n\
-             {group} ALL=(root) NOPASSWD: {tee_cmd} /etc/hosts\n"
-        )
-    };
-
-    let status = Command::new("sudo")
-        .args(["tee", "/etc/sudoers.d/silo"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .and_then(|mut child| {
-            use std::io::Write;
-            if let Some(ref mut stdin) = child.stdin {
-                stdin.write_all(rules.as_bytes())?;
-            }
-            child.wait()
-        })
-        .map_err(|e| Error::io("failed to install sudoers rule", e))?;
-
-    if !status.success() {
-        return Err(Error::CommandFailed {
-            command: "sudo tee /etc/sudoers.d/silo".into(),
-        });
-    }
-
-    let status = Command::new("sudo")
-        .args(["chmod", "0440", "/etc/sudoers.d/silo"])
-        .status()
-        .map_err(|e| Error::io("failed to chmod sudoers rule", e))?;
-
-    if !status.success() {
-        return Err(Error::CommandFailed {
-            command: "sudo chmod 0440 /etc/sudoers.d/silo".into(),
-        });
-    }
-
-    eprintln!("  configured. future commands won't ask for a password");
-    eprintln!();
-
-    Ok(())
-}
-
-pub fn ensure_sudoers() -> Result<()> {
-    if !sudoers_configured() {
-        install_sudoers()?;
-    }
-    Ok(())
 }
 
 fn run_sudo(args: &[&str]) -> Result<()> {
@@ -324,29 +249,5 @@ lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384
     fn ip_no_false_positive_inet6() {
         let output = "    inet6 ::1/128 scope host\n";
         assert!(!is_ip_in_output(output, Ipv4Addr::new(127, 0, 0, 1)));
-    }
-
-    #[test]
-    fn admin_group_debian_has_sudo() {
-        let etc_group = "root:x:0:\ndaemon:x:1:\nsudo:x:27:user\nusers:x:100:\n";
-        assert_eq!(admin_group_from_etc_group(etc_group), "%sudo");
-    }
-
-    #[test]
-    fn admin_group_fedora_has_wheel() {
-        let etc_group = "root:x:0:\nwheel:x:10:user\nusers:x:100:\n";
-        assert_eq!(admin_group_from_etc_group(etc_group), "%wheel");
-    }
-
-    #[test]
-    fn admin_group_both_prefers_sudo() {
-        let etc_group = "root:x:0:\nsudo:x:27:user\nwheel:x:10:user\n";
-        assert_eq!(admin_group_from_etc_group(etc_group), "%sudo");
-    }
-
-    #[test]
-    fn admin_group_neither_defaults_sudo() {
-        let etc_group = "root:x:0:\nusers:x:100:\n";
-        assert_eq!(admin_group_from_etc_group(etc_group), "%sudo");
     }
 }

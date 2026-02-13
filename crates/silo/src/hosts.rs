@@ -1,13 +1,14 @@
 use std::collections::HashSet;
 use std::io::Write;
 use std::net::Ipv4Addr;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use fd_lock::RwLock;
+use serde::Serialize;
 use tracing::debug;
 
 use crate::error::{Error, Result};
-use crate::ip;
 
 const HOSTS_PATH: &str = "/etc/hosts";
 const BEGIN_MARKER: &str = "# BEGIN silo managed block - do not edit";
@@ -16,11 +17,13 @@ const END_MARKER: &str = "# END silo managed block";
 /// Ensure an entry exists in /etc/hosts for the given IP and hostname.
 /// Idempotent: updates existing entry or adds a new one.
 ///
+/// The `dir` path is stored as an inline comment so that external tools can
+/// recover the project directory from `/etc/hosts` alone, without needing to
+/// reverse the IP hash.
+///
 /// Uses an advisory exclusive lock on /etc/hosts to prevent concurrent
 /// silo instances from racing on the read-modify-write cycle.
-pub fn ensure_entry(ip: Ipv4Addr, hostname: &str) -> Result<()> {
-    ip::ensure_sudoers()?;
-
+pub fn ensure_entry(ip: Ipv4Addr, hostname: &str, dir: &Path) -> Result<()> {
     // Advisory exclusive lock on /etc/hosts to prevent TOCTOU races
     // between concurrent silo sessions. flock(2) allows exclusive locks
     // on files opened read-only.
@@ -35,7 +38,7 @@ pub fn ensure_entry(ip: Ipv4Addr, hostname: &str) -> Result<()> {
         .map_err(|e| Error::io("failed to read /etc/hosts", e))?;
     let (before, mut entries, after) = parse_block(&content);
 
-    let new_line = format!("{}\t{}", ip, hostname);
+    let new_line = format!("{}\t{}\t# {}", ip, hostname, dir.display());
 
     if let Some(pos) = entries
         .iter()
@@ -57,18 +60,36 @@ pub fn ensure_entry(ip: Ipv4Addr, hostname: &str) -> Result<()> {
     Ok(())
 }
 
-/// Parse the silo managed block and return all (ip, hostname) pairs.
-pub fn list_entries() -> Result<Vec<(Ipv4Addr, String)>> {
+/// A parsed entry from the silo-managed block in `/etc/hosts`.
+#[derive(Debug, Clone, Serialize)]
+pub struct HostEntry {
+    pub ip: Ipv4Addr,
+    pub hostname: String,
+    /// Project directory, recovered from the inline comment.
+    /// `None` for entries written by older silo versions.
+    pub dir: Option<PathBuf>,
+}
+
+/// Parse the silo managed block and return all entries.
+pub fn list_entries() -> Result<Vec<HostEntry>> {
     let content = std::fs::read_to_string(HOSTS_PATH)
         .map_err(|e| Error::io("failed to read /etc/hosts", e))?;
     let (_, entries, _) = parse_block(&content);
 
     let mut result = Vec::new();
     for entry in &entries {
-        if let Some((ip_str, hostname)) = entry.split_once('\t')
+        let (main, dir) = match entry.split_once("\t# ") {
+            Some((m, comment)) => (m, Some(PathBuf::from(comment))),
+            None => (entry.as_str(), None),
+        };
+        if let Some((ip_str, hostname)) = main.split_once('\t')
             && let Ok(ip) = ip_str.parse::<Ipv4Addr>()
         {
-            result.push((ip, hostname.to_string()));
+            result.push(HostEntry {
+                ip,
+                hostname: hostname.to_string(),
+                dir,
+            });
         }
     }
     Ok(result)
@@ -78,8 +99,6 @@ pub fn list_entries() -> Result<Vec<(Ipv4Addr, String)>> {
 /// Uses the same flock pattern as `ensure_entry` for safety.
 /// Returns the list of (ip, hostname) pairs that were removed.
 pub fn remove_entries(ips_to_remove: &HashSet<Ipv4Addr>) -> Result<Vec<(Ipv4Addr, String)>> {
-    ip::ensure_sudoers()?;
-
     let lock_file = std::fs::File::open(HOSTS_PATH)
         .map_err(|e| Error::io("failed to open /etc/hosts for locking", e))?;
     let mut lock = RwLock::new(lock_file);
@@ -100,7 +119,8 @@ pub fn remove_entries(ips_to_remove: &HashSet<Ipv4Addr>) -> Result<Vec<(Ipv4Addr
         if let Some(ip) = ip
             && ips_to_remove.contains(&ip)
         {
-            let hostname = entry.split('\t').nth(1).unwrap_or("").to_string();
+            let main = entry.split_once("\t# ").map_or(entry.as_str(), |(m, _)| m);
+            let hostname = main.split('\t').nth(1).unwrap_or("").to_string();
             removed.push((ip, hostname));
             continue;
         }
@@ -284,5 +304,43 @@ mod tests {
         let (before, entries, after) = parse_block(&original);
         let rebuilt = rebuild(before, &entries, after);
         assert_eq!(rebuilt, original);
+    }
+
+    #[test]
+    fn roundtrip_with_dir_comment() {
+        let original = format!(
+            "127.0.0.1\tlocalhost\n{}\n127.0.1.1\tapi.myapp.silo\t# /home/user/myapp\n{}\n::1\tlocalhost\n",
+            BEGIN_MARKER, END_MARKER
+        );
+        let (before, entries, after) = parse_block(&original);
+        assert_eq!(
+            entries,
+            vec!["127.0.1.1\tapi.myapp.silo\t# /home/user/myapp"]
+        );
+        let rebuilt = rebuild(before, &entries, after);
+        assert_eq!(rebuilt, original);
+    }
+
+    #[test]
+    fn parse_entry_with_dir_comment() {
+        let entry = "127.0.1.1\tapi.myapp.silo\t# /home/user/myapp";
+        let (main, dir) = entry.split_once("\t# ").unwrap();
+        let (ip_str, hostname) = main.split_once('\t').unwrap();
+        assert_eq!(ip_str, "127.0.1.1");
+        assert_eq!(hostname, "api.myapp.silo");
+        assert_eq!(dir, "/home/user/myapp");
+    }
+
+    #[test]
+    fn parse_entry_without_dir_comment() {
+        let entry = "127.0.1.1\tapi.myapp.silo";
+        let (main, dir) = match entry.split_once("\t# ") {
+            Some((m, comment)) => (m, Some(PathBuf::from(comment))),
+            None => (entry, None),
+        };
+        let (ip_str, hostname) = main.split_once('\t').unwrap();
+        assert_eq!(ip_str, "127.0.1.1");
+        assert_eq!(hostname, "api.myapp.silo");
+        assert!(dir.is_none());
     }
 }

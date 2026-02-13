@@ -4,6 +4,7 @@ mod cli;
 mod commands;
 #[cfg(target_os = "linux")]
 pub(crate) mod ebpf;
+pub(crate) mod sudoers;
 pub(crate) mod ui;
 
 use clap::Parser;
@@ -73,12 +74,13 @@ fn run() -> eyre::Result<()> {
         Commands::Run {
             name,
             quiet,
+            emit_json,
             command,
-        } => commands::run::run(name.as_deref(), &command, quiet),
-        Commands::Ip => commands::ip::run(),
-        Commands::Doctor => commands::doctor::run(),
-        Commands::Ls => commands::ls::run(),
-        Commands::Prune { all, yes } => commands::prune::run(all, yes),
+        } => commands::run::run(name.as_deref(), &command, quiet, emit_json),
+        Commands::Ip { json } => commands::ip::run(json),
+        Commands::Doctor { json } => commands::doctor::run(json),
+        Commands::Ls { json } => commands::ls::run(json),
+        Commands::Prune { all, yes, json } => commands::prune::run(all, yes || json, json),
         #[cfg(target_os = "linux")]
         Commands::SetupEbpf => commands::setup_ebpf::run(),
         #[cfg(target_os = "linux")]

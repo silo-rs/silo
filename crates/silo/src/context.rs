@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 
+use serde::Serialize;
+
 use crate::error::{Error, Result};
 use crate::resolve;
 
@@ -23,7 +25,8 @@ use crate::resolve;
 /// println!("{} → {} ({})", ctx.name(), ctx.ip(), ctx.hostname());
 /// # Ok::<(), silo::Error>(())
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
+#[non_exhaustive]
 pub struct Context {
     pub(crate) name: String,
     pub(crate) ip: Ipv4Addr,

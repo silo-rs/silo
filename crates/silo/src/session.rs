@@ -90,6 +90,7 @@ impl BackendSession for NoopBackend {
 
 /// Controls which side effects [`Session::activate`] performs.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct ActivateOptions {
     /// Add a loopback alias for the resolved IP (requires sudo).
     pub ip_alias: bool,
@@ -132,7 +133,7 @@ impl Session {
             ip::add_alias(ctx.ip())?;
         }
         if opts.hosts_entry
-            && let Err(e) = hosts::ensure_entry(ctx.ip(), ctx.hostname())
+            && let Err(e) = hosts::ensure_entry(ctx.ip(), ctx.hostname(), ctx.dir())
         {
             warn!("failed to update /etc/hosts: {e} (run `silo doctor` to diagnose)");
         }

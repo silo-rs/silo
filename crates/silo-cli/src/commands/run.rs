@@ -8,13 +8,20 @@ use eyre::Context;
 use crate::ui;
 use silo::Session;
 
-pub fn run(name: Option<&str>, command: &[String], quiet: bool) -> eyre::Result<()> {
+pub fn run(
+    name: Option<&str>,
+    command: &[String],
+    quiet: bool,
+    emit_json: bool,
+) -> eyre::Result<()> {
     if std::env::var("SILO_IP").is_ok() {
         eprintln!(
             "{} already inside a silo session (SILO_IP is set)",
             "warning:".yellow().bold(),
         );
     }
+
+    crate::sudoers::ensure()?;
 
     let ctx = silo::Context::current(name)?;
     let backend = make_backend(&ctx)?;
@@ -23,7 +30,12 @@ pub fn run(name: Option<&str>, command: &[String], quiet: bool) -> eyre::Result<
 
     verify_session(&session);
 
-    let quiet = quiet || std::env::var("SILO_QUIET").is_ok();
+    if emit_json {
+        let json = serde_json::to_string(session.context()).unwrap_or_else(|_| "{}".into());
+        eprintln!("{json}");
+    }
+
+    let quiet = quiet || emit_json || std::env::var("SILO_QUIET").is_ok();
 
     if !quiet {
         eprintln!(
@@ -111,7 +123,7 @@ fn verify_session(session: &Session) {
     if let Ok(entries) = silo::hosts::list_entries() {
         let has_entry = entries
             .iter()
-            .any(|(ip, name)| *ip == session.ip() && name == session.hostname());
+            .any(|e| e.ip == session.ip() && e.hostname == session.hostname());
         if !has_entry {
             ui::check_warn(
                 "hosts",
@@ -119,11 +131,15 @@ fn verify_session(session: &Session) {
             );
         }
 
-        for (ip, name) in &entries {
-            if *ip == session.ip() && name != session.hostname() {
+        for e in &entries {
+            if e.ip == session.ip() && e.hostname != session.hostname() {
                 ui::check_warn(
                     "hosts",
-                    format!("ip collision — {} is also mapped to {name}", session.ip()),
+                    format!(
+                        "ip collision — {} is also mapped to {}",
+                        session.ip(),
+                        e.hostname
+                    ),
                 );
                 break;
             }

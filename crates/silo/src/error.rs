@@ -3,12 +3,10 @@ use std::io;
 use thiserror::Error as ThisError;
 
 #[derive(Debug, ThisError)]
+#[non_exhaustive]
 pub enum Error {
     #[error("not inside a git repository")]
     NotGitRepo,
-
-    #[error("silo bind library not found (run `silo doctor` to diagnose, or set SILO_BIND_LIB)")]
-    BindLibNotFound,
 
     #[error("{context}")]
     Io {

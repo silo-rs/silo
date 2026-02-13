@@ -13,6 +13,7 @@ dirs = { workspace = true }
 which = { workspace = true }
 tracing = { workspace = true }
 fd-lock = { workspace = true }
+serde = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

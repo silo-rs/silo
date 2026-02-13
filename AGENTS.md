@@ -18,7 +18,7 @@ Solves port conflicts by intercepting syscalls on loopback. Each git directory g
 - `/etc/hosts` entry (sudo, flock-based) — `hosts::ensure_entry`
 - Bind library discovery — `find_bind_lib`
 
-Controlled by **`ActivateOptions`** (`ip_alias`, `hosts_entry`, `bind_lib`).
+Controlled by **`ActivateOptions`** (`ip_alias`, `hosts_entry`).
 
 IP is computed via FNV-1a hash of the canonical git root path → `resolve::compute_ip`.
 
@@ -50,13 +50,15 @@ cargo test --workspace
 Core types — grep for these, don't guess:
 
 - `Context` — `Context::current(name)`, `Context::for_dir(dir, name)`, `.ip()`, `.name()`, `.hostname()`, `.dir()`, `.env_vars()`
-- `Session` — `Session::new(name)`, `Session::in_dir(dir, name)`, `Session::activate(ctx, opts)`, `.env()`, `.apply(cmd)`
-- `ActivateOptions` — `ActivateOptions::all()`, `ActivateOptions::none()` (fields: `ip_alias`, `hosts_entry`, `bind_lib`)
-- `Error` — `NotGitRepo`, `BindLibNotFound`, `Io`, `CommandFailed`
+- `Session` — `Session::ip_for(dir, name)`, `Session::activate(ctx, opts, backend)`, `.prepare(cmd)`, `.context()`
+- `ActivateOptions` — `ActivateOptions::default()` (fields: `ip_alias`, `hosts_entry`)
+- `BackendSession` trait — `PreloadBackend::new(lib_path)`, `NoopBackend`
+- `Error` — `NotGitRepo`, `Io`, `CommandFailed`, `Backend`
 
-Utility functions — reuse these, don't reimplement:
+Standalone functions — reuse these, don't reimplement:
 
-- `ip::add_alias(ip)` / `ip::remove_alias(ip)` / `ip::alias_exists(ip)` — loopback management
+- `compute_ip(path, name)` / `sanitize_name(raw)` — deterministic IP computation and name sanitization
+- `ip::add_alias(ip)` / `ip::remove_alias(ip)` / `ip::alias_exists(ip)` / `ip::active_aliases()` — loopback management
 - `hosts::ensure_entry(ip, hostname)` / `hosts::remove_entries(ips)` / `hosts::list_entries()` — /etc/hosts management
 - `shebang::resolve_program(program, args)` — macOS SIP-aware binary resolution
 

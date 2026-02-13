@@ -24,19 +24,35 @@ pub enum Commands {
         #[arg(long, short)]
         quiet: bool,
 
+        /// Emit session info as a JSON line to stderr before exec
+        #[arg(long)]
+        emit_json: bool,
+
         /// Command and arguments to run
         #[arg(trailing_var_arg = true, required = true)]
         command: Vec<String>,
     },
 
     /// Show the resolved IP for the current directory
-    Ip,
+    Ip {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
 
     /// Check environment and diagnose common problems
-    Doctor,
+    Doctor {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
 
     /// List active silo sessions
-    Ls,
+    Ls {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
 
     /// Remove unused loopback aliases and /etc/hosts entries
     Prune {
@@ -47,6 +63,10 @@ pub enum Commands {
         /// Skip confirmation prompt
         #[arg(long, short)]
         yes: bool,
+
+        /// Output as JSON (implies --yes)
+        #[arg(long)]
+        json: bool,
     },
 
     /// Load and pin eBPF programs for rootless operation (requires sudo, Linux only)

@@ -1,17 +1,48 @@
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
+use std::path::PathBuf;
 
 use colored::Colorize;
-use tracing::debug;
+use serde::Serialize;
 
 use super::query;
 
-pub fn run() -> eyre::Result<()> {
+#[derive(Serialize)]
+struct AliasEntry {
+    ip: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hostname: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dir: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    ports: Vec<u16>,
+}
+
+struct HostInfo {
+    hostname: String,
+    dir: Option<PathBuf>,
+}
+
+pub fn run(json: bool) -> eyre::Result<()> {
     let aliases = query::active_loopback_aliases()?;
     let hosts = load_silo_hosts();
     let ports = query::listening_ports();
 
-    if aliases.is_empty() {
+    if json {
+        let entries: Vec<AliasEntry> = aliases
+            .iter()
+            .map(|ip| {
+                let info = hosts.get(ip);
+                AliasEntry {
+                    ip: ip.to_string(),
+                    hostname: info.map(|i| i.hostname.clone()),
+                    dir: info.and_then(|i| i.dir.clone()),
+                    ports: ports.get(ip).cloned().unwrap_or_default(),
+                }
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&entries)?);
+    } else if aliases.is_empty() {
         eprintln!("  {} no active silo aliases", "○".dimmed());
     } else {
         eprintln!(
@@ -20,8 +51,12 @@ pub fn run() -> eyre::Result<()> {
             aliases.len().to_string().bold()
         );
         for ip in &aliases {
-            if let Some(hostname) = hosts.get(ip) {
-                eprintln!("    {} {} {}", ip, "·".dimmed(), hostname.dimmed());
+            if let Some(info) = hosts.get(ip) {
+                eprint!("    {} {} {}", ip, "·".dimmed(), info.hostname.dimmed());
+                if let Some(dir) = &info.dir {
+                    eprint!("  {}", dir.display().to_string().dimmed());
+                }
+                eprintln!();
             } else {
                 eprintln!("    {}", ip);
             }
@@ -35,26 +70,20 @@ pub fn run() -> eyre::Result<()> {
     Ok(())
 }
 
-fn load_silo_hosts() -> HashMap<Ipv4Addr, String> {
-    let mut map = HashMap::new();
-    let Ok(content) = std::fs::read_to_string("/etc/hosts") else {
-        debug!("failed to read /etc/hosts for status display");
-        return map;
+fn load_silo_hosts() -> HashMap<Ipv4Addr, HostInfo> {
+    let Ok(entries) = silo::hosts::list_entries() else {
+        return HashMap::new();
     };
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        if !trimmed.ends_with(".silo") {
-            continue;
-        }
-        let mut parts = trimmed.split_whitespace();
-        if let (Some(ip_str), Some(hostname)) = (parts.next(), parts.next())
-            && let Ok(ip) = ip_str.parse::<Ipv4Addr>()
-        {
-            map.insert(ip, hostname.to_string());
-        }
-    }
-    map
+    entries
+        .into_iter()
+        .map(|e| {
+            (
+                e.ip,
+                HostInfo {
+                    hostname: e.hostname,
+                    dir: e.dir,
+                },
+            )
+        })
+        .collect()
 }
