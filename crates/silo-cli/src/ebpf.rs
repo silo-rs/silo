@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use aya::Ebpf;
 use aya::maps::HashMap;
 use aya::programs::{CgroupAttachMode, CgroupSockAddr, CgroupSockAddrAttachType};
-use eyre::Context;
+use eyre::{Context, ContextCompat};
 
 /// Base path for silo per-session cgroups.
 const CGROUP_BASE: &str = "/sys/fs/cgroup/silo";
@@ -46,10 +46,10 @@ fn attach_type_for(name: &str) -> CgroupSockAddrAttachType {
         "silo_bind6" => Bind6,
         "silo_connect4" => Connect4,
         "silo_connect6" => Connect6,
-        "silo_sendmsg4" => UdpSendMsg4,
-        "silo_sendmsg6" => UdpSendMsg6,
-        "silo_recvmsg4" => UdpRecvMsg4,
-        "silo_recvmsg6" => UdpRecvMsg6,
+        "silo_sendmsg4" => UDPSendMsg4,
+        "silo_sendmsg6" => UDPSendMsg6,
+        "silo_recvmsg4" => UDPRecvMsg4,
+        "silo_recvmsg6" => UDPRecvMsg6,
         "silo_getpeername4" => GetPeerName4,
         "silo_getpeername6" => GetPeerName6,
         _ => unreachable!("unknown BPF program name: {name}"),
