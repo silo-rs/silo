@@ -146,24 +146,30 @@ fn write_hosts(content: &str) -> Result<()> {
 }
 
 fn parse_block(content: &str) -> (String, Vec<String>, String) {
+    enum State {
+        Before,
+        Inside,
+        After,
+    }
+
     let mut before = String::new();
     let mut entries = Vec::new();
     let mut after = String::new();
-    let mut state = 0u8; // 0=before, 1=inside, 2=after
+    let mut state = State::Before;
 
     for line in content.lines() {
         match state {
-            0 => {
+            State::Before => {
                 if line == BEGIN_MARKER {
-                    state = 1;
+                    state = State::Inside;
                 } else {
                     before.push_str(line);
                     before.push('\n');
                 }
             }
-            1 => {
+            State::Inside => {
                 if line == END_MARKER {
-                    state = 2;
+                    state = State::After;
                 } else {
                     let trimmed = line.trim();
                     if !trimmed.is_empty() {
@@ -171,7 +177,7 @@ fn parse_block(content: &str) -> (String, Vec<String>, String) {
                     }
                 }
             }
-            _ => {
+            State::After => {
                 after.push_str(line);
                 after.push('\n');
             }

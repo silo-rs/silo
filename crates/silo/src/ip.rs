@@ -3,7 +3,7 @@ use std::net::Ipv4Addr;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use tracing::{debug, instrument};
+use tracing::{debug, info, instrument};
 
 use crate::error::{Error, Result};
 
@@ -56,7 +56,7 @@ pub fn add_alias(ip: Ipv4Addr) -> Result<()> {
 
     ensure_sudoers()?;
 
-    eprintln!("  adding loopback alias {}", ip);
+    info!(%ip, "adding loopback alias");
 
     #[cfg(target_os = "macos")]
     run_sudo(&[
@@ -86,7 +86,7 @@ pub fn remove_alias(ip: Ipv4Addr) -> Result<()> {
 
     ensure_sudoers()?;
 
-    eprintln!("  removing loopback alias {}", ip);
+    info!(%ip, "removing loopback alias");
 
     #[cfg(target_os = "macos")]
     run_sudo(&["ifconfig", "lo0", "-alias", &ip.to_string()])?;
