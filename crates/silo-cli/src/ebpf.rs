@@ -207,6 +207,17 @@ impl EbpfSession {
     }
 }
 
+impl silo::BackendSession for EbpfSession {
+    fn prepare(&self, _cmd: &mut std::process::Command) -> silo::error::Result<()> {
+        self.add_pid(std::process::id())
+            .map_err(|e| silo::Error::Backend(e.into()))
+    }
+
+    fn name(&self) -> &str {
+        "ebpf"
+    }
+}
+
 impl Drop for EbpfSession {
     fn drop(&mut self) {
         // For pinned mode, remove our entry from the shared config map
@@ -255,14 +266,21 @@ fn pinned_programs_exist() -> bool {
     Path::new(PIN_BASE).join("silo_bind4").exists()
 }
 
+/// Result of backend auto-detection.
+pub enum SelectedBackend {
+    Ebpf,
+    Preload(PathBuf),
+    None,
+}
+
 /// Select the appropriate backend based on environment and availability.
-pub fn select_backend() -> silo::Backend {
+pub fn select_backend() -> SelectedBackend {
     // Check for explicit override
     if let Ok(val) = std::env::var("SILO_BACKEND") {
         match val.as_str() {
             "ebpf" => {
                 if ebpf_available() {
-                    return silo::Backend::Ebpf;
+                    return SelectedBackend::Ebpf;
                 }
                 tracing::warn!(
                     "SILO_BACKEND=ebpf requested but eBPF is not available, falling back to auto-detect"
@@ -270,8 +288,8 @@ pub fn select_backend() -> silo::Backend {
             }
             "preload" => {
                 return match super::commands::run::find_bind_lib() {
-                    Ok(lib_path) => silo::Backend::LdPreload { lib_path },
-                    Err(_) => silo::Backend::None,
+                    Ok(lib_path) => SelectedBackend::Preload(lib_path),
+                    Err(_) => SelectedBackend::None,
                 };
             }
             other => {
@@ -281,11 +299,11 @@ pub fn select_backend() -> silo::Backend {
     }
 
     if ebpf_available() {
-        silo::Backend::Ebpf
+        SelectedBackend::Ebpf
     } else {
         match super::commands::run::find_bind_lib() {
-            Ok(lib_path) => silo::Backend::LdPreload { lib_path },
-            Err(_) => silo::Backend::None,
+            Ok(lib_path) => SelectedBackend::Preload(lib_path),
+            Err(_) => SelectedBackend::None,
         }
     }
 }

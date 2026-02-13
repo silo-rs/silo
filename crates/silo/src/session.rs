@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -6,34 +5,96 @@ use std::process::Command;
 use tracing::warn;
 
 use crate::context::Context;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::{hosts, ip};
 
-/// Syscall interception backend.
-#[derive(Debug, Clone)]
-pub enum Backend {
-    /// LD_PRELOAD (Linux) or DYLD_INSERT_LIBRARIES (macOS).
-    LdPreload { lib_path: PathBuf },
-    /// eBPF cgroup/sock_addr programs (Linux only).
-    #[cfg(target_os = "linux")]
-    Ebpf,
-    /// No interception — environment-only mode.
-    None,
+/// Backend-specific session state that manages syscall interception lifecycle.
+///
+/// Implementors handle the mechanics of intercepting socket syscalls for a
+/// child process — whether via `LD_PRELOAD`, eBPF cgroup programs, or any
+/// future mechanism.
+///
+/// The [`Session`] owns the backend and calls [`prepare`](BackendSession::prepare)
+/// before `exec()`.  When the `Session` is dropped, the backend is dropped too,
+/// allowing cleanup (e.g. removing a cgroup or BPF map entry).
+pub trait BackendSession: Send {
+    /// Prepare a command for execution under this backend.
+    ///
+    /// Called once, right before `exec()`.  Implementations should perform any
+    /// backend-specific setup such as setting environment variables or moving
+    /// the current process into a cgroup.
+    fn prepare(&self, cmd: &mut Command) -> Result<()>;
+
+    /// Short identifier for display (e.g. `"preload"`, `"ebpf"`, `"none"`).
+    fn name(&self) -> &str;
 }
 
-/// Controls which side effects [`Session::activate`] performs.
+// ---------------------------------------------------------------------------
+// Built-in backends
+// ---------------------------------------------------------------------------
+
+/// `LD_PRELOAD` / `DYLD_INSERT_LIBRARIES` backend.
 ///
-/// All options default to enabled, matching the behavior of
-/// [`Session::new`] and [`Session::in_dir`].
+/// Sets the appropriate environment variable so the dynamic linker loads the
+/// silo-bind shared library into the child process.
+pub struct PreloadBackend {
+    lib_path: PathBuf,
+}
+
+impl PreloadBackend {
+    pub fn new(lib_path: PathBuf) -> Self {
+        Self { lib_path }
+    }
+
+    pub fn lib_path(&self) -> &Path {
+        &self.lib_path
+    }
+}
+
+impl BackendSession for PreloadBackend {
+    fn prepare(&self, cmd: &mut Command) -> Result<()> {
+        #[cfg(target_os = "macos")]
+        let key = "DYLD_INSERT_LIBRARIES";
+        #[cfg(target_os = "linux")]
+        let key = "LD_PRELOAD";
+
+        let val = match std::env::var(key) {
+            Ok(existing) => format!("{}:{}", self.lib_path.display(), existing),
+            Err(_) => self.lib_path.display().to_string(),
+        };
+        cmd.env(key, val);
+        Ok(())
+    }
+
+    fn name(&self) -> &str {
+        "preload"
+    }
+}
+
+/// No-op backend — environment-only mode with no syscall interception.
+pub struct NoopBackend;
+
+impl BackendSession for NoopBackend {
+    fn prepare(&self, _cmd: &mut Command) -> Result<()> {
+        Ok(())
+    }
+
+    fn name(&self) -> &str {
+        "none"
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Session
+// ---------------------------------------------------------------------------
+
+/// Controls which side effects [`Session::activate`] performs.
 #[derive(Debug, Clone)]
 pub struct ActivateOptions {
     /// Add a loopback alias for the resolved IP (requires sudo).
     pub ip_alias: bool,
     /// Add/update an entry in `/etc/hosts` (requires sudo).
     pub hosts_entry: bool,
-    /// Interception backend. When [`Backend::LdPreload`], [`Session::env`]
-    /// and [`Session::apply`] will include `LD_PRELOAD` / `DYLD_INSERT_LIBRARIES`.
-    pub backend: Backend,
 }
 
 impl Default for ActivateOptions {
@@ -41,37 +102,13 @@ impl Default for ActivateOptions {
         Self {
             ip_alias: true,
             hosts_entry: true,
-            backend: Backend::None,
-        }
-    }
-}
-
-impl ActivateOptions {
-    /// All side effects enabled. Auto-discovers the bind library.
-    pub fn all() -> Self {
-        Self {
-            ip_alias: true,
-            hosts_entry: true,
-            backend: match find_bind_lib() {
-                Ok(lib_path) => Backend::LdPreload { lib_path },
-                Err(_) => Backend::None,
-            },
-        }
-    }
-
-    /// No side effects — just wrap a [`Context`] into a [`Session`].
-    pub fn none() -> Self {
-        Self {
-            ip_alias: false,
-            hosts_entry: false,
-            backend: Backend::None,
         }
     }
 }
 
 pub struct Session {
     ctx: Context,
-    backend: Backend,
+    backend: Box<dyn BackendSession>,
 }
 
 impl Session {
@@ -81,33 +118,16 @@ impl Session {
         Ok(ctx.ip())
     }
 
-    /// Create a session from the current working directory.
-    ///
-    /// Equivalent to resolving a [`Context`] and calling
-    /// [`activate`](Self::activate) with [`ActivateOptions::all`].
-    pub fn new(name: Option<&str>) -> Result<Self> {
-        let ctx = Context::current(name)?;
-        Self::activate(ctx, ActivateOptions::all())
-    }
-
-    /// Create a session for an explicit directory.
-    ///
-    /// Equivalent to resolving a [`Context`] and calling
-    /// [`activate`](Self::activate) with [`ActivateOptions::all`].
-    pub fn in_dir(dir: &Path, name: Option<&str>) -> Result<Self> {
-        let ctx = Context::for_dir(dir, name)?;
-        Self::activate(ctx, ActivateOptions::all())
-    }
-
     /// Create a session from a pre-resolved [`Context`], performing only
     /// the side effects specified in `opts`.
     ///
-    /// # Backend
-    ///
-    /// If `opts.backend` is [`Backend::None`], [`Session::env`] and
-    /// [`Session::apply`] will still work but will not include
-    /// `DYLD_INSERT_LIBRARIES` / `LD_PRELOAD`.
-    pub fn activate(ctx: Context, opts: ActivateOptions) -> Result<Self> {
+    /// The `backend` is owned by the session and will be dropped when the
+    /// session is dropped.
+    pub fn activate(
+        ctx: Context,
+        opts: ActivateOptions,
+        backend: Box<dyn BackendSession>,
+    ) -> Result<Self> {
         if opts.ip_alias {
             ip::add_alias(ctx.ip())?;
         }
@@ -116,10 +136,19 @@ impl Session {
         {
             warn!("failed to update /etc/hosts: {e} (run `silo doctor` to diagnose)");
         }
-        Ok(Self {
-            ctx,
-            backend: opts.backend,
-        })
+        Ok(Self { ctx, backend })
+    }
+
+    /// Prepare a command for execution under this session.
+    ///
+    /// Sets `SILO_IP`, `SILO_NAME`, `SILO_DIR`, `SILO_HOST` environment
+    /// variables and then delegates to the backend for any additional setup
+    /// (e.g. `LD_PRELOAD` or cgroup membership).
+    pub fn prepare(&self, cmd: &mut Command) -> Result<()> {
+        for (key, val) in self.ctx.env_vars() {
+            cmd.env(key, val);
+        }
+        self.backend.prepare(cmd)
     }
 
     /// Access the underlying pure-computation context.
@@ -127,46 +156,9 @@ impl Session {
         &self.ctx
     }
 
-    /// The active interception backend.
-    pub fn backend(&self) -> &Backend {
-        &self.backend
-    }
-
-    /// All environment variables needed to run a command under this session.
-    ///
-    /// Includes `SILO_IP`, `SILO_NAME`, `SILO_DIR`, `SILO_HOST`, and
-    /// `DYLD_INSERT_LIBRARIES` / `LD_PRELOAD` (when using [`Backend::LdPreload`]).
-    pub fn env(&self) -> HashMap<String, String> {
-        let mut env = self.ctx.env_vars();
-        if let Some((key, val)) = self.injection_env() {
-            env.insert(key.into(), val);
-        }
-        env
-    }
-
-    /// Apply this session's environment to a command.
-    pub fn apply(&self, cmd: &mut Command) {
-        for (key, val) in self.env() {
-            cmd.env(key, val);
-        }
-    }
-
-    fn injection_env(&self) -> Option<(&'static str, String)> {
-        let lib_path = match &self.backend {
-            Backend::LdPreload { lib_path } => lib_path,
-            _ => return None,
-        };
-
-        #[cfg(target_os = "macos")]
-        let key = "DYLD_INSERT_LIBRARIES";
-        #[cfg(target_os = "linux")]
-        let key = "LD_PRELOAD";
-
-        let val = match std::env::var(key) {
-            Ok(existing) => format!("{}:{}", lib_path.display(), existing),
-            Err(_) => lib_path.display().to_string(),
-        };
-        Some((key, val))
+    /// Short name of the active backend (e.g. `"preload"`, `"ebpf"`, `"none"`).
+    pub fn backend_name(&self) -> &str {
+        self.backend.name()
     }
 
     pub fn ip(&self) -> Ipv4Addr {
@@ -183,34 +175,5 @@ impl Session {
 
     pub fn dir(&self) -> &Path {
         self.ctx.dir()
-    }
-}
-
-fn find_bind_lib() -> std::result::Result<PathBuf, Error> {
-    if let Ok(path) = std::env::var("SILO_BIND_LIB") {
-        let p = PathBuf::from(path);
-        if p.exists() {
-            return Ok(p);
-        }
-    }
-
-    let lib_dir = dirs::home_dir()
-        .ok_or(Error::BindLibNotFound)?
-        .join(".silo")
-        .join("lib");
-
-    let lib_path = lib_dir.join(lib_name());
-    if lib_path.exists() {
-        Ok(lib_path)
-    } else {
-        Err(Error::BindLibNotFound)
-    }
-}
-
-fn lib_name() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "libsilo_bind.dylib"
-    } else {
-        "libsilo_bind.so"
     }
 }

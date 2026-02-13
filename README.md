@@ -17,25 +17,32 @@ curl -fsSL https://setup.silo.rs | sh
 
 ## Quick start
 
+<table>
+<tr>
+<td>
+
 ```sh
-cd ~/projects/acme
-silo npm run dev
+~/acme (main) $ silo npm run dev
 # silo ● main
 #      127.1.42.7 · main.acme.silo
 # Listening on http://localhost:3000
 ```
 
-In another terminal, on a different branch:
+</td>
+<td>
 
 ```sh
-cd ~/worktrees/feature
-silo npm run dev
+~/acme (feature) $ silo npm run dev
 # silo ● feature
 #      127.1.183.12 · feature.acme.silo
 # Listening on http://localhost:3000
 ```
 
-Both on port 3000. No conflict. Each gets its own IP and hostname.
+</td>
+</tr>
+</table>
+
+Both on port 3000. No conflict.
 
 ## How it works
 

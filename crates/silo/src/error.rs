@@ -19,6 +19,9 @@ pub enum Error {
 
     #[error("command failed: {command}")]
     CommandFailed { command: String },
+
+    #[error("{0}")]
+    Backend(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
 impl Error {
