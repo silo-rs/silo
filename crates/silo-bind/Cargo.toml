@@ -6,7 +6,10 @@ description = "Shared library that intercepts bind() for silo IP isolation"
 publish = false
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "lib"]
 
 [dependencies]
 libc = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"

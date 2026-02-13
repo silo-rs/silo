@@ -1,6 +1,9 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
+mod rewrite;
+
 use std::env;
+#[cfg(target_os = "macos")]
 use std::net::Ipv4Addr;
 use std::os::raw::c_int;
 use std::sync::OnceLock;
@@ -93,53 +96,55 @@ unsafe fn rewrite_addr(addr: *const sockaddr, match_any: bool) {
     if addr.is_null() {
         return;
     }
+    let Some(silo_ip) = get_silo_ip() else {
+        return;
+    };
 
     let family = (*addr).sa_family as c_int;
 
     if family == AF_INET {
         let sin = addr as *mut sockaddr_in;
-        let s_addr = (*sin).sin_addr.s_addr;
-        if ((match_any && s_addr == 0) || s_addr == u32::from(Ipv4Addr::LOCALHOST).to_be())
-            && let Some(ip_bytes) = get_silo_ip()
+        if let Some(new_addr) =
+            rewrite::rewrite_ipv4_addr((*sin).sin_addr.s_addr, silo_ip, match_any)
         {
-            (*sin).sin_addr.s_addr = ip_bytes;
+            (*sin).sin_addr.s_addr = new_addr;
         }
     }
 
     #[cfg(target_os = "linux")]
     if family == libc::AF_INET6 as c_int {
         let sin6 = addr as *mut libc::sockaddr_in6;
-        let v6_addr = (*sin6).sin6_addr.s6_addr;
-        if ((match_any && v6_addr == V6_ANY) || v6_addr == V6_LOOPBACK)
-            && let Some(ip_bytes) = get_silo_ip()
+        if let Some(new_addr) =
+            rewrite::rewrite_ipv6_addr((*sin6).sin6_addr.s6_addr, silo_ip, match_any)
         {
-            (*sin6).sin6_addr.s6_addr = ipv4_mapped_v6(ip_bytes);
+            (*sin6).sin6_addr.s6_addr = new_addr;
         }
     }
 }
 
 /// Rewrite addresses in a `getaddrinfo` result linked list.
 unsafe fn rewrite_addrinfo_results(res: *mut *mut libc::addrinfo) {
-    if let Some(silo_ip) = get_silo_ip() {
-        let localhost_be = u32::from(Ipv4Addr::LOCALHOST).to_be();
-        let mapped = ipv4_mapped_v6(silo_ip);
-        let mut cur = *res;
-        while !cur.is_null() {
-            let ai = &mut *cur;
-            if ai.ai_family == AF_INET && !ai.ai_addr.is_null() {
-                let sin = ai.ai_addr as *mut sockaddr_in;
-                let addr = (*sin).sin_addr.s_addr;
-                if addr == localhost_be || addr == 0 {
-                    (*sin).sin_addr.s_addr = silo_ip;
-                }
-            } else if ai.ai_family == libc::AF_INET6 as c_int && !ai.ai_addr.is_null() {
-                let sin6 = ai.ai_addr as *mut libc::sockaddr_in6;
-                if (*sin6).sin6_addr.s6_addr == V6_LOOPBACK {
-                    (*sin6).sin6_addr.s6_addr = mapped;
-                }
+    let Some(silo_ip) = get_silo_ip() else {
+        return;
+    };
+    let mut cur = *res;
+    while !cur.is_null() {
+        let ai = &mut *cur;
+        if ai.ai_family == AF_INET && !ai.ai_addr.is_null() {
+            let sin = ai.ai_addr as *mut sockaddr_in;
+            if let Some(new_addr) = rewrite::rewrite_resolved_ipv4((*sin).sin_addr.s_addr, silo_ip)
+            {
+                (*sin).sin_addr.s_addr = new_addr;
             }
-            cur = ai.ai_next;
+        } else if ai.ai_family == libc::AF_INET6 as c_int && !ai.ai_addr.is_null() {
+            let sin6 = ai.ai_addr as *mut libc::sockaddr_in6;
+            if let Some(new_addr) =
+                rewrite::rewrite_resolved_ipv6((*sin6).sin6_addr.s6_addr, silo_ip)
+            {
+                (*sin6).sin6_addr.s6_addr = new_addr;
+            }
         }
+        cur = ai.ai_next;
     }
 }
 
@@ -158,7 +163,6 @@ unsafe fn rewrite_hostent(hp: *mut libc::hostent) {
     let h_addr_list = std::ptr::addr_of!((*hp).h_addr_list).read_unaligned();
 
     if h_addrtype == AF_INET && h_length == 4 {
-        let localhost_be = u32::from(Ipv4Addr::LOCALHOST).to_be();
         let mut i = 0usize;
         loop {
             let entry = h_addr_list.add(i).read_unaligned();
@@ -166,13 +170,12 @@ unsafe fn rewrite_hostent(hp: *mut libc::hostent) {
                 break;
             }
             let addr = std::ptr::read_unaligned(entry as *const u32);
-            if addr == localhost_be || addr == 0 {
-                std::ptr::write_unaligned(entry as *mut u32, silo_ip);
+            if let Some(new_addr) = rewrite::rewrite_resolved_ipv4(addr, silo_ip) {
+                std::ptr::write_unaligned(entry as *mut u32, new_addr);
             }
             i += 1;
         }
     } else if h_addrtype == libc::AF_INET6 && h_length == 16 {
-        let mapped = ipv4_mapped_v6(silo_ip);
         let mut i = 0usize;
         loop {
             let entry = h_addr_list.add(i).read_unaligned();
@@ -182,8 +185,8 @@ unsafe fn rewrite_hostent(hp: *mut libc::hostent) {
             let ptr = entry as *mut u8;
             let mut v6 = [0u8; 16];
             std::ptr::copy_nonoverlapping(ptr, v6.as_mut_ptr(), 16);
-            if v6 == V6_LOOPBACK {
-                std::ptr::copy_nonoverlapping(mapped.as_ptr(), ptr, 16);
+            if let Some(new_v6) = rewrite::rewrite_resolved_ipv6(v6, silo_ip) {
+                std::ptr::copy_nonoverlapping(new_v6.as_ptr(), ptr, 16);
             }
             i += 1;
         }
@@ -193,26 +196,9 @@ unsafe fn rewrite_hostent(hp: *mut libc::hostent) {
 fn get_silo_ip() -> Option<u32> {
     *SILO_IP.get_or_init(|| {
         let val = env::var("SILO_IP").ok()?;
-        let ip: Ipv4Addr = val.parse().ok()?;
-        Some(u32::from(ip).to_be())
+        rewrite::parse_silo_ip(&val)
     })
 }
-
-/// Convert silo_ip (stored in network byte order) to an IPv4-mapped IPv6
-/// address `::ffff:SILO_IP`. Returns the 16-byte `s6_addr`.
-fn ipv4_mapped_v6(silo_ip: u32) -> [u8; 16] {
-    // silo_ip is in network byte order; to_ne_bytes() gives us the raw
-    // bytes as they sit in memory, which is the correct octet order.
-    let octets = silo_ip.to_ne_bytes();
-    [
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, octets[0], octets[1], octets[2], octets[3],
-    ]
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-const V6_LOOPBACK: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
-#[cfg(target_os = "linux")]
-const V6_ANY: [u8; 16] = [0u8; 16];
 
 /// Hide other silo loopback aliases from getifaddrs results.
 /// For any AF_INET entry on lo0 whose address is 127.x.x.x but is neither
@@ -222,17 +208,14 @@ unsafe fn hide_other_silo_aliases(ifap: *mut libc::ifaddrs) {
     let Some(silo_ip) = get_silo_ip() else {
         return;
     };
-    let localhost_be = u32::from(Ipv4Addr::LOCALHOST).to_be();
 
     let mut cur = ifap;
     while !cur.is_null() {
         let ifa = &*cur;
         if !ifa.ifa_addr.is_null() && (*ifa.ifa_addr).sa_family as c_int == AF_INET {
             let sin = ifa.ifa_addr as *mut sockaddr_in;
-            let addr = (*sin).sin_addr.s_addr;
-            let octets = addr.to_ne_bytes();
-            if octets[0] == 127 && addr != localhost_be && addr != silo_ip {
-                (*sin).sin_addr.s_addr = localhost_be;
+            if let Some(new_addr) = rewrite::hide_alias((*sin).sin_addr.s_addr, silo_ip) {
+                (*sin).sin_addr.s_addr = new_addr;
             }
         }
         cur = (*cur).ifa_next;
@@ -464,14 +447,16 @@ mod platform {
             if family == libc::AF_INET6 as c_int {
                 let sin6 = addr as *const libc::sockaddr_in6;
                 let v6_addr = (*sin6).sin6_addr.s6_addr;
-                let is_any = v6_addr == [0u8; 16];
-                let is_loopback = v6_addr == [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
-                if (is_any || is_loopback)
-                    && let Some(ip) = get_silo_ip()
+                if let Some(ip) = get_silo_ip()
+                    && rewrite::rewrite_ipv6_addr(v6_addr, ip, true).is_some()
                 {
                     let ret = rebind_as_ipv4(fd, (*sin6).sin6_port, ip);
                     if debug_enabled() {
-                        let kind = if is_any { "::" } else { "::1" };
+                        let kind = if v6_addr == rewrite::V6_ANY {
+                            "::"
+                        } else {
+                            "::1"
+                        };
                         eprintln!(
                             "[silo-bind] pid={} bind {} → rebind_as_ipv4 → {}",
                             std::process::id(),
@@ -499,9 +484,8 @@ mod platform {
 
             if family == libc::AF_INET6 as c_int {
                 let sin6 = addr as *const libc::sockaddr_in6;
-                let loopback_v6: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
-                if (*sin6).sin6_addr.s6_addr == loopback_v6
-                    && let Some(ip) = get_silo_ip()
+                if let Some(ip) = get_silo_ip()
+                    && rewrite::rewrite_ipv6_addr((*sin6).sin6_addr.s6_addr, ip, false).is_some()
                 {
                     return reconnect_as_ipv4(fd, (*sin6).sin6_port, ip);
                 }
