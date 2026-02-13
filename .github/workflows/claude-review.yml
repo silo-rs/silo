@@ -43,6 +43,7 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           trigger_phrase: ""
+          allowed_tools: "Bash(git *),Bash(gh *),Read,Glob,Grep"
           prompt: |
             Review this PR. Focus only on things that matter:
             - Correctness and potential bugs

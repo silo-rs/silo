@@ -1059,22 +1059,39 @@ mod platform {
 mod platform {
     use super::*;
 
+    /// Resolve a libc symbol via `dlsym(RTLD_NEXT)` once and cache the result
+    /// in a `OnceLock`. Subsequent calls return the cached function pointer
+    /// with only an atomic load (no dynamic-linker lock, no library-chain walk).
+    macro_rules! real {
+        ($sym:literal, $ty:ty) => {{
+            static REAL: OnceLock<$ty> = OnceLock::new();
+            *REAL.get_or_init(|| unsafe {
+                let ptr = libc::dlsym(libc::RTLD_NEXT, concat!($sym, "\0").as_ptr().cast());
+                assert!(
+                    !ptr.is_null(),
+                    concat!("silo-bind: dlsym failed to resolve ", $sym)
+                );
+                std::mem::transmute(ptr)
+            })
+        }};
+    }
+
     #[unsafe(no_mangle)]
     pub unsafe extern "C" fn bind(fd: c_int, addr: *const sockaddr, len: socklen_t) -> c_int {
-        let real = libc::dlsym(libc::RTLD_NEXT, c"bind".as_ptr());
-        let real_fn: unsafe extern "C" fn(c_int, *const sockaddr, socklen_t) -> c_int =
-            std::mem::transmute(real);
-
+        let real_fn = real!(
+            "bind",
+            unsafe extern "C" fn(c_int, *const sockaddr, socklen_t) -> c_int
+        );
         rewrite_addr(addr, true);
         real_fn(fd, addr, len)
     }
 
     #[unsafe(no_mangle)]
     pub unsafe extern "C" fn connect(fd: c_int, addr: *const sockaddr, len: socklen_t) -> c_int {
-        let real = libc::dlsym(libc::RTLD_NEXT, c"connect".as_ptr());
-        let real_fn: unsafe extern "C" fn(c_int, *const sockaddr, socklen_t) -> c_int =
-            std::mem::transmute(real);
-
+        let real_fn = real!(
+            "connect",
+            unsafe extern "C" fn(c_int, *const sockaddr, socklen_t) -> c_int
+        );
         rewrite_addr(addr, false);
         real_fn(fd, addr, len)
     }
@@ -1086,13 +1103,15 @@ mod platform {
         hints: *const libc::addrinfo,
         res: *mut *mut libc::addrinfo,
     ) -> c_int {
-        let real = libc::dlsym(libc::RTLD_NEXT, c"getaddrinfo".as_ptr());
-        let real_fn: unsafe extern "C" fn(
-            *const libc::c_char,
-            *const libc::c_char,
-            *const libc::addrinfo,
-            *mut *mut libc::addrinfo,
-        ) -> c_int = std::mem::transmute(real);
+        let real_fn = real!(
+            "getaddrinfo",
+            unsafe extern "C" fn(
+                *const libc::c_char,
+                *const libc::c_char,
+                *const libc::addrinfo,
+                *mut *mut libc::addrinfo,
+            ) -> c_int
+        );
 
         let ret = real_fn(node, service, hints, res);
         if ret != 0 || res.is_null() {
@@ -1105,10 +1124,10 @@ mod platform {
 
     #[unsafe(no_mangle)]
     pub unsafe extern "C" fn gethostbyname(name: *const libc::c_char) -> *mut libc::hostent {
-        let real = libc::dlsym(libc::RTLD_NEXT, c"gethostbyname".as_ptr());
-        let real_fn: unsafe extern "C" fn(*const libc::c_char) -> *mut libc::hostent =
-            std::mem::transmute(real);
-
+        let real_fn = real!(
+            "gethostbyname",
+            unsafe extern "C" fn(*const libc::c_char) -> *mut libc::hostent
+        );
         let result = real_fn(name);
         rewrite_hostent(result);
         result
@@ -1119,10 +1138,10 @@ mod platform {
         name: *const libc::c_char,
         af: c_int,
     ) -> *mut libc::hostent {
-        let real = libc::dlsym(libc::RTLD_NEXT, c"gethostbyname2".as_ptr());
-        let real_fn: unsafe extern "C" fn(*const libc::c_char, c_int) -> *mut libc::hostent =
-            std::mem::transmute(real);
-
+        let real_fn = real!(
+            "gethostbyname2",
+            unsafe extern "C" fn(*const libc::c_char, c_int) -> *mut libc::hostent
+        );
         let result = real_fn(name, af);
         rewrite_hostent(result);
         result
@@ -1130,10 +1149,10 @@ mod platform {
 
     #[unsafe(no_mangle)]
     pub unsafe extern "C" fn getifaddrs(ifap: *mut *mut libc::ifaddrs) -> c_int {
-        let real = libc::dlsym(libc::RTLD_NEXT, c"getifaddrs".as_ptr());
-        let real_fn: unsafe extern "C" fn(*mut *mut libc::ifaddrs) -> c_int =
-            std::mem::transmute(real);
-
+        let real_fn = real!(
+            "getifaddrs",
+            unsafe extern "C" fn(*mut *mut libc::ifaddrs) -> c_int
+        );
         let ret = real_fn(ifap);
         if ret == 0 && !ifap.is_null() && !(*ifap).is_null() {
             hide_other_silo_aliases(*ifap);
@@ -1150,15 +1169,17 @@ mod platform {
         dest_addr: *const sockaddr,
         addrlen: socklen_t,
     ) -> libc::ssize_t {
-        let real = libc::dlsym(libc::RTLD_NEXT, c"sendto".as_ptr());
-        let real_fn: unsafe extern "C" fn(
-            c_int,
-            *const libc::c_void,
-            libc::size_t,
-            c_int,
-            *const sockaddr,
-            socklen_t,
-        ) -> libc::ssize_t = std::mem::transmute(real);
+        let real_fn = real!(
+            "sendto",
+            unsafe extern "C" fn(
+                c_int,
+                *const libc::c_void,
+                libc::size_t,
+                c_int,
+                *const sockaddr,
+                socklen_t,
+            ) -> libc::ssize_t
+        );
 
         rewrite_addr(dest_addr, true);
         real_fn(fd, buf, len, flags, dest_addr, addrlen)
@@ -1170,10 +1191,10 @@ mod platform {
         msg: *const libc::msghdr,
         flags: c_int,
     ) -> libc::ssize_t {
-        let real = libc::dlsym(libc::RTLD_NEXT, c"sendmsg".as_ptr());
-        let real_fn: unsafe extern "C" fn(c_int, *const libc::msghdr, c_int) -> libc::ssize_t =
-            std::mem::transmute(real);
-
+        let real_fn = real!(
+            "sendmsg",
+            unsafe extern "C" fn(c_int, *const libc::msghdr, c_int) -> libc::ssize_t
+        );
         if !msg.is_null() && !(*msg).msg_name.is_null() && (*msg).msg_namelen > 0 {
             rewrite_addr((*msg).msg_name as *const sockaddr, true);
         }
