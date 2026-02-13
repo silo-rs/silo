@@ -19,7 +19,7 @@ pub fn resolve(cwd: &Path, name_override: Option<&str>) -> Result<Context> {
         }
     };
 
-    let ip = compute_ip(&canonical);
+    let ip = compute_ip(&canonical, &name);
 
     let project_name = main_repo_name(&git_root);
     let hostname = format!("{}.{}.silo", name, project_name);
@@ -119,9 +119,15 @@ fn main_repo_name(git_root: &Path) -> String {
         .unwrap_or_default()
 }
 
-pub(crate) fn compute_ip(canonical_path: &Path) -> Ipv4Addr {
-    let bytes = canonical_path.as_os_str().as_encoded_bytes();
-    let hash = fnv1a_hash(bytes);
+pub(crate) fn compute_ip(canonical_path: &Path, name: &str) -> Ipv4Addr {
+    let mut hash = fnv1a_hash(canonical_path.as_os_str().as_encoded_bytes());
+    // Separator byte to avoid collisions between path="a",name="b" and path="ab",name=""
+    hash ^= 0xff_u64;
+    hash = hash.wrapping_mul(FNV_PRIME);
+    for &byte in name.as_bytes() {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
 
     const OCTET1_RANGE: u64 = 254;
     const OCTET2_RANGE: u64 = 256;
@@ -136,10 +142,10 @@ pub(crate) fn compute_ip(canonical_path: &Path) -> Ipv4Addr {
     Ipv4Addr::new(127, o1, o2, o3)
 }
 
-fn fnv1a_hash(bytes: &[u8]) -> u64 {
-    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
-    const FNV_PRIME: u64 = 0x100000001b3;
+const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+const FNV_PRIME: u64 = 0x100000001b3;
 
+fn fnv1a_hash(bytes: &[u8]) -> u64 {
     let mut hash = FNV_OFFSET;
     for &byte in bytes {
         hash ^= byte as u64;
@@ -180,15 +186,23 @@ mod tests {
     #[test]
     fn compute_ip_deterministic() {
         let path = Path::new("/home/user/project");
-        let ip1 = compute_ip(path);
-        let ip2 = compute_ip(path);
+        let ip1 = compute_ip(path, "main");
+        let ip2 = compute_ip(path, "main");
         assert_eq!(ip1, ip2);
     }
 
     #[test]
     fn compute_ip_different_paths() {
-        let ip1 = compute_ip(Path::new("/home/user/project-a"));
-        let ip2 = compute_ip(Path::new("/home/user/project-b"));
+        let ip1 = compute_ip(Path::new("/home/user/project-a"), "main");
+        let ip2 = compute_ip(Path::new("/home/user/project-b"), "main");
+        assert_ne!(ip1, ip2);
+    }
+
+    #[test]
+    fn compute_ip_different_names() {
+        let path = Path::new("/home/user/project");
+        let ip1 = compute_ip(path, "main");
+        let ip2 = compute_ip(path, "feature");
         assert_ne!(ip1, ip2);
     }
 
@@ -196,7 +210,7 @@ mod tests {
     fn compute_ip_in_range() {
         for i in 0..1000 {
             let path = format!("/test/path/{}", i);
-            let ip = compute_ip(Path::new(&path));
+            let ip = compute_ip(Path::new(&path), "main");
             let [o0, o1, _o2, o3] = ip.octets();
             assert_eq!(o0, 127);
             assert!((1..=254).contains(&o1), "second octet {o1} out of range");
