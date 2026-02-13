@@ -213,20 +213,15 @@ fn resolve_to_path(program: &str) -> Option<PathBuf> {
 }
 
 fn read_shebang(path: &Path) -> Option<String> {
-    let mut file = File::open(path).ok()?;
-    let mut magic = [0u8; 2];
-    if file.read_exact(&mut magic).is_err() {
-        return None;
-    }
-    if &magic != b"#!" {
-        return None;
-    }
-
     let file = File::open(path).ok()?;
     let reader = BufReader::new(file);
     let mut line = String::new();
     reader.take(256).read_line(&mut line).ok()?;
-    Some(line)
+    if line.starts_with("#!") {
+        Some(line)
+    } else {
+        None
+    }
 }
 
 fn parse_shebang(line: &str) -> Option<(String, Option<String>)> {

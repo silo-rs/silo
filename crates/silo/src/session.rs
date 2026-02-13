@@ -28,7 +28,11 @@ pub struct ActivateOptions {
 
 impl Default for ActivateOptions {
     fn default() -> Self {
-        Self::all()
+        Self {
+            ip_alias: true,
+            hosts_entry: true,
+            bind_lib: None,
+        }
     }
 }
 
