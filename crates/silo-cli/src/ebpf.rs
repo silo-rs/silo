@@ -16,8 +16,7 @@ use std::path::{Path, PathBuf};
 
 use aya::Ebpf;
 use aya::maps::HashMap;
-use aya::programs::cgroup_sock_addr::CgroupSockAddrLink;
-use aya::programs::{CgroupSockAddr, CgroupSockAddrAttachType};
+use aya::programs::{CgroupAttachMode, CgroupSockAddr, CgroupSockAddrAttachType};
 use eyre::Context;
 
 /// Base path for silo per-session cgroups.
@@ -75,8 +74,6 @@ pub struct EbpfSession {
     cgroup_path: PathBuf,
     cgroup_id: u64,
     mode: SessionMode,
-    /// Link handles that keep programs attached to the cgroup.
-    _links: Vec<CgroupSockAddrLink>,
 }
 
 impl EbpfSession {
@@ -127,7 +124,6 @@ impl EbpfSession {
             .context("failed to write silo IP to BPF map")?;
 
         // Attach all programs to the cgroup
-        let mut links = Vec::new();
         for name in PROGRAM_NAMES {
             let prog: &mut CgroupSockAddr = bpf
                 .program_mut(name)
@@ -136,17 +132,14 @@ impl EbpfSession {
                 .with_context(|| format!("BPF program {name} is not a CgroupSockAddr program"))?;
             prog.load()
                 .with_context(|| format!("failed to load BPF program {name}"))?;
-            let link = prog
-                .attach(cgroup_fd)
+            prog.attach(cgroup_fd, CgroupAttachMode::Single)
                 .with_context(|| format!("failed to attach BPF program {name}"))?;
-            links.push(link);
         }
 
         Ok(Self {
             cgroup_path,
             cgroup_id,
             mode: SessionMode::Embedded(bpf),
-            _links: links,
         })
     }
 
@@ -168,15 +161,12 @@ impl EbpfSession {
 
         // Open and attach each pinned program
         let mut programs = Vec::new();
-        let mut links = Vec::new();
         for name in PROGRAM_NAMES {
             let pin_path = PathBuf::from(PIN_BASE).join(name);
             let mut prog = CgroupSockAddr::from_pin(&pin_path, attach_type_for(name))
                 .with_context(|| format!("failed to open pinned BPF program {name}"))?;
-            let link = prog
-                .attach(cgroup_fd)
+            prog.attach(cgroup_fd, CgroupAttachMode::Single)
                 .with_context(|| format!("failed to attach pinned BPF program {name}"))?;
-            links.push(link);
             programs.push(prog);
         }
 
@@ -187,7 +177,6 @@ impl EbpfSession {
                 _programs: programs,
                 config_map: Some(config),
             },
-            _links: links,
         })
     }
 

@@ -13,7 +13,7 @@ use std::process::Command;
 
 use aya::Ebpf;
 use aya::maps::HashMap;
-use aya::programs::CgroupSockAddr;
+use aya::programs::{CgroupAttachMode, CgroupSockAddr};
 
 const CGROUP_BASE: &str = "/sys/fs/cgroup/silo-test";
 
@@ -34,16 +34,23 @@ static EBPF_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/silo-ebpf")
 
 pub struct EbpfTestHarness {
     cgroup_path: PathBuf,
+    helper_binary: PathBuf,
     _bpf: Ebpf,
-    _links: Vec<aya::programs::cgroup_sock_addr::CgroupSockAddrLink>,
 }
 
 impl EbpfTestHarness {
     /// Create a test harness with eBPF programs attached to a unique cgroup.
     ///
+    /// `helper_binary` is the path to the ebpf-helper binary (use
+    /// `env!("CARGO_BIN_EXE_ebpf-helper")` from integration tests).
+    ///
     /// If `silo_ip` is `Some`, the IP is written to the config map keyed by cgroup ID.
     /// If `None`, the map stays empty (passthrough mode).
-    pub fn new(test_name: &str, silo_ip: Option<Ipv4Addr>) -> eyre::Result<Self> {
+    pub fn new(
+        test_name: &str,
+        silo_ip: Option<Ipv4Addr>,
+        helper_binary: PathBuf,
+    ) -> eyre::Result<Self> {
         let cgroup_path = PathBuf::from(CGROUP_BASE).join(test_name);
         fs::create_dir_all(&cgroup_path)?;
 
@@ -58,18 +65,16 @@ impl EbpfTestHarness {
             config.insert(cgroup_id, ip_nbo, 0)?;
         }
 
-        let mut links = Vec::new();
         for name in PROGRAM_NAMES {
             let prog: &mut CgroupSockAddr = bpf.program_mut(name).unwrap().try_into().unwrap();
             prog.load()?;
-            let link = prog.attach(&cgroup_fd)?;
-            links.push(link);
+            prog.attach(&cgroup_fd, CgroupAttachMode::Single)?;
         }
 
         Ok(Self {
             cgroup_path,
+            helper_binary,
             _bpf: bpf,
-            _links: links,
         })
     }
 
@@ -77,10 +82,9 @@ impl EbpfTestHarness {
     ///
     /// Returns (stdout, stderr, success).
     pub fn run_helper(&self, command: &str) -> (String, String, bool) {
-        let helper = helper_path();
         let procs_path = self.cgroup_path.join("cgroup.procs");
 
-        let mut cmd = Command::new(&helper);
+        let mut cmd = Command::new(&self.helper_binary);
         cmd.arg(command);
 
         // Move child into cgroup after fork() but before exec().
@@ -114,12 +118,6 @@ impl Drop for EbpfTestHarness {
     fn drop(&mut self) {
         let _ = fs::remove_dir(&self.cgroup_path);
     }
-}
-
-fn helper_path() -> PathBuf {
-    let path = PathBuf::from(env!("CARGO_BIN_EXE_ebpf-helper"));
-    assert!(path.exists(), "ebpf-helper not found at {}", path.display());
-    path
 }
 
 /// Check if we have the capabilities needed to run eBPF tests.
