@@ -7,8 +7,15 @@ fn main() {
     let workspace_dir = manifest_dir.parent().unwrap().parent().unwrap();
     let profile = env::var("PROFILE").unwrap();
 
+    build_bind_lib(&out_dir, workspace_dir, &profile);
+
+    #[cfg(target_os = "linux")]
+    build_ebpf(workspace_dir);
+}
+
+fn build_bind_lib(out_dir: &std::path::Path, workspace_dir: &std::path::Path, profile: &str) {
     let lib_name = lib_name();
-    let lib_path = workspace_dir.join("target").join(&profile).join(lib_name);
+    let lib_path = workspace_dir.join("target").join(profile).join(lib_name);
 
     if lib_path.exists() {
         fs::copy(&lib_path, out_dir.join(lib_name)).expect("failed to copy dylib");
@@ -30,13 +37,43 @@ fn main() {
         let status = cmd.status().expect("failed to build silo-bind");
         assert!(status.success(), "silo-bind build failed");
 
-        let built = tmp_target.join(&profile).join(lib_name);
+        let built = tmp_target.join(profile).join(lib_name);
         fs::copy(&built, out_dir.join(lib_name)).expect("failed to copy dylib");
     }
 
     println!("cargo:rerun-if-changed=../silo-bind/src");
     println!("cargo:rerun-if-changed=../silo-bind/Cargo.toml");
     println!("cargo:rerun-if-changed={}", lib_path.display());
+}
+
+#[cfg(target_os = "linux")]
+fn build_ebpf(workspace_dir: &std::path::Path) {
+    let ebpf_dir = workspace_dir.join("crates").join("silo-ebpf");
+    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+
+    let result = aya_build::build_ebpf(
+        [aya_build::Package {
+            name: "silo-ebpf",
+            root_dir: ebpf_dir.to_str().expect("non-UTF-8 path"),
+            no_default_features: false,
+            features: &[],
+        }],
+        aya_build::Toolchain::Nightly,
+    );
+
+    match result {
+        Ok(()) => {}
+        Err(e) => {
+            // Create empty stub so include_bytes! doesn't fail.
+            // At runtime, ebpf_available() checks for empty bytes and
+            // falls back to LD_PRELOAD.
+            println!("cargo:warning=eBPF build failed ({e}). eBPF backend will not be available.");
+            fs::write(out_dir.join("silo-ebpf"), b"").ok();
+        }
+    }
+
+    println!("cargo:rerun-if-changed=../silo-ebpf/src");
+    println!("cargo:rerun-if-changed=../silo-ebpf/Cargo.toml");
 }
 
 fn lib_name() -> &'static str {

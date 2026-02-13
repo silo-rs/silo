@@ -1,14 +1,16 @@
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 
 mod cli;
 mod commands;
+#[cfg(target_os = "linux")]
+pub(crate) mod ebpf;
 pub(crate) mod ui;
 
 use clap::Parser;
 use cli::{Cli, Commands};
 use colored::Colorize;
 
-const KNOWN_SUBCOMMANDS: &[&str] = &["run", "ip", "ls", "doctor", "prune", "help"];
+const KNOWN_SUBCOMMANDS: &[&str] = &["run", "ip", "ls", "doctor", "prune", "setup-ebpf", "help"];
 
 /// If the first positional arg isn't a known subcommand, treat the entire
 /// invocation as `silo run <args>`.  This lets users write `silo npm run dev`
@@ -68,5 +70,7 @@ fn run() -> eyre::Result<()> {
         Commands::Doctor => commands::doctor::run(),
         Commands::Ls => commands::ls::run(),
         Commands::Prune { all, yes } => commands::prune::run(all, yes),
+        #[cfg(target_os = "linux")]
+        Commands::SetupEbpf => commands::setup_ebpf::run(),
     }
 }

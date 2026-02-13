@@ -44,6 +44,10 @@ pub fn run() -> eyre::Result<()> {
         }
     }
 
+    // eBPF backend (Linux only)
+    #[cfg(target_os = "linux")]
+    check_ebpf(&mut warnings);
+
     match std::fs::read_to_string("/etc/hosts") {
         Ok(content) => {
             let count = content.lines().filter(|l| l.ends_with(".silo")).count();
@@ -82,6 +86,55 @@ pub fn run() -> eyre::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn check_ebpf(warnings: &mut usize) {
+    use std::path::Path;
+
+    // cgroup v2
+    if Path::new("/sys/fs/cgroup/cgroup.controllers").exists() {
+        ui::check_ok("cgroup", "v2 mounted");
+    } else {
+        ui::check_warn(
+            "cgroup",
+            "v2 not detected (eBPF backend requires cgroup v2)",
+        );
+        *warnings += 1;
+        return;
+    }
+
+    // Kernel version
+    let ver_ok = std::fs::read_to_string("/proc/version")
+        .ok()
+        .and_then(|v| {
+            let rest = v.strip_prefix("Linux version ")?;
+            let parts: Vec<&str> = rest.split(|c: char| !c.is_ascii_digit()).collect();
+            let major: u32 = parts.first()?.parse().ok()?;
+            let minor: u32 = parts.get(1)?.parse().ok()?;
+            Some((major, minor) >= (5, 8))
+        })
+        .unwrap_or(false);
+
+    if ver_ok {
+        ui::check_ok("kernel", ">= 5.8 (cgroup/sock_addr supported)");
+    } else {
+        ui::check_warn("kernel", "< 5.8 or unknown (eBPF backend needs >= 5.8)");
+        *warnings += 1;
+    }
+
+    // Pinned programs
+    let pin_path = Path::new("/sys/fs/bpf/silo/silo_bind4");
+    if pin_path.exists() {
+        ui::check_ok("ebpf", "programs pinned at /sys/fs/bpf/silo/");
+    } else if crate::ebpf::ebpf_available() {
+        ui::check_info(
+            "ebpf",
+            "available (run `sudo silo setup-ebpf` to pin programs for rootless use)",
+        );
+    } else {
+        ui::check_info("ebpf", "not available (will use LD_PRELOAD backend)");
+    }
 }
 
 fn os_info() -> Option<String> {

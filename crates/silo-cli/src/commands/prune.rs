@@ -144,5 +144,45 @@ pub fn run(all: bool, yes: bool) -> eyre::Result<()> {
         }
     }
 
+    // Clean up stale eBPF cgroups (Linux only)
+    #[cfg(target_os = "linux")]
+    prune_stale_cgroups();
+
     Ok(())
+}
+
+/// Remove empty cgroups under /sys/fs/cgroup/silo/ that have no active processes.
+#[cfg(target_os = "linux")]
+fn prune_stale_cgroups() {
+    use std::path::Path;
+
+    let cgroup_base = Path::new("/sys/fs/cgroup/silo");
+    if !cgroup_base.exists() {
+        return;
+    }
+
+    let Ok(entries) = std::fs::read_dir(cgroup_base) else {
+        return;
+    };
+
+    let mut removed = 0usize;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let procs = path.join("cgroup.procs");
+        let is_empty = std::fs::read_to_string(&procs)
+            .map(|s| s.trim().is_empty())
+            .unwrap_or(false);
+        if is_empty {
+            if std::fs::remove_dir(&path).is_ok() {
+                removed += 1;
+            }
+        }
+    }
+
+    if removed > 0 {
+        eprintln!("  {} pruned {} stale cgroup(s)", "✓".green(), removed);
+    }
 }

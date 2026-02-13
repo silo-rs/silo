@@ -1,0 +1,19 @@
+[package]
+name = "silo-ebpf-tests"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+libc = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+aya = { workspace = true }
+eyre = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.build-dependencies]
+aya-build = { workspace = true }
+
+[[bin]]
+name = "ebpf-helper"
+path = "src/bin/ebpf_helper.rs"

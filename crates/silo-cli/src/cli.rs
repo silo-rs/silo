@@ -48,4 +48,8 @@ pub enum Commands {
         #[arg(long, short)]
         yes: bool,
     },
+
+    /// Load and pin eBPF programs for rootless operation (requires sudo, Linux only)
+    #[cfg(target_os = "linux")]
+    SetupEbpf,
 }

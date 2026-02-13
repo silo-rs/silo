@@ -35,6 +35,38 @@ jobs:
       - run: cargo build -p silo-bind
       - run: cargo test --workspace
 
+  build-ebpf:
+    name: Build eBPF
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+      - name: Install bpf-linker
+        run: cargo +nightly install bpf-linker
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo +nightly build --manifest-path crates/silo-ebpf/Cargo.toml --target bpfel-unknown-none -Z build-std=core
+
+  test-ebpf:
+    name: Test eBPF (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+      - name: Install bpf-linker
+        run: cargo +nightly install bpf-linker
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build -p silo-bind
+      - run: sudo -E $(which cargo) test -p silo-ebpf-tests -- --test-threads=1
+
   test-linux-distros:
     name: Test (${{ matrix.distro }})
     runs-on: ubuntu-latest
