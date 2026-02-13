@@ -1,0 +1,43 @@
+[package]
+name = "silo-bind-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+
+[dependencies.silo-bind]
+path = ".."
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "fuzz_rewrite_ipv4"
+path = "fuzz_targets/fuzz_rewrite_ipv4.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_rewrite_ipv6"
+path = "fuzz_targets/fuzz_rewrite_ipv6.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_rewrite_resolved"
+path = "fuzz_targets/fuzz_rewrite_resolved.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_hide_alias"
+path = "fuzz_targets/fuzz_hide_alias.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_parse_silo_ip"
+path = "fuzz_targets/fuzz_parse_silo_ip.rs"
+doc = false
