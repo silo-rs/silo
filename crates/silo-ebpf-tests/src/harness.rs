@@ -32,7 +32,7 @@ const PROGRAM_NAMES: &[&str] = &[
     "silo_getsockname6",
 ];
 
-static EBPF_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/silo-ebpf"));
+static EBPF_BYTES: &[u8] = aya::include_bytes_aligned!(concat!(env!("OUT_DIR"), "/silo-ebpf"));
 
 pub struct EbpfTestHarness {
     cgroup_path: PathBuf,

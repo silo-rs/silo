@@ -583,4 +583,4 @@ fn chown_path<P: AsRef<Path>>(path: P, uid: u32, gid: u32) -> eyre::Result<()> {
 
 /// Embedded eBPF bytecode, compiled from crates/silo-ebpf.
 /// On macOS this constant is never used (the module is cfg-gated).
-static EBPF_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/silo-ebpf"));
+static EBPF_BYTES: &[u8] = aya::include_bytes_aligned!(concat!(env!("OUT_DIR"), "/silo-ebpf"));
