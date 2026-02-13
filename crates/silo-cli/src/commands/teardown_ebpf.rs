@@ -14,7 +14,9 @@ pub fn run() -> eyre::Result<()> {
     eprintln!(
         "  {} {}",
         "✓".green(),
-        "pinned eBPF programs removed from /sys/fs/bpf/silo/".green().bold()
+        "pinned eBPF programs removed from /sys/fs/bpf/silo/"
+            .green()
+            .bold()
     );
 
     Ok(())

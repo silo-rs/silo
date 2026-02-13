@@ -41,12 +41,16 @@ fn main() {
         cmd.env("CARGO_ENCODED_RUSTFLAGS", &rustflags);
         cmd.env_remove("RUSTC");
         cmd.env_remove("RUSTC_WORKSPACE_WRAPPER");
+        cmd.env_remove("CARGO");
+        cmd.env_remove("CARGO_MAKEFLAGS");
 
-        let result = cmd.status();
+        let result = cmd.output();
         match result {
-            Ok(status) if status.success() => {
+            Ok(output) if output.status.success() => {
                 let binary = target_dir.join(&target).join("release").join("silo-ebpf");
                 if binary.exists() {
+                    let meta = fs::metadata(&binary).unwrap();
+                    println!("cargo:warning=eBPF binary: {} bytes", meta.len());
                     fs::copy(&binary, out_dir.join("silo-ebpf"))
                         .expect("failed to copy eBPF binary to OUT_DIR");
                 } else {
@@ -57,10 +61,15 @@ fn main() {
                     fs::write(out_dir.join("silo-ebpf"), b"").ok();
                 }
             }
-            Ok(status) => {
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
                 println!(
-                    "cargo:warning=eBPF build failed (exit {status}). Tests will be skipped at runtime."
+                    "cargo:warning=eBPF build failed (exit {}). Tests will be skipped at runtime.",
+                    output.status
                 );
+                for line in stderr.lines().take(20) {
+                    println!("cargo:warning=  {line}");
+                }
                 fs::write(out_dir.join("silo-ebpf"), b"").ok();
             }
             Err(e) => {

@@ -309,8 +309,7 @@ pub fn setup_pinned() -> eyre::Result<()> {
 
     // Create cgroup base directory and delegate to the invoking user so that
     // subsequent `silo run` invocations work without root.
-    setup_cgroup_base()
-        .context("failed to set up cgroup delegation")?;
+    setup_cgroup_base().context("failed to set up cgroup delegation")?;
 
     fs::create_dir_all(PIN_BASE).with_context(|| format!("failed to create {PIN_BASE}"))?;
 
@@ -391,8 +390,7 @@ pub fn prune_config_map() -> usize {
         return 0;
     }
 
-    let Ok(map_data) =
-        aya::maps::MapData::from_pin(PathBuf::from(PIN_BASE).join("SILO_CONFIG"))
+    let Ok(map_data) = aya::maps::MapData::from_pin(PathBuf::from(PIN_BASE).join("SILO_CONFIG"))
     else {
         return 0;
     };
@@ -451,12 +449,10 @@ fn live_cgroup_ids(base: &Path) -> HashSet<u64> {
 /// to the target user. After this, the user can create sub-cgroups (sessions)
 /// and move processes into them without root.
 fn setup_cgroup_base() -> eyre::Result<()> {
-    fs::create_dir_all(CGROUP_BASE)
-        .with_context(|| format!("failed to create {CGROUP_BASE}"))?;
+    fs::create_dir_all(CGROUP_BASE).with_context(|| format!("failed to create {CGROUP_BASE}"))?;
 
     let (uid, gid) = sudo_caller_ids();
-    chown_path(CGROUP_BASE, uid, gid)
-        .with_context(|| format!("failed to chown {CGROUP_BASE}"))?;
+    chown_path(CGROUP_BASE, uid, gid).with_context(|| format!("failed to chown {CGROUP_BASE}"))?;
 
     // Delegate control files so the user can create sub-cgroups and move processes
     for name in &["cgroup.procs", "cgroup.threads"] {
@@ -575,8 +571,8 @@ fn sudo_caller_ids() -> (u32, u32) {
 
 /// chown a path to the given uid:gid.
 fn chown_path<P: AsRef<Path>>(path: P, uid: u32, gid: u32) -> eyre::Result<()> {
-    let c_path = CString::new(path.as_ref().as_os_str().as_bytes())
-        .context("path contains null byte")?;
+    let c_path =
+        CString::new(path.as_ref().as_os_str().as_bytes()).context("path contains null byte")?;
     let ret = unsafe { libc::chown(c_path.as_ptr(), uid, gid) };
     if ret != 0 {
         Err(std::io::Error::last_os_error())

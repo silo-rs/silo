@@ -17,4 +17,4 @@ debug = false
 overflow-checks = false
 
 [profile.release]
-lto = true
+lto = false

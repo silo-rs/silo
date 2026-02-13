@@ -140,6 +140,18 @@ pub fn can_run_ebpf_tests() -> bool {
         return false;
     }
 
+    // ELF machine type must be EM_BPF (247)
+    if EBPF_BYTES.len() >= 20 {
+        let e_machine = u16::from_le_bytes([EBPF_BYTES[18], EBPF_BYTES[19]]);
+        if e_machine != 247 {
+            eprintln!(
+                "SKIP: eBPF binary has wrong machine type {e_machine} (expected EM_BPF=247, {} bytes)",
+                EBPF_BYTES.len()
+            );
+            return false;
+        }
+    }
+
     // Need root or CAP_BPF + CAP_NET_ADMIN
     unsafe { libc::geteuid() == 0 }
 }

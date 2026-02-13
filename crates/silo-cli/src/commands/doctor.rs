@@ -126,7 +126,10 @@ fn check_ebpf(warnings: &mut usize) {
     // Embedded bytecode
     let has_bytes = !crate::ebpf::embedded_bytes_empty();
     if has_bytes {
-        ui::check_ok("ebpf bytecode", "embedded (built with nightly + bpf-linker)");
+        ui::check_ok(
+            "ebpf bytecode",
+            "embedded (built with nightly + bpf-linker)",
+        );
     } else {
         ui::check_info(
             "ebpf bytecode",
