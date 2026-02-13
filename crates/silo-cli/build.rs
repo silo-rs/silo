@@ -58,7 +58,7 @@ fn build_ebpf(workspace_dir: &std::path::Path, out_dir: &std::path::Path) {
     let bpf_prefix = if endian == "big" { "bpfeb" } else { "bpfel" };
     let target = format!("{bpf_prefix}-unknown-none");
 
-    let target_dir = out_dir.join("silo-ebpf");
+    let target_dir = out_dir.join("silo-ebpf-build");
 
     let mut cmd = std::process::Command::new("rustup");
     cmd.args(["run", "nightly", "cargo", "build"]);
@@ -76,9 +76,8 @@ fn build_ebpf(workspace_dir: &std::path::Path, out_dir: &std::path::Path) {
 
     // RUSTFLAGS: set bpf_target_arch cfg, debuginfo, and BTF linking
     let sep = "\x1f";
-    let rustflags = format!(
-        "--cfg=bpf_target_arch=\"{target_arch}\"{sep}-Cdebuginfo=2{sep}-Clink-arg=--btf"
-    );
+    let rustflags =
+        format!("--cfg=bpf_target_arch=\"{target_arch}\"{sep}-Cdebuginfo=2{sep}-Clink-arg=--btf");
     cmd.env("CARGO_ENCODED_RUSTFLAGS", &rustflags);
     cmd.env_remove("RUSTC");
     cmd.env_remove("RUSTC_WORKSPACE_WRAPPER");
@@ -105,9 +104,7 @@ fn build_ebpf(workspace_dir: &std::path::Path, out_dir: &std::path::Path) {
             fs::write(out_dir.join("silo-ebpf"), b"").ok();
         }
         Err(e) => {
-            println!(
-                "cargo:warning=eBPF build failed ({e}). eBPF backend will not be available."
-            );
+            println!("cargo:warning=eBPF build failed ({e}). eBPF backend will not be available.");
             fs::write(out_dir.join("silo-ebpf"), b"").ok();
         }
     }

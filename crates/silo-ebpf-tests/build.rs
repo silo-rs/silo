@@ -18,7 +18,7 @@ fn main() {
         let bpf_prefix = if endian == "big" { "bpfeb" } else { "bpfel" };
         let target = format!("{bpf_prefix}-unknown-none");
 
-        let target_dir = out_dir.join("silo-ebpf");
+        let target_dir = out_dir.join("silo-ebpf-build");
 
         let mut cmd = std::process::Command::new("rustup");
         cmd.args(["run", "nightly", "cargo", "build"]);
