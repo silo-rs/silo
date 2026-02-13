@@ -57,6 +57,8 @@ pub fn run(name: Option<&str>, command: &[String], quiet: bool) -> eyre::Result<
         },
     )?;
 
+    verify_session(&session);
+
     let quiet = quiet || std::env::var("SILO_QUIET").is_ok();
 
     if !quiet {
@@ -152,6 +154,49 @@ pub fn exec_with_interception(
 
     let err = cmd.exec();
     Err(err).context(format!("failed to exec: {}", program))
+}
+
+/// Pre-flight checks after session activation. Prints warnings but never blocks execution.
+fn verify_session(session: &Session) {
+    // Check 1: IP alias exists on loopback
+    if let Ok(false) = silo::ip::alias_exists(session.ip()) {
+        ui::check_warn("ip alias", "not found on loopback interface");
+    }
+
+    // Check 2: Hosts entry + collision detection (single list_entries call)
+    if let Ok(entries) = silo::hosts::list_entries() {
+        let has_entry = entries
+            .iter()
+            .any(|(ip, name)| *ip == session.ip() && name == session.hostname());
+        if !has_entry {
+            ui::check_warn(
+                "hosts",
+                format!("{} not found in /etc/hosts", session.hostname()),
+            );
+        }
+
+        for (ip, name) in &entries {
+            if *ip == session.ip() && name != session.hostname() {
+                ui::check_warn(
+                    "hosts",
+                    format!("ip collision — {} is also mapped to {name}", session.ip()),
+                );
+                break;
+            }
+        }
+    }
+
+    // Check 3: Backend::None means no syscall interception
+    if matches!(session.backend(), silo::Backend::None) {
+        ui::check_warn("backend", "no interception method available");
+    }
+
+    // Check 4: Bind lib accessible (LD_PRELOAD only)
+    if let silo::Backend::LdPreload { lib_path } = session.backend()
+        && !lib_path.exists()
+    {
+        ui::check_error("bind lib", format!("not found: {}", lib_path.display()));
+    }
 }
 
 #[cfg(target_os = "macos")]
