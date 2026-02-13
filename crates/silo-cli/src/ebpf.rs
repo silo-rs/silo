@@ -67,7 +67,7 @@ fn attach_type_for(name: &str) -> CgroupSockAddrAttachType {
 enum SessionMode {
     /// Programs loaded from embedded bytes. Ebpf object owns everything.
     /// When dropped, programs are unloaded and maps are destroyed.
-    Embedded(Ebpf),
+    Embedded(#[allow(dead_code)] Ebpf),
     /// Programs loaded from pinned paths. Config map handle for cleanup.
     /// On drop, removes our cgroup_id entry from the shared config map.
     Pinned {
@@ -201,6 +201,7 @@ impl EbpfSession {
     }
 
     /// The cgroup directory for this session.
+    #[allow(dead_code)]
     pub fn cgroup_path(&self) -> &Path {
         &self.cgroup_path
     }
@@ -209,10 +210,10 @@ impl EbpfSession {
 impl Drop for EbpfSession {
     fn drop(&mut self) {
         // For pinned mode, remove our entry from the shared config map
-        if let SessionMode::Pinned { config_map, .. } = &mut self.mode {
-            if let Some(mut config) = config_map.take() {
-                let _ = config.remove(&self.cgroup_id);
-            }
+        if let SessionMode::Pinned { config_map, .. } = &mut self.mode
+            && let Some(mut config) = config_map.take()
+        {
+            let _ = config.remove(&self.cgroup_id);
         }
         // For embedded mode, the Ebpf object drop destroys maps and programs.
 
@@ -489,10 +490,8 @@ pub fn prune_stale_cgroups() -> usize {
         let is_empty = fs::read_to_string(&procs)
             .map(|s| s.trim().is_empty())
             .unwrap_or(false);
-        if is_empty {
-            if fs::remove_dir(&path).is_ok() {
-                removed += 1;
-            }
+        if is_empty && fs::remove_dir(&path).is_ok() {
+            removed += 1;
         }
     }
     removed

@@ -95,7 +95,7 @@ impl EbpfTestHarness {
         unsafe {
             cmd.pre_exec(move || {
                 fs::write(&procs_path, std::process::id().to_string())
-                    .map_err(|e| std::io::Error::other(e))
+                    .map_err(std::io::Error::other)
             });
         }
 
