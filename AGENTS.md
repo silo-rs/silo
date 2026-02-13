@@ -45,6 +45,21 @@ cargo test --workspace
 - Commit messages: imperative mood, concise (e.g., `feat: add branch-aware IP resolution`).
 - PRs: keep changes focused. One logical change per PR.
 
+## Public API
+
+Core types — grep for these, don't guess:
+
+- `Context` — `Context::current(name)`, `Context::for_dir(dir, name)`, `.ip()`, `.name()`, `.hostname()`, `.dir()`, `.env_vars()`
+- `Session` — `Session::new(name)`, `Session::in_dir(dir, name)`, `Session::activate(ctx, opts)`, `.env()`, `.apply(cmd)`
+- `ActivateOptions` — `ActivateOptions::all()`, `ActivateOptions::none()` (fields: `ip_alias`, `hosts_entry`, `bind_lib`)
+- `Error` — `NotGitRepo`, `BindLibNotFound`, `Io`, `CommandFailed`
+
+Utility functions — reuse these, don't reimplement:
+
+- `ip::add_alias(ip)` / `ip::remove_alias(ip)` / `ip::alias_exists(ip)` — loopback management
+- `hosts::ensure_entry(ip, hostname)` / `hosts::remove_entries(ips)` / `hosts::list_entries()` — /etc/hosts management
+- `shebang::resolve_program(program, args)` — macOS SIP-aware binary resolution
+
 ## Key files
 
 | What | Path |
@@ -58,3 +73,7 @@ cargo test --workspace
 | CLI command definitions | `crates/silo-cli/src/cli.rs` |
 | Syscall interception | `crates/silo-bind/src/lib.rs` |
 | macOS SIP handling | `crates/silo/src/shebang.rs` |
+
+## Maintenance
+
+If you change the public API or add new modules, update this file to match.
