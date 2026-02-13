@@ -42,6 +42,7 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          trigger_phrase: ""
           prompt: |
             Review this PR. Focus only on things that matter:
             - Correctness and potential bugs
@@ -50,6 +51,4 @@ jobs:
 
             CI has already passed. Do not check formatting or clippy — those are covered.
             Be concise. Skip praise. If everything looks good, say so in one line.
-
-            Post a single comment using `gh pr comment`.
-          claude_args: '--allowed-tools "Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"'
+          use_sticky_comment: true
