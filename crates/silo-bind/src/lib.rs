@@ -1066,7 +1066,7 @@ mod platform {
         ($sym:literal, $ty:ty) => {{
             static REAL: OnceLock<$ty> = OnceLock::new();
             *REAL.get_or_init(|| unsafe {
-                let ptr = libc::dlsym(libc::RTLD_NEXT, $sym.as_ptr());
+                let ptr = libc::dlsym(libc::RTLD_NEXT, concat!($sym, "\0").as_ptr().cast());
                 assert!(
                     !ptr.is_null(),
                     concat!("silo-bind: dlsym failed to resolve ", $sym)
@@ -1079,7 +1079,7 @@ mod platform {
     #[unsafe(no_mangle)]
     pub unsafe extern "C" fn bind(fd: c_int, addr: *const sockaddr, len: socklen_t) -> c_int {
         let real_fn = real!(
-            c"bind",
+            "bind",
             unsafe extern "C" fn(c_int, *const sockaddr, socklen_t) -> c_int
         );
         rewrite_addr(addr, true);
@@ -1089,7 +1089,7 @@ mod platform {
     #[unsafe(no_mangle)]
     pub unsafe extern "C" fn connect(fd: c_int, addr: *const sockaddr, len: socklen_t) -> c_int {
         let real_fn = real!(
-            c"connect",
+            "connect",
             unsafe extern "C" fn(c_int, *const sockaddr, socklen_t) -> c_int
         );
         rewrite_addr(addr, false);
@@ -1104,7 +1104,7 @@ mod platform {
         res: *mut *mut libc::addrinfo,
     ) -> c_int {
         let real_fn = real!(
-            c"getaddrinfo",
+            "getaddrinfo",
             unsafe extern "C" fn(
                 *const libc::c_char,
                 *const libc::c_char,
@@ -1125,7 +1125,7 @@ mod platform {
     #[unsafe(no_mangle)]
     pub unsafe extern "C" fn gethostbyname(name: *const libc::c_char) -> *mut libc::hostent {
         let real_fn = real!(
-            c"gethostbyname",
+            "gethostbyname",
             unsafe extern "C" fn(*const libc::c_char) -> *mut libc::hostent
         );
         let result = real_fn(name);
@@ -1139,7 +1139,7 @@ mod platform {
         af: c_int,
     ) -> *mut libc::hostent {
         let real_fn = real!(
-            c"gethostbyname2",
+            "gethostbyname2",
             unsafe extern "C" fn(*const libc::c_char, c_int) -> *mut libc::hostent
         );
         let result = real_fn(name, af);
@@ -1150,7 +1150,7 @@ mod platform {
     #[unsafe(no_mangle)]
     pub unsafe extern "C" fn getifaddrs(ifap: *mut *mut libc::ifaddrs) -> c_int {
         let real_fn = real!(
-            c"getifaddrs",
+            "getifaddrs",
             unsafe extern "C" fn(*mut *mut libc::ifaddrs) -> c_int
         );
         let ret = real_fn(ifap);
@@ -1170,7 +1170,7 @@ mod platform {
         addrlen: socklen_t,
     ) -> libc::ssize_t {
         let real_fn = real!(
-            c"sendto",
+            "sendto",
             unsafe extern "C" fn(
                 c_int,
                 *const libc::c_void,
@@ -1192,7 +1192,7 @@ mod platform {
         flags: c_int,
     ) -> libc::ssize_t {
         let real_fn = real!(
-            c"sendmsg",
+            "sendmsg",
             unsafe extern "C" fn(c_int, *const libc::msghdr, c_int) -> libc::ssize_t
         );
         if !msg.is_null() && !(*msg).msg_name.is_null() && (*msg).msg_namelen > 0 {
