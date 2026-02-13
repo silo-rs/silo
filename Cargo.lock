@@ -722,7 +722,7 @@ dependencies = [
 
 [[package]]
 name = "silo"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "dirs",
  "fd-lock",
@@ -734,7 +734,7 @@ dependencies = [
 
 [[package]]
 name = "silo-bind"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "libc",
  "proptest",
@@ -742,7 +742,7 @@ dependencies = [
 
 [[package]]
 name = "silo-bind-tests"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "libc",
  "which",
@@ -750,7 +750,7 @@ dependencies = [
 
 [[package]]
 name = "silo-cli"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "aya",
  "clap",
@@ -766,7 +766,7 @@ dependencies = [
 
 [[package]]
 name = "silo-ebpf-tests"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "aya",
  "eyre",
