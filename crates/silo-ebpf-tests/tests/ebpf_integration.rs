@@ -32,6 +32,9 @@ macro_rules! skip_without_caps {
 }
 
 // ── bind() tests ──
+//
+// With getsockname hook active, local_addr() reverse-maps SILO_IP → 127.0.0.1.
+// The round-trip proves interception: 0.0.0.0 → SILO_IP (bind) → 127.0.0.1 (getsockname).
 
 #[test]
 fn bind_inaddr_any_is_rewritten() {
@@ -39,9 +42,12 @@ fn bind_inaddr_any_is_rewritten() {
     let h = EbpfTestHarness::new("bind_any", Some(test_ip()), helper_path()).unwrap();
     let (stdout, _, success) = h.run_helper("bind_any");
     assert!(success, "helper failed");
+    // getsockname reverse-maps SILO_IP → 127.0.0.1.
+    // Seeing 127.0.0.1 (not 0.0.0.0) proves bind was intercepted:
+    // 0.0.0.0 → SILO_IP (bind hook) → 127.0.0.1 (getsockname hook)
     assert!(
-        stdout.contains(TEST_IP),
-        "expected bind to {TEST_IP}, got: {stdout}"
+        stdout.contains("127.0.0.1"),
+        "expected getsockname to return 127.0.0.1, got: {stdout}"
     );
     assert!(
         !stdout.contains("0.0.0.0"),
@@ -55,9 +61,10 @@ fn bind_localhost_is_rewritten() {
     let h = EbpfTestHarness::new("bind_localhost", Some(test_ip()), helper_path()).unwrap();
     let (stdout, _, success) = h.run_helper("bind_localhost");
     assert!(success, "helper failed");
+    // 127.0.0.1 → SILO_IP (bind) → 127.0.0.1 (getsockname): transparent round-trip
     assert!(
-        stdout.contains(TEST_IP),
-        "expected bind to {TEST_IP}, got: {stdout}"
+        stdout.contains("127.0.0.1"),
+        "expected transparent round-trip to 127.0.0.1, got: {stdout}"
     );
 }
 
@@ -69,10 +76,10 @@ fn bind_v6_any_is_rewritten() {
     let h = EbpfTestHarness::new("bind_v6_any", Some(test_ip()), helper_path()).unwrap();
     let (stdout, _, success) = h.run_helper("bind_v6_any");
     assert!(success, "helper failed");
-    let expected = format!("::ffff:{TEST_IP}");
+    // :: → ::ffff:SILO_IP (bind6) → ::1 (getsockname6): proves interception
     assert!(
-        stdout.contains(&expected),
-        "expected bind to {expected}, got: {stdout}"
+        stdout.contains("::1]"),
+        "expected getsockname to return [::1], got: {stdout}"
     );
 }
 
@@ -82,10 +89,10 @@ fn bind_v6_loopback_is_rewritten() {
     let h = EbpfTestHarness::new("bind_v6_loopback", Some(test_ip()), helper_path()).unwrap();
     let (stdout, _, success) = h.run_helper("bind_v6_loopback");
     assert!(success, "helper failed");
-    let expected = format!("::ffff:{TEST_IP}");
+    // ::1 → ::ffff:SILO_IP (bind6) → ::1 (getsockname6): transparent round-trip
     assert!(
-        stdout.contains(&expected),
-        "expected bind to {expected}, got: {stdout}"
+        stdout.contains("::1]"),
+        "expected transparent round-trip to [::1], got: {stdout}"
     );
 }
 
@@ -97,9 +104,11 @@ fn connect_localhost_is_rewritten() {
     let h = EbpfTestHarness::new("connect_localhost", Some(test_ip()), helper_path()).unwrap();
     let (stdout, _, success) = h.run_helper("connect_localhost");
     assert!(success, "helper failed");
+    // connect(127.0.0.1) → SILO_IP (connect hook)
+    // getpeername → 127.0.0.1 (getpeername hook): transparent round-trip
     assert!(
-        stdout.contains(TEST_IP),
-        "expected connect to {TEST_IP}, got: {stdout}"
+        stdout.contains("127.0.0.1"),
+        "expected getpeername to return 127.0.0.1, got: {stdout}"
     );
 }
 
@@ -112,10 +121,10 @@ fn sendmsg_and_recvmsg_reverse_maps() {
     let (stdout, _, success) = h.run_helper("sendmsg_recvmsg");
     assert!(success, "helper failed");
 
-    // bind(0.0.0.0) should be rewritten to SILO_IP
+    // bind(0.0.0.0) → SILO_IP (bind hook) → 127.0.0.1 (getsockname hook)
     assert!(
-        stdout.contains(&format!("bound={TEST_IP}:")),
-        "expected bind to {TEST_IP}, got: {stdout}"
+        stdout.contains("bound=127.0.0.1:"),
+        "expected getsockname to return 127.0.0.1, got: {stdout}"
     );
 
     // recvmsg source should be reverse-mapped from SILO_IP back to 127.0.0.1

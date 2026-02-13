@@ -28,6 +28,8 @@ const PROGRAM_NAMES: &[&str] = &[
     "silo_recvmsg6",
     "silo_getpeername4",
     "silo_getpeername6",
+    "silo_getsockname4",
+    "silo_getsockname6",
 ];
 
 static EBPF_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/silo-ebpf"));
@@ -124,8 +126,20 @@ impl Drop for EbpfTestHarness {
 pub fn can_run_ebpf_tests() -> bool {
     // Need valid eBPF bytecode (build.rs may create an empty stub on failure)
     if EBPF_BYTES.is_empty() {
+        eprintln!("SKIP: eBPF bytecode is empty (build may have failed)");
         return false;
     }
+
+    // Sanity-check: bytecode must be a valid ELF (starts with \x7fELF)
+    if EBPF_BYTES.len() < 4 || &EBPF_BYTES[..4] != b"\x7fELF" {
+        eprintln!(
+            "SKIP: eBPF bytecode is not valid ELF ({} bytes, magic: {:02x?})",
+            EBPF_BYTES.len(),
+            &EBPF_BYTES[..EBPF_BYTES.len().min(4)]
+        );
+        return false;
+    }
+
     // Need root or CAP_BPF + CAP_NET_ADMIN
     unsafe { libc::geteuid() == 0 }
 }

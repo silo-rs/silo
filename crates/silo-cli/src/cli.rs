@@ -52,4 +52,8 @@ pub enum Commands {
     /// Load and pin eBPF programs for rootless operation (requires sudo, Linux only)
     #[cfg(target_os = "linux")]
     SetupEbpf,
+
+    /// Remove pinned eBPF programs (requires sudo, Linux only)
+    #[cfg(target_os = "linux")]
+    TeardownEbpf,
 }

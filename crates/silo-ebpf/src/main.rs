@@ -11,8 +11,9 @@ use aya_ebpf::{
 /// Key: cgroup v2 ID (u64), Value: silo IP in network byte order (u32).
 /// Using a HashMap allows multiple concurrent silo sessions, each with its
 /// own cgroup and IP, to share the same pinned BPF programs.
+/// Max 1024 concurrent sessions; stale entries cleaned by `silo prune`.
 #[map]
-static SILO_CONFIG: HashMap<u64, u32> = HashMap::with_max_entries(256, 0);
+static SILO_CONFIG: HashMap<u64, u32> = HashMap::with_max_entries(1024, 0);
 
 // --- Constants ---
 
@@ -156,6 +157,19 @@ pub fn silo_getpeername4(ctx: SockAddrContext) -> i32 {
 
 #[cgroup_sock_addr(getpeername6)]
 pub fn silo_getpeername6(ctx: SockAddrContext) -> i32 {
+    reverse_ip6(&ctx)
+}
+
+// getsockname: reverse SILO_IP -> 127.0.0.1
+// Without this, server.address() style calls (e.g. Node.js) would
+// see the silo IP instead of 127.0.0.1 after bind rewriting.
+#[cgroup_sock_addr(getsockname4)]
+pub fn silo_getsockname4(ctx: SockAddrContext) -> i32 {
+    reverse_ip4(&ctx)
+}
+
+#[cgroup_sock_addr(getsockname6)]
+pub fn silo_getsockname6(ctx: SockAddrContext) -> i32 {
     reverse_ip6(&ctx)
 }
 

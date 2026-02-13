@@ -10,7 +10,6 @@ path = "src/main.rs"
 
 [dependencies]
 aya-ebpf = "0.1"
-aya-log-ebpf = "0.1"
 
 [profile.dev]
 opt-level = 2

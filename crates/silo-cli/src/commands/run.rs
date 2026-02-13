@@ -21,18 +21,24 @@ pub fn run(name: Option<&str>, command: &[String], quiet: bool) -> eyre::Result<
     // Select backend: eBPF on Linux if available, otherwise LD_PRELOAD
     #[cfg(target_os = "linux")]
     let (backend, ebpf_session) = {
-        let backend = crate::ebpf::select_backend();
-        let ebpf_session = match &backend {
+        let selected = crate::ebpf::select_backend();
+        match selected {
             silo::Backend::Ebpf => {
                 let session_id = format!("{}-{}", ctx.name(), ctx.ip());
-                Some(
-                    crate::ebpf::EbpfSession::new(&session_id, ctx.ip())
-                        .context("failed to set up eBPF session")?,
-                )
+                match crate::ebpf::EbpfSession::new(&session_id, ctx.ip()) {
+                    Ok(session) => (silo::Backend::Ebpf, Some(session)),
+                    Err(e) => {
+                        tracing::warn!("eBPF setup failed, falling back to LD_PRELOAD: {e:#}");
+                        let fallback = match find_bind_lib() {
+                            Ok(lib_path) => silo::Backend::LdPreload { lib_path },
+                            Err(_) => silo::Backend::None,
+                        };
+                        (fallback, None)
+                    }
+                }
             }
-            _ => None,
-        };
-        (backend, ebpf_session)
+            other => (other, None),
+        }
     };
 
     #[cfg(not(target_os = "linux"))]

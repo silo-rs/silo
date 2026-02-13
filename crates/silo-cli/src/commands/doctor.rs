@@ -123,17 +123,41 @@ fn check_ebpf(warnings: &mut usize) {
         *warnings += 1;
     }
 
+    // Embedded bytecode
+    let has_bytes = !crate::ebpf::embedded_bytes_empty();
+    if has_bytes {
+        ui::check_ok("ebpf bytecode", "embedded (built with nightly + bpf-linker)");
+    } else {
+        ui::check_info(
+            "ebpf bytecode",
+            "not embedded (build with nightly toolchain to enable)",
+        );
+    }
+
     // Pinned programs
-    let pin_path = Path::new("/sys/fs/bpf/silo/silo_bind4");
-    if pin_path.exists() {
-        ui::check_ok("ebpf", "programs pinned at /sys/fs/bpf/silo/");
+    let pin_base = Path::new("/sys/fs/bpf/silo");
+    if pin_base.join("silo_bind4").exists() {
+        let pinned = crate::ebpf::PROGRAM_NAMES
+            .iter()
+            .filter(|name| pin_base.join(name).exists())
+            .count();
+        let has_map = pin_base.join("SILO_CONFIG").exists();
+        ui::check_ok(
+            "ebpf pinned",
+            format!(
+                "{}/{} programs, config map: {}",
+                pinned,
+                crate::ebpf::PROGRAM_NAMES.len(),
+                if has_map { "yes" } else { "no" },
+            ),
+        );
     } else if crate::ebpf::ebpf_available() {
         ui::check_info(
-            "ebpf",
-            "available (run `sudo silo setup-ebpf` to pin programs for rootless use)",
+            "ebpf pinned",
+            "not pinned (run `sudo silo setup-ebpf` for rootless use)",
         );
     } else {
-        ui::check_info("ebpf", "not available (will use LD_PRELOAD backend)");
+        ui::check_info("ebpf pinned", "not available (will use LD_PRELOAD backend)");
     }
 }
 
