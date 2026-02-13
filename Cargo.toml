@@ -1,5 +1,6 @@
 [workspace]
 members = ["crates/*"]
+exclude = ["crates/silo-ebpf"]
 resolver = "2"
 
 [workspace.package]
@@ -31,6 +32,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # silo-bind deps
 libc = "0.2"
+
+# ebpf deps
+aya = "0.13"
 
 # dev deps
 tempfile = "3"

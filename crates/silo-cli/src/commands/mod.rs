@@ -4,3 +4,7 @@ pub mod ls;
 pub mod prune;
 pub(crate) mod query;
 pub mod run;
+#[cfg(target_os = "linux")]
+pub mod setup_ebpf;
+#[cfg(target_os = "linux")]
+pub mod teardown_ebpf;

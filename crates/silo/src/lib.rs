@@ -13,4 +13,4 @@ pub mod shebang;
 
 pub use context::Context;
 pub use error::Error;
-pub use session::{ActivateOptions, Session};
+pub use session::{ActivateOptions, Backend, Session};

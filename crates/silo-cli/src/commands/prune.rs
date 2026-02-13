@@ -144,5 +144,27 @@ pub fn run(all: bool, yes: bool) -> eyre::Result<()> {
         }
     }
 
+    // Clean up stale eBPF state (Linux only)
+    #[cfg(target_os = "linux")]
+    {
+        let cgroups_removed = crate::ebpf::prune_stale_cgroups();
+        if cgroups_removed > 0 {
+            eprintln!(
+                "  {} pruned {} stale cgroup(s)",
+                "✓".green(),
+                cgroups_removed
+            );
+        }
+
+        let map_removed = crate::ebpf::prune_config_map();
+        if map_removed > 0 {
+            eprintln!(
+                "  {} pruned {} stale config map entry(ies)",
+                "✓".green(),
+                map_removed
+            );
+        }
+    }
+
     Ok(())
 }

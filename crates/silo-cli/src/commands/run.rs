@@ -16,12 +16,43 @@ pub fn run(name: Option<&str>, command: &[String], quiet: bool) -> eyre::Result<
         );
     }
 
-    let bind_lib_path = find_bind_lib()?;
     let ctx = silo::Context::current(name)?;
+
+    // Select backend: eBPF on Linux if available, otherwise LD_PRELOAD
+    #[cfg(target_os = "linux")]
+    let (backend, ebpf_session) = {
+        let selected = crate::ebpf::select_backend();
+        match selected {
+            silo::Backend::Ebpf => {
+                let session_id = format!("{}-{}", ctx.name(), ctx.ip());
+                match crate::ebpf::EbpfSession::new(&session_id, ctx.ip()) {
+                    Ok(session) => (silo::Backend::Ebpf, Some(session)),
+                    Err(e) => {
+                        tracing::warn!("eBPF setup failed, falling back to LD_PRELOAD: {e:#}");
+                        let fallback = match find_bind_lib() {
+                            Ok(lib_path) => silo::Backend::LdPreload { lib_path },
+                            Err(_) => silo::Backend::None,
+                        };
+                        (fallback, None)
+                    }
+                }
+            }
+            other => (other, None),
+        }
+    };
+
+    #[cfg(not(target_os = "linux"))]
+    let backend = {
+        let bind_lib_path = find_bind_lib()?;
+        silo::Backend::LdPreload {
+            lib_path: bind_lib_path,
+        }
+    };
+
     let session = Session::activate(
         ctx,
         silo::ActivateOptions {
-            bind_lib: Some(bind_lib_path),
+            backend,
             ..Default::default()
         },
     )?;
@@ -29,11 +60,18 @@ pub fn run(name: Option<&str>, command: &[String], quiet: bool) -> eyre::Result<
     let quiet = quiet || std::env::var("SILO_QUIET").is_ok();
 
     if !quiet {
+        let backend_tag = match session.backend() {
+            silo::Backend::LdPreload { .. } => "preload",
+            #[cfg(target_os = "linux")]
+            silo::Backend::Ebpf => "ebpf",
+            silo::Backend::None => "none",
+        };
         eprintln!(
-            "{} {} {}",
+            "{} {} {} {}",
             ui::accent("silo"),
             "●".green(),
             ui::accent(session.name()).bold(),
+            format!("[{backend_tag}]").dimmed(),
         );
         eprintln!(
             "     {} {} {}",
@@ -43,9 +81,14 @@ pub fn run(name: Option<&str>, command: &[String], quiet: bool) -> eyre::Result<
         );
     }
 
+    #[cfg(target_os = "linux")]
+    return exec_with_interception(&session, &command[0], &command[1..], ebpf_session.as_ref());
+
+    #[cfg(not(target_os = "linux"))]
     exec_with_interception(&session, &command[0], &command[1..])
 }
 
+#[cfg(not(target_os = "linux"))]
 pub fn exec_with_interception(
     session: &Session,
     program: &str,
@@ -53,9 +96,6 @@ pub fn exec_with_interception(
 ) -> eyre::Result<()> {
     #[cfg(target_os = "macos")]
     let (program, args) = silo::shebang::resolve_program(program, args);
-
-    #[cfg(not(target_os = "macos"))]
-    let (program, args) = (program.to_string(), args.to_vec());
 
     #[cfg(target_os = "macos")]
     if silo::shebang::is_sip_protected(std::path::Path::new(&program)) {
@@ -77,6 +117,38 @@ pub fn exec_with_interception(
     let mut cmd = Command::new(&program);
     cmd.args(&args);
     session.apply(&mut cmd);
+
+    let err = cmd.exec();
+    Err(err).context(format!("failed to exec: {}", program))
+}
+
+#[cfg(target_os = "linux")]
+#[allow(unsafe_code)]
+pub fn exec_with_interception(
+    session: &Session,
+    program: &str,
+    args: &[String],
+    ebpf_session: Option<&crate::ebpf::EbpfSession>,
+) -> eyre::Result<()> {
+    let (program, args) = (program.to_string(), args.to_vec());
+
+    let mut cmd = Command::new(&program);
+    cmd.args(&args);
+
+    if let Some(ebpf) = ebpf_session {
+        // eBPF backend: set SILO_* env vars (but NOT LD_PRELOAD),
+        // then move into the cgroup before exec.
+        for (key, val) in session.context().env_vars() {
+            cmd.env(key, val);
+        }
+        // Move the current process into the cgroup. After exec(), the new
+        // process image inherits the cgroup membership, and all its children
+        // will too. No race condition because CommandExt::exec does not fork.
+        ebpf.add_pid(std::process::id())?;
+    } else {
+        // LD_PRELOAD backend: set all env vars including LD_PRELOAD.
+        session.apply(&mut cmd);
+    }
 
     let err = cmd.exec();
     Err(err).context(format!("failed to exec: {}", program))

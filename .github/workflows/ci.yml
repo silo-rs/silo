@@ -35,6 +35,48 @@ jobs:
       - run: cargo build -p silo-bind
       - run: cargo test --workspace
 
+  build-ebpf:
+    name: Build eBPF
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+      - name: Install bpf-linker
+        run: cargo +nightly install bpf-linker
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo +nightly build --manifest-path crates/silo-ebpf/Cargo.toml --target bpfel-unknown-none -Z build-std=core
+
+  test-ebpf:
+    name: Test eBPF (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+      - name: Install bpf-linker
+        run: cargo +nightly install bpf-linker
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build -p silo-bind
+      - name: Build eBPF tests
+        run: cargo test -p silo-ebpf-tests --no-run --message-format=json 2>/tmp/ebpf-build.log | tee /tmp/ebpf-build.json
+      - name: Show eBPF build log
+        if: always()
+        run: cat /tmp/ebpf-build.log || true
+      - name: Run eBPF tests as root
+        run: |
+          TEST_BIN=$(jq -r 'select(.executable != null and (.target.kind | contains(["test"]))) | .executable' /tmp/ebpf-build.json | head -1)
+          echo "Test binary: $TEST_BIN"
+          test -n "$TEST_BIN" || { echo "ERROR: no test binary found"; exit 1; }
+          sudo -E "$TEST_BIN" --test-threads=1
+
   test-linux-distros:
     name: Test (${{ matrix.distro }})
     runs-on: ubuntu-latest

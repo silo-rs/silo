@@ -9,6 +9,18 @@ use crate::context::Context;
 use crate::error::{Error, Result};
 use crate::{hosts, ip};
 
+/// Syscall interception backend.
+#[derive(Debug, Clone)]
+pub enum Backend {
+    /// LD_PRELOAD (Linux) or DYLD_INSERT_LIBRARIES (macOS).
+    LdPreload { lib_path: PathBuf },
+    /// eBPF cgroup/sock_addr programs (Linux only).
+    #[cfg(target_os = "linux")]
+    Ebpf,
+    /// No interception — environment-only mode.
+    None,
+}
+
 /// Controls which side effects [`Session::activate`] performs.
 ///
 /// All options default to enabled, matching the behavior of
@@ -19,11 +31,9 @@ pub struct ActivateOptions {
     pub ip_alias: bool,
     /// Add/update an entry in `/etc/hosts` (requires sudo).
     pub hosts_entry: bool,
-    /// Bind library path. When `Some`, [`Session::env`] and [`Session::apply`]
-    /// will include `LD_PRELOAD` / `DYLD_INSERT_LIBRARIES`.
-    ///
-    /// Use [`find_bind_lib`] to auto-discover, or supply a known path directly.
-    pub bind_lib: Option<PathBuf>,
+    /// Interception backend. When [`Backend::LdPreload`], [`Session::env`]
+    /// and [`Session::apply`] will include `LD_PRELOAD` / `DYLD_INSERT_LIBRARIES`.
+    pub backend: Backend,
 }
 
 impl Default for ActivateOptions {
@@ -31,7 +41,7 @@ impl Default for ActivateOptions {
         Self {
             ip_alias: true,
             hosts_entry: true,
-            bind_lib: None,
+            backend: Backend::None,
         }
     }
 }
@@ -42,7 +52,10 @@ impl ActivateOptions {
         Self {
             ip_alias: true,
             hosts_entry: true,
-            bind_lib: find_bind_lib().ok(),
+            backend: match find_bind_lib() {
+                Ok(lib_path) => Backend::LdPreload { lib_path },
+                Err(_) => Backend::None,
+            },
         }
     }
 
@@ -51,14 +64,14 @@ impl ActivateOptions {
         Self {
             ip_alias: false,
             hosts_entry: false,
-            bind_lib: None,
+            backend: Backend::None,
         }
     }
 }
 
 pub struct Session {
     ctx: Context,
-    bind_lib_path: Option<PathBuf>,
+    backend: Backend,
 }
 
 impl Session {
@@ -89,11 +102,11 @@ impl Session {
     /// Create a session from a pre-resolved [`Context`], performing only
     /// the side effects specified in `opts`.
     ///
-    /// # Bind library
+    /// # Backend
     ///
-    /// If `opts.bind_lib` is `false`, the bind library is not located.
-    /// [`Session::env`] and [`Session::apply`] will still work but will
-    /// not include `DYLD_INSERT_LIBRARIES` / `LD_PRELOAD`.
+    /// If `opts.backend` is [`Backend::None`], [`Session::env`] and
+    /// [`Session::apply`] will still work but will not include
+    /// `DYLD_INSERT_LIBRARIES` / `LD_PRELOAD`.
     pub fn activate(ctx: Context, opts: ActivateOptions) -> Result<Self> {
         if opts.ip_alias {
             ip::add_alias(ctx.ip())?;
@@ -105,7 +118,7 @@ impl Session {
         }
         Ok(Self {
             ctx,
-            bind_lib_path: opts.bind_lib,
+            backend: opts.backend,
         })
     }
 
@@ -114,10 +127,15 @@ impl Session {
         &self.ctx
     }
 
+    /// The active interception backend.
+    pub fn backend(&self) -> &Backend {
+        &self.backend
+    }
+
     /// All environment variables needed to run a command under this session.
     ///
     /// Includes `SILO_IP`, `SILO_NAME`, `SILO_DIR`, `SILO_HOST`, and
-    /// `DYLD_INSERT_LIBRARIES` / `LD_PRELOAD` (if the bind library was located).
+    /// `DYLD_INSERT_LIBRARIES` / `LD_PRELOAD` (when using [`Backend::LdPreload`]).
     pub fn env(&self) -> HashMap<String, String> {
         let mut env = self.ctx.env_vars();
         if let Some((key, val)) = self.injection_env() {
@@ -134,7 +152,10 @@ impl Session {
     }
 
     fn injection_env(&self) -> Option<(&'static str, String)> {
-        let bind_lib_path = self.bind_lib_path.as_ref()?;
+        let lib_path = match &self.backend {
+            Backend::LdPreload { lib_path } => lib_path,
+            _ => return None,
+        };
 
         #[cfg(target_os = "macos")]
         let key = "DYLD_INSERT_LIBRARIES";
@@ -142,8 +163,8 @@ impl Session {
         let key = "LD_PRELOAD";
 
         let val = match std::env::var(key) {
-            Ok(existing) => format!("{}:{}", bind_lib_path.display(), existing),
-            Err(_) => bind_lib_path.display().to_string(),
+            Ok(existing) => format!("{}:{}", lib_path.display(), existing),
+            Err(_) => lib_path.display().to_string(),
         };
         Some((key, val))
     }
