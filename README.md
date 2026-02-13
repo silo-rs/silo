@@ -9,25 +9,13 @@
   <img src="demo.gif" width="100%" />
 </p>
 
-## Why
-
-You're running 3 AI agents on 3 features. All need `localhost:3000`. Port taken.
-
-Or maybe it's just you, switching between branches. You know the drill -- `lsof -i :3000`, find the PID, `kill -9`, try again.
-
-| Approach              | Problem                                   |
-| --------------------- | ----------------------------------------- |
-| Change ports manually | Requires code/config changes per instance |
-| Docker                | Heavy, slow, breaks native toolchains     |
-| Run one at a time     | Kills your workflow                       |
-
-silo takes a different approach: intercept `bind()` at the syscall level and give each directory its own loopback IP. Your app calls `bind("0.0.0.0", 3000)` -- silo rewrites it to `bind("127.1.x.x", 3000)` before it hits the kernel. No code changes.
-
-## Quick start
+## Install
 
 ```sh
 curl -fsSL https://setup.silo.rs | sh
 ```
+
+## Quick start
 
 ```sh
 cd ~/projects/acme
@@ -51,22 +39,25 @@ Both on port 3000. No conflict. Each gets its own IP and hostname.
 
 ## How it works
 
+Each project directory gets a deterministic loopback IP (`127.1.x.x`). When your app binds to `localhost`, silo transparently rewrites it to that IP. The IP is stable across reboots.
+
 ```
-your app → bind("0.0.0.0:3000") → [ silo intercepts ] → bind("127.1.42.7:3000") ✅
+your app → bind("0.0.0.0:3000") → [ silo ] → bind("127.1.42.7:3000") ✅
 ```
 
-`silo` does four things:
+## Commands
 
-1. **Computes a deterministic IP** from your git root path (FNV-1a hash → `127.1.x.x`)
-2. **Creates a loopback alias** for that IP (`ifconfig lo0 alias` / `ip addr add`)
-3. **Registers a hostname** in `/etc/hosts` (e.g. `main.myapp.silo` → `127.1.x.x`)
-4. **Injects a shared library** (`DYLD_INSERT_LIBRARIES` / `LD_PRELOAD`) that rewrites `bind()`, `connect()`, `getaddrinfo()`, `gethostbyname()`, `sendto()`, and more to use that IP
-
-The IP is a pure function of your directory path -- deterministic and stable across reboots.
+| Command       | Description                                  |
+| ------------- | -------------------------------------------- |
+| `silo <cmd>`  | Run command with transparent IP isolation    |
+| `silo ip`     | Show the resolved IP for current directory   |
+| `silo ls`     | List active silo sessions                    |
+| `silo prune`  | Remove unused aliases and /etc/hosts entries |
+| `silo doctor` | Diagnose environment issues                  |
 
 ## Environment variables
 
-These are automatically set inside every silo session:
+Automatically set inside every silo session:
 
 | Variable    | Description               | Example                    |
 | ----------- | ------------------------- | -------------------------- |
@@ -74,78 +65,3 @@ These are automatically set inside every silo session:
 | `SILO_NAME` | Sanitized branch name     | `feature-auth`             |
 | `SILO_DIR`  | Git root path             | `/home/user/my-app`        |
 | `SILO_HOST` | Hostname                  | `feature-auth.my-app.silo` |
-
-## Commands
-
-| Command       | Description                                |
-| ------------- | ------------------------------------------ |
-| `silo <cmd>`  | Run command with transparent IP isolation  |
-| `silo ip`     | Show the resolved IP for current directory |
-| `silo ls`     | List active silo sessions                  |
-| `silo prune`  | Remove unused aliases and /etc/hosts entries |
-| `silo doctor` | Diagnose environment issues                |
-
-### Options
-
-```
-silo [OPTIONS] <COMMAND>...
-
-Options:
-  -n, --name <NAME>   Override name (default: git branch)
-  -q, --quiet         Suppress the silo banner
-```
-
-`silo run <cmd>` also works as an explicit form.
-
-## Deep dive
-
-### What gets rewritten
-
-| Syscall                              | Original address                 | Rewritten to | Why                                                |
-| ------------------------------------ | -------------------------------- | ------------ | -------------------------------------------------- |
-| `bind()`                             | `0.0.0.0` or `127.0.0.1`         | `SILO_IP`    | Server listens on its own loopback IP              |
-| `connect()`                          | `127.0.0.1`                      | `SILO_IP`    | Client talks to its own server, not someone else's |
-| `getaddrinfo()`                      | Results resolving to `127.0.0.1` | `SILO_IP`    | DNS-based localhost lookups get the same treatment |
-| `gethostbyname()` / `gethostbyname2()` | Results resolving to `127.0.0.1` | `SILO_IP`    | Legacy DNS lookups don't leak to the wrong IP      |
-| `sendto()`                           | `0.0.0.0` or `127.0.0.1`         | `SILO_IP`    | UDP traffic goes to the right place                |
-| `sendmsg()`                          | `0.0.0.0` or `127.0.0.1`         | `SILO_IP`    | Datagram messages go to the right place            |
-| `getifaddrs()` (macOS)               | Other silo aliases               | Hidden       | Each session only sees its own loopback alias      |
-
-On macOS, IPv6 sockets binding to `::` or `::1` are **downgraded to IPv4** and rewritten to `SILO_IP`. On Linux, they're rewritten to the IPv4-mapped IPv6 address (`::ffff:SILO_IP`).
-
-Anything else -- specific IPs like `192.168.x.x`, Unix domain sockets, non-loopback addresses -- passes through untouched.
-
-### Multi-repo services
-
-In a monorepo, all services share the same `SILO_IP` -- cross-service `localhost` calls just work.
-
-For separate repos (e.g. `frontend` + `backend`), use `.silo` hostnames as service discovery. Each silo session registers a hostname in `/etc/hosts` with the format `{branch}.{repo}.silo`:
-
-```sh
-# frontend repo's .env
-BACKEND_URL=http://${SILO_NAME}.backend.silo:4000
-```
-
-On the `main` branch this resolves to `main.backend.silo` → the backend's silo IP. Switch to `feature-auth` and it becomes `feature-auth.backend.silo` -- automatically pointing to the right instance.
-
-This works because silo only rewrites `127.0.0.1` -- connections to other silo IPs (like `127.1.x.x` resolved from a `.silo` hostname) pass through untouched.
-
-### Edge cases
-
-**Statically linked binaries**
-
-`DYLD_INSERT_LIBRARIES` / `LD_PRELOAD` only works with dynamically linked binaries. Statically compiled programs (common in Go) bypass the interception entirely. For Go specifically, compile with `CGO_ENABLED=1` to use libc, or configure the app to bind to `$SILO_IP` directly.
-
-**macOS System Integrity Protection (SIP)**
-
-macOS prevents library injection into system binaries under `/usr/bin`, `/bin`, `/sbin`. Silo handles this automatically by detecting SIP-protected paths and finding non-SIP alternatives (e.g. Homebrew-installed `bash` instead of `/bin/bash`).
-
-### Debugging
-
-Set `SILO_BIND_DEBUG=1` to see every intercepted syscall:
-
-```sh
-SILO_BIND_DEBUG=1 silo npm run dev
-# [silo-bind] loaded pid=12345 SILO_IP=127.1.42.7
-# [silo-bind] pid=12345 bind fd=7 family=2 port=3000 SILO_IP=127.1.42.7
-```
