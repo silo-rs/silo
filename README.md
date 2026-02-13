@@ -17,32 +17,12 @@ curl -fsSL https://setup.silo.rs | sh
 
 ## Quick start
 
-<table>
-<tr>
-<td>
-
 ```sh
-~/acme (main) $ silo npm run dev
+silo npm run dev
 # silo ● main
-#      127.1.42.7 · main.acme.silo
+#      127.1.42.7 · main.repo.silo
 # Listening on http://localhost:3000
 ```
-
-</td>
-<td>
-
-```sh
-~/acme (feature) $ silo npm run dev
-# silo ● feature
-#      127.1.183.12 · feature.acme.silo
-# Listening on http://localhost:3000
-```
-
-</td>
-</tr>
-</table>
-
-Both on port 3000. No conflict.
 
 ## How it works
 
