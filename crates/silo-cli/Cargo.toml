@@ -25,5 +25,3 @@ tracing-subscriber = { workspace = true }
 aya = { workspace = true }
 libc = { workspace = true }
 
-[target.'cfg(target_os = "linux")'.build-dependencies]
-aya-build = { workspace = true }

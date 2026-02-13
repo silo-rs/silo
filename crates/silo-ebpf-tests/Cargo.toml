@@ -11,8 +11,6 @@ libc = { workspace = true }
 aya = { workspace = true }
 eyre = { workspace = true }
 
-[target.'cfg(target_os = "linux")'.build-dependencies]
-aya-build = { workspace = true }
 
 [[bin]]
 name = "ebpf-helper"
