@@ -122,6 +122,10 @@ impl Drop for EbpfTestHarness {
 
 /// Check if we have the capabilities needed to run eBPF tests.
 pub fn can_run_ebpf_tests() -> bool {
+    // Need valid eBPF bytecode (build.rs may create an empty stub on failure)
+    if EBPF_BYTES.is_empty() {
+        return false;
+    }
     // Need root or CAP_BPF + CAP_NET_ADMIN
     unsafe { libc::geteuid() == 0 }
 }

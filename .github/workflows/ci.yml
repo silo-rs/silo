@@ -65,6 +65,7 @@ jobs:
         run: cargo +nightly install bpf-linker
       - uses: Swatinem/rust-cache@v2
       - run: cargo build -p silo-bind
+      - run: cargo test -p silo-ebpf-tests --no-run
       - run: sudo -E $(which cargo) test -p silo-ebpf-tests -- --test-threads=1
 
   test-linux-distros:
