@@ -64,7 +64,7 @@ pub fn run(name: Option<&str>, command: &[String], quiet: bool) -> eyre::Result<
         );
     }
 
-    let mut cmd = Command::new(&program);
+    let mut cmd = Command::new(program.clone());
     cmd.args(args);
     session.prepare(&mut cmd)?;
 

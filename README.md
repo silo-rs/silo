@@ -26,7 +26,7 @@ silo npm run dev
 
 ## How it works
 
-Each project directory gets a deterministic loopback IP (`127.1.x.x`). When your app binds to `localhost`, silo transparently rewrites it to that IP. The IP is stable across reboots.
+Prefix any command with `silo`. Each project gets its own localhost IP, so the same port never conflicts, even across branches.
 
 ```
 your app → bind("0.0.0.0:3000") → [ silo ] → bind("127.1.42.7:3000") ✅
