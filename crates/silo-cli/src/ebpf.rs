@@ -153,8 +153,9 @@ impl EbpfSession {
         // Open the pinned config map and write our (cgroup_id, silo_ip) entry
         let map_data = aya::maps::MapData::from_pin(PathBuf::from(PIN_BASE).join("SILO_CONFIG"))
             .context("failed to open pinned SILO_CONFIG map")?;
+        let map = aya::maps::Map::HashMap(map_data);
         let mut config: HashMap<_, u64, u32> =
-            HashMap::try_from(map_data).context("failed to create HashMap from pinned map")?;
+            HashMap::try_from(map).context("failed to create HashMap from pinned map")?;
         config
             .insert(cgroup_id, ip_nbo, 0)
             .context("failed to write silo IP to pinned BPF map")?;
