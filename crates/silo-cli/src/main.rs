@@ -13,6 +13,7 @@ use colored::Colorize;
 
 const KNOWN_SUBCOMMANDS: &[&str] = &[
     "run",
+    "env",
     "ip",
     "ls",
     "doctor",
@@ -78,6 +79,7 @@ fn run() -> eyre::Result<()> {
             emit_json,
             command,
         } => commands::run::run(name.as_deref(), ip, &command, quiet, emit_json),
+        Commands::Env { name, ip, json } => commands::env::run(name.as_deref(), ip, json),
         Commands::Ip { json } => commands::ip::run(json),
         Commands::Doctor { json } => commands::doctor::run(json),
         Commands::Ls { json } => commands::ls::run(json),

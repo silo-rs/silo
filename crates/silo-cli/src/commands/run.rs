@@ -85,7 +85,7 @@ pub fn run(
     Err(err).context(format!("failed to exec: {}", program))
 }
 
-fn make_backend(
+pub(crate) fn make_backend(
     #[allow(unused_variables)] ctx: &silo::Context,
 ) -> eyre::Result<Box<dyn silo::BackendSession>> {
     #[cfg(target_os = "linux")]

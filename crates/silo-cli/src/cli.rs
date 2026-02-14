@@ -37,6 +37,21 @@ pub enum Commands {
         command: Vec<String>,
     },
 
+    /// Print environment variables for shell eval or programmatic use
+    Env {
+        /// Override name (default: git branch)
+        #[arg(long, short = 'n')]
+        name: Option<String>,
+
+        /// Override IP address (must be in 127.0.0.0/8)
+        #[arg(long)]
+        ip: Option<std::net::Ipv4Addr>,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Show the resolved IP for the current directory
     Ip {
         /// Output as JSON

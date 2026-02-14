@@ -1,4 +1,5 @@
 pub mod doctor;
+pub mod env;
 pub mod ip;
 pub mod ls;
 pub mod prune;
