@@ -1,10 +1,3 @@
-//! Helper binary for silo-bind integration tests.
-//!
-//! This binary is spawned by the test harness with DYLD_INSERT_LIBRARIES or
-//! LD_PRELOAD pointing at libsilo_bind, and SILO_IP set to a test address.
-//! It performs a requested syscall and prints the resulting address to stdout
-//! so the test can verify interception worked correctly.
-
 use std::env;
 use std::io;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, TcpListener, UdpSocket};

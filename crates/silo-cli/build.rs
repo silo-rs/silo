@@ -74,7 +74,6 @@ fn build_ebpf(workspace_dir: &std::path::Path, out_dir: &std::path::Path) {
     ]);
     cmd.arg(&target_dir);
 
-    // RUSTFLAGS: set bpf_target_arch cfg, debuginfo, and BTF linking
     let sep = "\x1f";
     let rustflags =
         format!("--cfg=bpf_target_arch=\"{target_arch}\"{sep}-Cdebuginfo=2{sep}-Clink-arg=--btf");

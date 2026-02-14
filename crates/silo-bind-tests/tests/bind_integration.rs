@@ -170,24 +170,17 @@ fn invalid_silo_ip_passes_through() {
     );
 }
 
-// ── IPv6 in-place rewrite (macOS only) ──
-
-/// Dual-stack IPv6 socket (IPV6_V6ONLY=0, the default) with SO_REUSEADDR and
-/// O_NONBLOCK set, bound to [::]:0. With in-place rewrite, the socket stays
-/// AF_INET6 and options are naturally preserved (no fd replacement needed).
 #[test]
 #[cfg(target_os = "macos")]
 fn bind_v6_preserves_socket_options() {
     let (stdout, _, success) = run_helper("bind_v6_opts", Some(TEST_IP));
     assert!(success, "helper failed");
 
-    // Socket should stay IPv6 (in-place rewrite to ::ffff:SILO_IP)
     assert!(
         stdout.contains("family=v6"),
         "expected in-place IPv6 rewrite (dual-stack), got: {stdout}"
     );
 
-    // SO_REUSEADDR must be preserved (trivially, since fd is untouched)
     let reuseaddr_line = stdout
         .lines()
         .find(|l| l.starts_with("reuseaddr="))
@@ -200,15 +193,12 @@ fn bind_v6_preserves_socket_options() {
         .expect("bad reuseaddr value");
     assert!(reuseaddr_val != 0, "SO_REUSEADDR was lost (got 0)");
 
-    // O_NONBLOCK must be preserved
     assert!(
         stdout.contains("nonblock=true"),
         "O_NONBLOCK was lost, got: {stdout}"
     );
 }
 
-/// Dual-stack IPv6 socket bound to [::]:0 should stay AF_INET6 with
-/// ::ffff:SILO_IP, and IPv4 clients must be able to connect through it.
 #[test]
 #[cfg(target_os = "macos")]
 fn bind_v6_dualstack_stays_ipv6() {
@@ -232,7 +222,6 @@ fn bind_v6_dualstack_stays_ipv6() {
     );
 }
 
-/// IPV6_V6ONLY=1 socket must fall back to replace_with_ipv4, becoming AF_INET4.
 #[test]
 #[cfg(target_os = "macos")]
 fn bind_v6_v6only_falls_back_to_ipv4() {
@@ -248,9 +237,6 @@ fn bind_v6_v6only_falls_back_to_ipv4() {
     );
 }
 
-/// kqueue registration on an IPv6 fd must survive bind rewrite. This is the
-/// decisive test: replace_with_ipv4 (dup2) would invalidate kqueue, while
-/// in-place rewrite preserves it.
 #[test]
 #[cfg(target_os = "macos")]
 fn bind_v6_kqueue_survives_rewrite() {
@@ -261,8 +247,6 @@ fn bind_v6_kqueue_survives_rewrite() {
         "kqueue should fire after in-place rewrite (fd preserved), got: {stdout}"
     );
 }
-
-// ── shell-mediated tests (macOS SIP scenario) ──
 
 #[test]
 #[cfg(target_os = "macos")]

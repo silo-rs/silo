@@ -2,6 +2,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use eyre::{Context, bail};
+use silo::hosts::{HOSTS_PATH, HOSTS_TMP};
 
 const SUDOERS_PATH: &str = "/etc/sudoers.d/silo";
 
@@ -57,10 +58,12 @@ fn install() -> eyre::Result<()> {
 fn sudoers_rules() -> String {
     #[cfg(target_os = "macos")]
     {
-        "%admin ALL=(root) NOPASSWD: /sbin/ifconfig lo0 alias 127.* netmask 255.0.0.0\n\
-         %admin ALL=(root) NOPASSWD: /sbin/ifconfig lo0 -alias 127.*\n\
-         %admin ALL=(root) NOPASSWD: /usr/bin/tee /etc/hosts\n"
-            .to_string()
+        format!(
+            "%admin ALL=(root) NOPASSWD: /sbin/ifconfig lo0 alias 127.* netmask 255.0.0.0\n\
+             %admin ALL=(root) NOPASSWD: /sbin/ifconfig lo0 -alias 127.*\n\
+             %admin ALL=(root) NOPASSWD: /usr/bin/tee {HOSTS_TMP}\n\
+             %admin ALL=(root) NOPASSWD: /bin/mv -f {HOSTS_TMP} {HOSTS_PATH}\n"
+        )
     }
 
     #[cfg(target_os = "linux")]
@@ -70,10 +73,14 @@ fn sudoers_rules() -> String {
         let tee_cmd = which::which("tee")
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|_| "/usr/bin/tee".to_string());
+        let mv_cmd = which::which("mv")
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| "/usr/bin/mv".to_string());
         format!(
             "{group} ALL=(root) NOPASSWD: {ip_cmd} addr add 127.*/8 dev lo\n\
              {group} ALL=(root) NOPASSWD: {ip_cmd} addr del 127.*/8 dev lo\n\
-             {group} ALL=(root) NOPASSWD: {tee_cmd} /etc/hosts\n"
+             {group} ALL=(root) NOPASSWD: {tee_cmd} {HOSTS_TMP}\n\
+             {group} ALL=(root) NOPASSWD: {mv_cmd} -f {HOSTS_TMP} {HOSTS_PATH}\n"
         )
     }
 }
@@ -115,6 +122,23 @@ fn admin_group_from_etc_group(content: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sudoers_rules_match_hosts_paths() {
+        let rules = sudoers_rules();
+        assert!(
+            rules.contains(HOSTS_TMP),
+            "sudoers rules must allow tee to {HOSTS_TMP}, got:\n{rules}"
+        );
+        assert!(
+            rules.contains(&format!("{HOSTS_TMP} {HOSTS_PATH}")),
+            "sudoers rules must allow mv from {HOSTS_TMP} to {HOSTS_PATH}, got:\n{rules}"
+        );
+        assert!(
+            !rules.contains(&format!("tee {HOSTS_PATH}\n")),
+            "sudoers must not allow direct tee to {HOSTS_PATH} (use atomic write via {HOSTS_TMP}), got:\n{rules}"
+        );
+    }
 
     #[test]
     fn admin_group_debian_has_sudo() {

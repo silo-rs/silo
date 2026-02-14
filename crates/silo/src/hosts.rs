@@ -10,10 +10,10 @@ use tracing::debug;
 
 use crate::error::{Error, Result};
 
-const HOSTS_PATH: &str = "/etc/hosts";
+pub const HOSTS_PATH: &str = "/etc/hosts";
 const BEGIN_MARKER: &str = "# BEGIN silo managed block - do not edit";
 const END_MARKER: &str = "# END silo managed block";
-const HOSTS_TMP: &str = "/etc/.hosts.silo.tmp";
+pub const HOSTS_TMP: &str = "/etc/.hosts.silo.tmp";
 const LOCK_PATH: &str = "/tmp/silo-hosts.lock";
 
 pub fn ensure_entry(ip: Ipv4Addr, hostname: &str, dir: &Path) -> Result<()> {
