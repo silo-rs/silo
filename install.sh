@@ -14,7 +14,7 @@ fi
 
 echo "Installing silo binary..."
 
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/silo-rs/silo/releases/latest/download/silo-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/silo-rs/silo/releases/latest/download/silo-cli-installer.sh | sh
 
 # --- 2. Configure passwordless sudo for loopback aliases ---
 
