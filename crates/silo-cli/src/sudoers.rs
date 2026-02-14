@@ -228,6 +228,7 @@ fn admin_group_from_etc_group(content: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn sudoers_rules_use_silo_hosts_helper() {
@@ -303,8 +304,11 @@ mod tests {
 
     #[test]
     fn path_security_detects_non_root_owner() {
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        let warnings = check_path_security(tmp.path());
+        let dir = tempfile::tempdir_in("/var/tmp").unwrap();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+        let bin_path = dir.path().join("silo");
+        std::fs::write(&bin_path, b"fake").unwrap();
+        let warnings = check_path_security(&bin_path);
         assert!(
             warnings.iter().any(|w| w.contains("not root")),
             "should detect non-root owner, got: {warnings:?}"
@@ -313,7 +317,8 @@ mod tests {
 
     #[test]
     fn path_security_checks_parent_directories() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir_in("/var/tmp").unwrap();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
         let bin_path = dir.path().join("silo");
         std::fs::write(&bin_path, b"fake").unwrap();
         let warnings = check_path_security(&bin_path);
@@ -328,26 +333,25 @@ mod tests {
 
     #[test]
     fn path_security_root_path_ok() {
-        let warnings = check_path_security(std::path::Path::new("/usr/local/bin/silo"));
-        let root_warnings: Vec<_> = warnings
+        let warnings = check_path_security(std::path::Path::new("/usr/bin/true"));
+        let filtered: Vec<_> = warnings
             .iter()
             .filter(|w| {
-                w.contains("/usr/local/bin/silo")
-                    || w.contains("/usr/local/bin ")
-                    || w.contains("/usr/local ")
+                w.contains("/usr/bin/true")
+                    || w.contains("/usr/bin ")
                     || w.contains("/usr ")
             })
             .collect();
         assert!(
-            root_warnings.is_empty(),
-            "root-owned paths should not warn, got: {root_warnings:?}"
+            filtered.is_empty(),
+            "root-owned paths should not warn, got: {filtered:?}"
         );
     }
 
     #[test]
     fn path_security_world_writable() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir_in("/var/tmp").unwrap();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
         let bin_path = dir.path().join("silo");
         std::fs::write(&bin_path, b"fake").unwrap();
         std::fs::set_permissions(&bin_path, std::fs::Permissions::from_mode(0o777)).unwrap();

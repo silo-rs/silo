@@ -26,14 +26,7 @@ silo npm run dev
 
 ## Why not just use a different port?
 
-You can, until you can't.
-
-- **Hardcoded ports**: Many frameworks default to `:3000`, `:5432`, `:6379`. Changing one means changing every service that connects to it.
-- **Multi-service hell**: A frontend hitting `localhost:3000/api` doesn't know your backend moved to `:3001` on this branch.
-- **Agent workflows**: When 5 Claude Code sessions spin up worktrees simultaneously, nobody is manually assigning ports.
-- **It doesn't compose**: `PORT=3001` works for one app. It falls apart with Turborepo, Docker Compose, or any process manager spawning multiple services.
-
-Silo gives each branch its own IP, so every service keeps its default port. Nothing to change, nothing to remember.
+`PORT=3001` works for one app. It falls apart when your frontend hardcodes `localhost:3000/api`, when Turborepo spawns five services, or when multiple agents spin up worktrees at the same time. Silo gives each branch its own IP, so every service keeps its default port.
 
 ## How it works
 
