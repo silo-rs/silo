@@ -212,16 +212,13 @@ fn pinned_programs_exist() -> bool {
     Path::new(PIN_BASE).join("silo_bind4").exists()
 }
 
-/// Result of backend auto-detection.
 pub enum SelectedBackend {
     Ebpf,
     Preload(PathBuf),
     None,
 }
 
-/// Select the appropriate backend based on environment and availability.
 pub fn select_backend() -> SelectedBackend {
-    // Check for explicit override
     if let Ok(val) = std::env::var("SILO_BACKEND") {
         match val.as_str() {
             "ebpf" => {
@@ -254,26 +251,16 @@ pub fn select_backend() -> SelectedBackend {
     }
 }
 
-// --- Setup (pinning) ---
-
-/// Load BPF programs and pin them to `/sys/fs/bpf/silo/`.
-///
-/// Idempotent: removes any existing pins before re-pinning.
-/// This allows subsequent `silo run` invocations to attach programs
-/// without root privileges.
 pub fn setup_pinned() -> eyre::Result<()> {
     eyre::ensure!(
         !EBPF_BYTES.is_empty(),
         "no embedded eBPF bytecode. Rebuild silo with nightly toolchain and bpf-linker installed"
     );
 
-    // Remove stale pins first for idempotency
     if pinned_programs_exist() {
         teardown_pinned_inner();
     }
 
-    // Create cgroup base directory and delegate to the invoking user so that
-    // subsequent `silo run` invocations work without root.
     setup_cgroup_base().context("failed to set up cgroup delegation")?;
 
     fs::create_dir_all(PIN_BASE).with_context(|| format!("failed to create {PIN_BASE}"))?;
@@ -293,20 +280,17 @@ pub fn setup_pinned() -> eyre::Result<()> {
             .with_context(|| format!("failed to pin BPF program {name}"))?;
     }
 
-    // Pin the config map too
     let map = bpf
         .map_mut("SILO_CONFIG")
         .context("BPF map SILO_CONFIG not found")?;
     map.pin(PathBuf::from(PIN_BASE).join("SILO_CONFIG"))
         .context("failed to pin SILO_CONFIG map")?;
 
-    // Allow non-root users to open pinned programs/maps (0o755 on dir, 0o644 on files)
     set_pin_permissions();
 
     Ok(())
 }
 
-/// Remove pinned BPF programs and map from `/sys/fs/bpf/silo/`.
 pub fn teardown_pinned() -> eyre::Result<()> {
     eyre::ensure!(
         pinned_programs_exist(),
@@ -316,8 +300,6 @@ pub fn teardown_pinned() -> eyre::Result<()> {
     Ok(())
 }
 
-/// Best-effort: set permissions so non-root users can attach pinned programs.
-/// Uses SUDO_UID/SUDO_GID to restrict map writes to the invoking user's group.
 fn set_pin_permissions() {
     use std::os::unix::fs::PermissionsExt;
     let (uid, gid) = sudo_caller_ids();
@@ -332,14 +314,11 @@ fn set_pin_permissions() {
         );
     }
 
-    // Config map: group read/write only (NOT world-writable).
-    // Without this, any local user could redirect another session's traffic.
     let config_path = PathBuf::from(PIN_BASE).join("SILO_CONFIG");
     let _ = fs::set_permissions(&config_path, fs::Permissions::from_mode(0o660));
     let _ = chown_path(&config_path, uid, gid);
 }
 
-/// Best-effort removal of all pinned entries.
 fn teardown_pinned_inner() {
     for name in PROGRAM_NAMES {
         let _ = fs::remove_file(PathBuf::from(PIN_BASE).join(name));
@@ -348,8 +327,6 @@ fn teardown_pinned_inner() {
     let _ = fs::remove_dir(PIN_BASE);
 }
 
-/// Open the pinned SILO_CONFIG map and remove entries whose cgroup no longer exists.
-/// Returns the number of entries removed.
 pub fn prune_config_map() -> usize {
     if !pinned_programs_exist() {
         return 0;
@@ -364,8 +341,6 @@ pub fn prune_config_map() -> usize {
         return 0;
     };
 
-    // Build a set of live cgroup inode IDs (O(m)), then filter map keys (O(n)).
-    // This avoids the previous O(n×m) scan per key.
     let live_cgroups = live_cgroup_ids(Path::new(CGROUP_BASE));
     let stale_keys: Vec<u64> = config
         .keys()
@@ -380,8 +355,6 @@ pub fn prune_config_map() -> usize {
     count
 }
 
-/// Collect inode IDs of all live cgroup directories (those with active processes).
-/// Returns a HashSet for O(1) lookups, making the overall prune O(n+m) instead of O(n×m).
 fn live_cgroup_ids(base: &Path) -> HashSet<u64> {
     let Ok(entries) = fs::read_dir(base) else {
         return HashSet::new();
@@ -393,7 +366,6 @@ fn live_cgroup_ids(base: &Path) -> HashSet<u64> {
             if !path.is_dir() {
                 return None;
             }
-            // Only consider cgroups with active processes
             let procs = path.join("cgroup.procs");
             let has_procs = fs::read_to_string(&procs)
                 .map(|s| !s.trim().is_empty())
@@ -406,20 +378,12 @@ fn live_cgroup_ids(base: &Path) -> HashSet<u64> {
         .collect()
 }
 
-// --- Cgroup setup ---
-
-/// Create the cgroup base directory and delegate it to the invoking user.
-///
-/// Cgroup v2 delegation requires chowning the directory and its control files
-/// to the target user. After this, the user can create sub-cgroups (sessions)
-/// and move processes into them without root.
 fn setup_cgroup_base() -> eyre::Result<()> {
     fs::create_dir_all(CGROUP_BASE).with_context(|| format!("failed to create {CGROUP_BASE}"))?;
 
     let (uid, gid) = sudo_caller_ids();
     chown_path(CGROUP_BASE, uid, gid).with_context(|| format!("failed to chown {CGROUP_BASE}"))?;
 
-    // Delegate control files so the user can create sub-cgroups and move processes
     for name in &["cgroup.procs", "cgroup.threads"] {
         let path = PathBuf::from(CGROUP_BASE).join(name);
         if path.exists() {
@@ -430,10 +394,6 @@ fn setup_cgroup_base() -> eyre::Result<()> {
     Ok(())
 }
 
-// --- Auto-prune ---
-
-/// Remove empty cgroups under CGROUP_BASE that have no active processes.
-/// Returns the number of cgroups removed.
 pub fn prune_stale_cgroups() -> usize {
     let cgroup_base = Path::new(CGROUP_BASE);
     if !cgroup_base.exists() {
@@ -461,16 +421,11 @@ pub fn prune_stale_cgroups() -> usize {
     removed
 }
 
-/// Prune all stale eBPF state: empty cgroups first, then orphaned map entries.
-/// Called automatically before each session to prevent map exhaustion.
 fn auto_prune() {
     prune_stale_cgroups();
     prune_config_map();
 }
 
-// --- Helpers ---
-
-/// Whether the embedded eBPF bytecode is empty (built without nightly).
 pub fn embedded_bytes_empty() -> bool {
     EBPF_BYTES.is_empty()
 }
@@ -492,14 +447,10 @@ fn kernel_version_sufficient() -> bool {
 }
 
 fn has_bpf_caps() -> bool {
-    // Fast path: root has all capabilities.
     if unsafe { libc::geteuid() } == 0 {
         return true;
     }
 
-    // Parse effective capabilities from /proc/self/status.
-    // Needed for non-root processes with CAP_BPF + CAP_NET_ADMIN
-    // granted via file capabilities or ambient capabilities.
     let Ok(status) = fs::read_to_string("/proc/self/status") else {
         return false;
     };
@@ -518,8 +469,6 @@ fn has_bpf_caps() -> bool {
     caps & (CAP_NET_ADMIN | CAP_BPF) == (CAP_NET_ADMIN | CAP_BPF)
 }
 
-/// Get the UID/GID of the user who invoked `sudo`.
-/// Falls back to root (0, 0) if SUDO_UID/SUDO_GID are not set.
 fn sudo_caller_ids() -> (u32, u32) {
     let uid = std::env::var("SUDO_UID")
         .ok()
@@ -532,7 +481,6 @@ fn sudo_caller_ids() -> (u32, u32) {
     (uid, gid)
 }
 
-/// chown a path to the given uid:gid.
 fn chown_path<P: AsRef<Path>>(path: P, uid: u32, gid: u32) -> eyre::Result<()> {
     let c_path =
         CString::new(path.as_ref().as_os_str().as_bytes()).context("path contains null byte")?;
@@ -544,6 +492,4 @@ fn chown_path<P: AsRef<Path>>(path: P, uid: u32, gid: u32) -> eyre::Result<()> {
     Ok(())
 }
 
-/// Embedded eBPF bytecode, compiled from crates/silo-ebpf.
-/// On macOS this constant is never used (the module is cfg-gated).
 static EBPF_BYTES: &[u8] = aya::include_bytes_aligned!(concat!(env!("OUT_DIR"), "/silo-ebpf"));

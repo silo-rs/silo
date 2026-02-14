@@ -34,8 +34,6 @@ pub fn run(name: Option<&str>, ip: Option<std::net::Ipv4Addr>, json: bool) -> ey
     Ok(())
 }
 
-/// Single-quote a value for safe shell eval.
 fn shell_escape(s: &str) -> String {
-    // Replace ' with '\'' (end quote, escaped quote, start quote)
     format!("'{}'", s.replace('\'', "'\\''"))
 }

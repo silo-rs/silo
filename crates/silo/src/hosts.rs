@@ -117,17 +117,10 @@ pub fn remove_entries(ips_to_remove: &HashSet<Ipv4Addr>) -> Result<Vec<(Ipv4Addr
     Ok(removed)
 }
 
-/// Open (or create) the dedicated silo lock file for serializing
-/// read-modify-write cycles on `/etc/hosts`.
-///
-/// A separate lock file is used instead of locking `/etc/hosts` itself because
-/// the atomic-rename write strategy replaces the inode, which would silently
-/// invalidate a lock held on the old inode.
 fn open_hosts_lock() -> Result<RwLock<std::fs::File>> {
     let file = match std::fs::File::open(LOCK_PATH) {
         Ok(f) => f,
         Err(_) => {
-            // Create the lock file if it doesn't exist yet.
             let _ = std::fs::File::create(LOCK_PATH);
             std::fs::File::open(LOCK_PATH)
                 .map_err(|e| Error::io("failed to open silo hosts lock file", e))?
@@ -136,13 +129,7 @@ fn open_hosts_lock() -> Result<RwLock<std::fs::File>> {
     Ok(RwLock::new(file))
 }
 
-/// Write `content` to `/etc/hosts` atomically.
-///
-/// Writes to a temp file on the same filesystem first, then does an atomic
-/// `rename(2)` to replace the target. This prevents a truncated `/etc/hosts`
-/// if the process is killed mid-write.
 fn write_hosts(content: &str) -> Result<()> {
-    // Step 1: Write the complete content to a temp file on the same filesystem.
     let mut child = Command::new("sudo")
         .args(["tee", HOSTS_TMP])
         .stdin(Stdio::piped())
@@ -167,7 +154,6 @@ fn write_hosts(content: &str) -> Result<()> {
         });
     }
 
-    // Step 2: Atomic rename. Same filesystem (/etc → /etc) guarantees rename(2).
     let status = Command::new("sudo")
         .args(["mv", "-f", HOSTS_TMP, HOSTS_PATH])
         .status()

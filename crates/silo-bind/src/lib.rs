@@ -85,7 +85,6 @@ unsafe fn rewrite_sockaddr_v4(addr: *const sockaddr, silo_ip: u32, match_any: bo
     }
 }
 
-#[cfg(target_os = "linux")]
 unsafe fn rewrite_sockaddr_v6(addr: *const sockaddr, silo_ip: u32, match_any: bool) {
     let sin6 = addr as *mut libc::sockaddr_in6;
     let s6_addr = unsafe { (*sin6).sin6_addr.s6_addr };
@@ -106,7 +105,6 @@ unsafe fn rewrite_addr(addr: *const sockaddr, match_any: bool) {
         unsafe { rewrite_sockaddr_v4(addr, silo_ip, match_any) };
     }
 
-    #[cfg(target_os = "linux")]
     if family == libc::AF_INET6 as c_int {
         unsafe { rewrite_sockaddr_v6(addr, silo_ip, match_any) };
     }
@@ -427,6 +425,21 @@ static INIT_FN: unsafe extern "C" fn() = {
 mod platform {
     use super::*;
 
+    unsafe fn is_v6only(fd: c_int) -> bool {
+        let mut optval: c_int = 0;
+        let mut optlen: socklen_t = std::mem::size_of::<c_int>() as socklen_t;
+        let ret = unsafe {
+            libc::getsockopt(
+                fd,
+                libc::IPPROTO_IPV6,
+                libc::IPV6_V6ONLY,
+                &mut optval as *mut _ as *mut libc::c_void,
+                &mut optlen,
+            )
+        };
+        ret == 0 && optval != 0
+    }
+
     #[repr(C)]
     struct Interpose {
         replacement: unsafe extern "C" fn(c_int, *const sockaddr, socklen_t) -> c_int,
@@ -489,16 +502,36 @@ mod platform {
                 if let Some(ip) = get_silo_ip()
                     && rewrite::rewrite_ipv6_addr(v6_addr, ip, true).is_some()
                 {
+                    let kind = if v6_addr == rewrite::V6_ANY {
+                        "::"
+                    } else {
+                        "::1"
+                    };
+
+                    // Dual-stack socket (IPV6_V6ONLY=0, the default): rewrite
+                    // in-place to ::ffff:SILO_IP. This preserves the original
+                    // fd, keeping kqueue/kevent registrations and async runtime
+                    // state intact.
+                    if !unsafe { is_v6only(fd) } {
+                        unsafe { rewrite_sockaddr_v6(addr, ip, true) };
+                        let ret = unsafe { real_bind(fd, addr, len) };
+                        if debug_enabled() {
+                            eprintln!(
+                                "[silo-bind] pid={} bind {} → ::ffff:SILO_IP (in-place) → {}",
+                                std::process::id(),
+                                kind,
+                                ret
+                            );
+                        }
+                        return ret;
+                    }
+
+                    // V6-only socket: must replace with an IPv4 socket.
                     let port = unsafe { (*sin6).sin6_port };
                     let ret = unsafe { rebind_as_ipv4(fd, port, ip) };
                     if debug_enabled() {
-                        let kind = if v6_addr == rewrite::V6_ANY {
-                            "::"
-                        } else {
-                            "::1"
-                        };
                         eprintln!(
-                            "[silo-bind] pid={} bind {} → rebind_as_ipv4 → {}",
+                            "[silo-bind] pid={} bind {} → rebind_as_ipv4 (v6only) → {}",
                             std::process::id(),
                             kind,
                             ret
@@ -531,6 +564,12 @@ mod platform {
                     if let Some(ip) = get_silo_ip() {
                         let port = unsafe { (*sin6).sin6_port };
                         if unsafe { probe_has_listener(fd, ip, port) } {
+                            // Dual-stack: rewrite in-place to ::ffff:SILO_IP
+                            if !unsafe { is_v6only(fd) } {
+                                unsafe { rewrite_sockaddr_v6(addr, ip, false) };
+                                return unsafe { real_connect(fd, addr, len) };
+                            }
+                            // V6-only: must replace socket
                             return unsafe { reconnect_as_ipv4(fd, port, ip) };
                         }
                     }

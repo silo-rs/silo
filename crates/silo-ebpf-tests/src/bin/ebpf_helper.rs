@@ -1,9 +1,3 @@
-//! Helper binary for silo-ebpf integration tests.
-//!
-//! This binary is spawned inside a cgroup with eBPF programs attached.
-//! It performs a requested syscall and prints the resulting address to stdout
-//! so the test can verify interception worked correctly.
-
 use std::env;
 use std::io;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6, TcpListener};
@@ -59,7 +53,6 @@ fn cmd_connect_localhost() -> io::Result<()> {
     Ok(())
 }
 
-/// UDP sendmsg to 127.0.0.1, then recvmsg to check reverse mapping of source address.
 fn cmd_sendmsg_recvmsg() -> io::Result<()> {
     unsafe {
         let fd = libc::socket(libc::AF_INET, libc::SOCK_DGRAM, 0);
@@ -67,7 +60,6 @@ fn cmd_sendmsg_recvmsg() -> io::Result<()> {
             return Err(io::Error::last_os_error());
         }
 
-        // Bind to 0.0.0.0:0 (will be rewritten to SILO_IP by eBPF)
         let mut bind_addr: libc::sockaddr_in = std::mem::zeroed();
         bind_addr.sin_family = libc::AF_INET as _;
         bind_addr.sin_port = 0;
@@ -83,7 +75,6 @@ fn cmd_sendmsg_recvmsg() -> io::Result<()> {
             return Err(io::Error::last_os_error());
         }
 
-        // Get actual bound address
         let mut local: libc::sockaddr_in = std::mem::zeroed();
         let mut len = std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t;
         libc::getsockname(fd, &mut local as *mut _ as *mut libc::sockaddr, &mut len);
@@ -91,7 +82,6 @@ fn cmd_sendmsg_recvmsg() -> io::Result<()> {
         let bound_port = u16::from_be(local.sin_port);
         println!("bound={bound_ip}:{bound_port}");
 
-        // sendmsg to 127.0.0.1:bound_port (eBPF rewrites dest to SILO_IP)
         let mut dest: libc::sockaddr_in = std::mem::zeroed();
         dest.sin_family = libc::AF_INET as _;
         dest.sin_port = local.sin_port;
@@ -118,7 +108,6 @@ fn cmd_sendmsg_recvmsg() -> io::Result<()> {
             return Err(io::Error::last_os_error());
         }
 
-        // recvmsg — eBPF recvmsg4 should reverse-map source from SILO_IP to 127.0.0.1
         let mut buf = [0u8; 64];
         let mut recv_iov = libc::iovec {
             iov_base: buf.as_mut_ptr() as *mut libc::c_void,
@@ -148,7 +137,6 @@ fn cmd_sendmsg_recvmsg() -> io::Result<()> {
     Ok(())
 }
 
-/// TCP connect to 127.0.0.1, then getpeername to check reverse mapping.
 fn cmd_connect_getpeername() -> io::Result<()> {
     let listener = TcpListener::bind("127.0.0.1:0")?;
     let port = listener.local_addr()?.port();
@@ -174,7 +162,6 @@ fn cmd_connect_getpeername() -> io::Result<()> {
             return Err(io::Error::last_os_error());
         }
 
-        // getpeername — eBPF getpeername4 should reverse-map SILO_IP to 127.0.0.1
         let mut peer: libc::sockaddr_in = std::mem::zeroed();
         let mut len = std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t;
         libc::getpeername(fd, &mut peer as *mut _ as *mut libc::sockaddr, &mut len);

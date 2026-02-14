@@ -38,7 +38,8 @@ aya = "0.13"
 # dev deps
 tempfile = "3"
 
-# The profile that 'dist' will build with
 [profile.dist]
 inherits = "release"
 lto = "thin"
+strip = true
+codegen-units = 1

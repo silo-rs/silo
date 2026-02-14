@@ -33,14 +33,12 @@ pub fn run(json: bool) -> eyre::Result<()> {
     let mut warnings = 0;
     let mut errors = 0;
 
-    // silo version
     checks.push(Check {
         name: "silo".into(),
         status: CheckStatus::Ok,
         detail: format!("v{}", env!("CARGO_PKG_VERSION")),
     });
 
-    // OS info
     match os_info() {
         Some(info) => checks.push(Check {
             name: "os".into(),
@@ -57,7 +55,6 @@ pub fn run(json: bool) -> eyre::Result<()> {
         }
     }
 
-    // git
     match Command::new("git").arg("--version").output() {
         Ok(output) if output.status.success() => {
             let version = String::from_utf8_lossy(&output.stdout);
@@ -77,7 +74,6 @@ pub fn run(json: bool) -> eyre::Result<()> {
         }
     }
 
-    // sudoers
     if std::path::Path::new("/etc/sudoers.d/silo").exists() {
         checks.push(Check {
             name: "sudoers".into(),
@@ -93,7 +89,6 @@ pub fn run(json: bool) -> eyre::Result<()> {
         warnings += 1;
     }
 
-    // bind lib
     match super::run::find_bind_lib() {
         Ok(path) => checks.push(Check {
             name: "bind lib".into(),
@@ -110,11 +105,9 @@ pub fn run(json: bool) -> eyre::Result<()> {
         }
     }
 
-    // eBPF backend (Linux only)
     #[cfg(target_os = "linux")]
     check_ebpf(&mut checks, &mut warnings);
 
-    // hosts
     match std::fs::read_to_string("/etc/hosts") {
         Ok(content) => {
             let count = content.lines().filter(|l| l.ends_with(".silo")).count();
@@ -192,7 +185,6 @@ pub fn run(json: bool) -> eyre::Result<()> {
 fn check_ebpf(checks: &mut Vec<Check>, warnings: &mut usize) {
     use std::path::Path;
 
-    // cgroup v2
     if Path::new("/sys/fs/cgroup/cgroup.controllers").exists() {
         checks.push(Check {
             name: "cgroup".into(),
@@ -209,7 +201,6 @@ fn check_ebpf(checks: &mut Vec<Check>, warnings: &mut usize) {
         return;
     }
 
-    // Kernel version
     let ver_ok = std::fs::read_to_string("/proc/version")
         .ok()
         .and_then(|v| {
@@ -236,7 +227,6 @@ fn check_ebpf(checks: &mut Vec<Check>, warnings: &mut usize) {
         *warnings += 1;
     }
 
-    // Embedded bytecode
     let has_bytes = !crate::ebpf::embedded_bytes_empty();
     if has_bytes {
         checks.push(Check {
@@ -252,7 +242,6 @@ fn check_ebpf(checks: &mut Vec<Check>, warnings: &mut usize) {
         });
     }
 
-    // Pinned programs
     let pin_base = Path::new("/sys/fs/bpf/silo");
     if pin_base.join("silo_bind4").exists() {
         let pinned = crate::ebpf::PROGRAM_NAMES

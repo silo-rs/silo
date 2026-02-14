@@ -23,9 +23,6 @@ const KNOWN_SUBCOMMANDS: &[&str] = &[
     "help",
 ];
 
-/// If the first positional arg isn't a known subcommand, treat the entire
-/// invocation as `silo run <args>`.  This lets users write `silo npm run dev`
-/// instead of `silo run npm run dev`.
 fn auto_run_args() -> Vec<String> {
     let args: Vec<String> = std::env::args().collect();
 

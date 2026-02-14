@@ -1,7 +1,3 @@
-//! Test harness for eBPF integration tests.
-//!
-//! Manages loading BPF programs, creating cgroups, and running the helper
-//! binary inside the cgroup for verification.
 #![allow(unsafe_code)]
 
 use std::fs;
@@ -41,13 +37,6 @@ pub struct EbpfTestHarness {
 }
 
 impl EbpfTestHarness {
-    /// Create a test harness with eBPF programs attached to a unique cgroup.
-    ///
-    /// `helper_binary` is the path to the ebpf-helper binary (use
-    /// `env!("CARGO_BIN_EXE_ebpf-helper")` from integration tests).
-    ///
-    /// If `silo_ip` is `Some`, the IP is written to the config map keyed by cgroup ID.
-    /// If `None`, the map stays empty (passthrough mode).
     pub fn new(
         test_name: &str,
         silo_ip: Option<Ipv4Addr>,
@@ -80,18 +69,12 @@ impl EbpfTestHarness {
         })
     }
 
-    /// Run the helper binary inside this harness's cgroup.
-    ///
-    /// Returns (stdout, stderr, success).
     pub fn run_helper(&self, command: &str) -> (String, String, bool) {
         let procs_path = self.cgroup_path.join("cgroup.procs");
 
         let mut cmd = Command::new(&self.helper_binary);
         cmd.arg(command);
 
-        // Move child into cgroup after fork() but before exec().
-        // This ensures the helper process is in the cgroup before any
-        // socket operations, with no race condition.
         unsafe {
             cmd.pre_exec(move || {
                 fs::write(&procs_path, std::process::id().to_string())
@@ -122,15 +105,12 @@ impl Drop for EbpfTestHarness {
     }
 }
 
-/// Check if we have the capabilities needed to run eBPF tests.
 pub fn can_run_ebpf_tests() -> bool {
-    // Need valid eBPF bytecode (build.rs may create an empty stub on failure)
     if EBPF_BYTES.is_empty() {
         eprintln!("SKIP: eBPF bytecode is empty (build may have failed)");
         return false;
     }
 
-    // Sanity-check: bytecode must be a valid ELF (starts with \x7fELF)
     if EBPF_BYTES.len() < 4 || &EBPF_BYTES[..4] != b"\x7fELF" {
         eprintln!(
             "SKIP: eBPF bytecode is not valid ELF ({} bytes, magic: {:02x?})",
@@ -140,7 +120,6 @@ pub fn can_run_ebpf_tests() -> bool {
         return false;
     }
 
-    // ELF machine type must be EM_BPF (247)
     if EBPF_BYTES.len() >= 20 {
         let e_machine = u16::from_le_bytes([EBPF_BYTES[18], EBPF_BYTES[19]]);
         if e_machine != 247 {
@@ -152,6 +131,5 @@ pub fn can_run_ebpf_tests() -> bool {
         }
     }
 
-    // Need root or CAP_BPF + CAP_NET_ADMIN
     unsafe { libc::geteuid() == 0 }
 }

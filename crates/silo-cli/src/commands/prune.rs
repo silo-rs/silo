@@ -27,7 +27,6 @@ pub fn run(all: bool, yes: bool, json: bool) -> eyre::Result<()> {
 
     let alias_set: HashSet<Ipv4Addr> = aliases.iter().copied().collect();
 
-    // Determine which aliases to remove
     let aliases_to_remove: Vec<Ipv4Addr> = if all {
         aliases.clone()
     } else {
@@ -40,14 +39,12 @@ pub fn run(all: bool, yes: bool, json: bool) -> eyre::Result<()> {
 
     let remove_set: HashSet<Ipv4Addr> = aliases_to_remove.iter().copied().collect();
 
-    // Orphaned hosts: entries whose IP has no active alias
     let orphaned_host_ips: HashSet<Ipv4Addr> = host_entries
         .iter()
         .map(|e| e.ip)
         .filter(|ip| !alias_set.contains(ip))
         .collect();
 
-    // Hosts IPs to remove: aliases being removed + orphaned entries
     let hosts_ips_to_remove: HashSet<Ipv4Addr> = if all {
         let all_host_ips: HashSet<Ipv4Addr> = host_entries.iter().map(|e| e.ip).collect();
         remove_set.union(&all_host_ips).copied().collect()
@@ -60,7 +57,6 @@ pub fn run(all: bool, yes: bool, json: bool) -> eyre::Result<()> {
         .filter(|e| hosts_ips_to_remove.contains(&e.ip))
         .collect();
 
-    // Nothing to do
     if aliases_to_remove.is_empty() && hosts_to_remove.is_empty() {
         if json {
             let report = PruneReport {
@@ -75,7 +71,6 @@ pub fn run(all: bool, yes: bool, json: bool) -> eyre::Result<()> {
         return Ok(());
     }
 
-    // Preview (human-readable only)
     if !json {
         if !aliases_to_remove.is_empty() {
             eprintln!(
@@ -117,10 +112,8 @@ pub fn run(all: bool, yes: bool, json: bool) -> eyre::Result<()> {
         }
     }
 
-    // Ensure sudoers is configured before any destructive operations
     crate::sudoers::ensure()?;
 
-    // Confirmation (human-readable only; --json implies --yes)
     if !yes {
         eprintln!();
         eprint!("  proceed? [y/N] ");
@@ -138,7 +131,6 @@ pub fn run(all: bool, yes: bool, json: bool) -> eyre::Result<()> {
         eprintln!();
     }
 
-    // Remove aliases
     let mut alias_errors = 0usize;
     let mut aliases_removed = Vec::new();
     for ip in &aliases_to_remove {
@@ -152,7 +144,6 @@ pub fn run(all: bool, yes: bool, json: bool) -> eyre::Result<()> {
         }
     }
 
-    // Remove hosts entries
     let mut hosts_removed = Vec::new();
     if !hosts_ips_to_remove.is_empty() {
         match silo::hosts::remove_entries(&hosts_ips_to_remove) {
@@ -188,7 +179,6 @@ pub fn run(all: bool, yes: bool, json: bool) -> eyre::Result<()> {
         };
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
-        // Summary
         let removed_count = aliases_to_remove.len() - alias_errors;
         if removed_count > 0 {
             if alias_errors == 0 {
@@ -204,7 +194,6 @@ pub fn run(all: bool, yes: bool, json: bool) -> eyre::Result<()> {
         }
     }
 
-    // Clean up stale eBPF state (Linux only)
     #[cfg(target_os = "linux")]
     {
         let cgroups_removed = crate::ebpf::prune_stale_cgroups();

@@ -66,8 +66,6 @@ fn parse_listening_ports(output: &str) -> HashMap<Ipv4Addr, Vec<u16>> {
 }
 
 fn extract_listen_address(line: &str) -> Option<(&str, &str)> {
-    // macOS lsof format: "... TCP 127.1.42.7:3000 (LISTEN)"
-    // Linux ss format:   "LISTEN  0  128  127.1.42.7:3000  ..."
     #[cfg(target_os = "macos")]
     {
         let addr_part = line.split_whitespace().find(|tok| {
@@ -84,7 +82,6 @@ fn extract_listen_address(line: &str) -> Option<(&str, &str)> {
     #[cfg(target_os = "linux")]
     {
         let fields: Vec<&str> = line.split_whitespace().collect();
-        // ss -tlnH columns: State Recv-Q Send-Q Local Address:Port Peer Address:Port
         let local = fields.get(3)?;
         let (ip, port) = local.rsplit_once(':')?;
         Some((ip, port))

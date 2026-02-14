@@ -5,11 +5,6 @@ use eyre::{Context, bail};
 
 const SUDOERS_PATH: &str = "/etc/sudoers.d/silo";
 
-/// Ensure passwordless sudo is configured for silo operations.
-///
-/// Checks if `/etc/sudoers.d/silo` exists. If not, interactively prompts the
-/// user and installs the sudoers rule. This is intentionally in the CLI crate
-/// (not the library) because it performs interactive I/O.
 pub(crate) fn ensure() -> eyre::Result<()> {
     if Path::new(SUDOERS_PATH).exists() {
         return Ok(());

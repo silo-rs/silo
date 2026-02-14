@@ -113,14 +113,11 @@ pub(crate) fn make_backend(
     Ok(Box::new(silo::PreloadBackend::new(lib_path)))
 }
 
-/// Pre-flight checks after session activation. Prints warnings but never blocks execution.
 fn verify_session(session: &Session) {
-    // Check 1: IP alias exists on loopback
     if let Ok(false) = silo::ip::alias_exists(session.ip()) {
         ui::check_warn("ip alias", "not found on loopback interface");
     }
 
-    // Check 2: Hosts entry + collision detection (single list_entries call)
     if let Ok(entries) = silo::hosts::list_entries() {
         let has_entry = entries
             .iter()
@@ -147,7 +144,6 @@ fn verify_session(session: &Session) {
         }
     }
 
-    // Check 3: Backend::None means no syscall interception
     if session.backend_name() == "none" {
         ui::check_warn("backend", "no interception method available");
     }

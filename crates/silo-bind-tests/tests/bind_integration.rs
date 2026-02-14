@@ -1,19 +1,6 @@
-//! Integration tests for silo-bind syscall interception.
-//!
-//! Each test spawns the `bind-helper` binary with the silo-bind library
-//! injected via DYLD_INSERT_LIBRARIES (macOS) or LD_PRELOAD (Linux), and
-//! SILO_IP set to a test loopback address. The helper performs the syscall
-//! and prints the result; we verify it was rewritten.
-//!
-//! Platform note: on macOS, only 127.0.0.1 is available on lo0 without creating
-//! an alias (which requires sudo). On Linux, the entire 127.0.0.0/8 is usable.
-//! We use 127.0.0.1 as SILO_IP on macOS and 127.0.99.1 on Linux.
-
 use std::path::PathBuf;
 use std::process::Command;
 
-/// On macOS only 127.0.0.1 is bindable without sudo alias setup.
-/// On Linux the entire 127.0.0.0/8 is available.
 #[cfg(target_os = "macos")]
 const TEST_IP: &str = "127.0.0.1";
 #[cfg(target_os = "linux")]
@@ -75,11 +62,6 @@ fn run_helper(command: &str, silo_ip: Option<&str>) -> (String, String, bool) {
     (stdout, stderr, success)
 }
 
-// ── bind() tests ──
-
-/// bind(0.0.0.0) should be rewritten to SILO_IP.
-/// On macOS this verifies INADDR_ANY → 127.0.0.1.
-/// On Linux this verifies INADDR_ANY → 127.0.99.1.
 #[test]
 fn bind_inaddr_any_is_rewritten() {
     let (stdout, _, success) = run_helper("bind_any", Some(TEST_IP));
@@ -88,14 +70,12 @@ fn bind_inaddr_any_is_rewritten() {
         stdout.contains(TEST_IP),
         "expected bind to {TEST_IP}, got: {stdout}"
     );
-    // On both platforms, it should NOT contain 0.0.0.0 (it was rewritten)
     assert!(
         !stdout.contains("0.0.0.0"),
         "INADDR_ANY should have been rewritten, got: {stdout}"
     );
 }
 
-/// bind(127.0.0.1) should be rewritten to SILO_IP.
 #[test]
 fn bind_localhost_is_rewritten() {
     let (stdout, _, success) = run_helper("bind_localhost", Some(TEST_IP));
@@ -106,9 +86,6 @@ fn bind_localhost_is_rewritten() {
     );
 }
 
-// ── connect() tests ──
-
-/// connect(127.0.0.1) should be rewritten to SILO_IP.
 #[test]
 fn connect_localhost_is_rewritten() {
     let (stdout, _, success) = run_helper("connect_localhost", Some(TEST_IP));
@@ -119,23 +96,16 @@ fn connect_localhost_is_rewritten() {
     );
 }
 
-// ── getaddrinfo() tests ──
-
-/// getaddrinfo("localhost") should pass through without rewriting (DNS
-/// interception has been removed). On Linux (where SILO_IP != 127.0.0.1),
-/// this verifies that getaddrinfo returns the real system result.
 #[test]
 fn getaddrinfo_localhost_passes_through() {
     let (stdout, _, success) = run_helper("getaddrinfo", Some(TEST_IP));
     assert!(success, "helper failed");
-    // getaddrinfo should return the real system result (127.0.0.1), not SILO_IP
     assert!(
         stdout.contains("127.0.0.1"),
         "expected getaddrinfo to return real 127.0.0.1, got: {stdout}"
     );
 }
 
-/// On Linux where SILO_IP is 127.0.99.1, verify getaddrinfo does NOT return SILO_IP.
 #[test]
 #[cfg(target_os = "linux")]
 fn getaddrinfo_localhost_not_rewritten_to_silo_ip() {
@@ -147,10 +117,6 @@ fn getaddrinfo_localhost_not_rewritten_to_silo_ip() {
     );
 }
 
-// ── connect() probe tests ──
-
-/// When no listener exists on SILO_IP:port, connect(127.0.0.1:port) should
-/// NOT be rewritten — the connection should be refused (no listener anywhere).
 #[test]
 fn connect_to_unbound_port_not_rewritten() {
     let (stdout, _, _) = run_helper("connect_no_listener", Some(TEST_IP));
@@ -160,9 +126,6 @@ fn connect_to_unbound_port_not_rewritten() {
     );
 }
 
-// ── sendto() tests ──
-
-/// UDP bind(0.0.0.0) used for sendto should be rewritten to SILO_IP.
 #[test]
 fn sendto_udp_bind_is_rewritten() {
     let (stdout, _, success) = run_helper("sendto_any", Some(TEST_IP));
@@ -173,11 +136,6 @@ fn sendto_udp_bind_is_rewritten() {
     );
 }
 
-// ── sendmsg() tests ──
-
-/// sendmsg() with msg_name pointing to 127.0.0.1 should have the destination
-/// rewritten to SILO_IP. We verify by sending to ourselves (bind was also
-/// rewritten to SILO_IP) and successfully receiving the packet.
 #[test]
 fn sendmsg_localhost_is_rewritten() {
     let (stdout, _, success) = run_helper("sendmsg_localhost", Some(TEST_IP));
@@ -192,9 +150,6 @@ fn sendmsg_localhost_is_rewritten() {
     );
 }
 
-// ── passthrough tests (no SILO_IP) ──
-
-/// Without SILO_IP set, bind(0.0.0.0) should pass through unchanged.
 #[test]
 fn no_silo_ip_passes_through() {
     let (stdout, _, success) = run_helper("passthrough", None);
@@ -205,7 +160,6 @@ fn no_silo_ip_passes_through() {
     );
 }
 
-/// With an invalid SILO_IP, bind(0.0.0.0) should pass through unchanged.
 #[test]
 fn invalid_silo_ip_passes_through() {
     let (stdout, _, success) = run_helper("passthrough", Some("not-an-ip"));
@@ -216,27 +170,24 @@ fn invalid_silo_ip_passes_through() {
     );
 }
 
-// ── IPv6→IPv4 socket option preservation (macOS only) ──
+// ── IPv6 in-place rewrite (macOS only) ──
 
-/// When silo-bind replaces an IPv6 socket with an IPv4 one (macOS only),
-/// socket options like SO_REUSEADDR and fd flags like O_NONBLOCK must survive.
+/// Dual-stack IPv6 socket (IPV6_V6ONLY=0, the default) with SO_REUSEADDR and
+/// O_NONBLOCK set, bound to [::]:0. With in-place rewrite, the socket stays
+/// AF_INET6 and options are naturally preserved (no fd replacement needed).
 #[test]
 #[cfg(target_os = "macos")]
 fn bind_v6_preserves_socket_options() {
     let (stdout, _, success) = run_helper("bind_v6_opts", Some(TEST_IP));
     assert!(success, "helper failed");
 
-    // Socket should have been replaced to IPv4
+    // Socket should stay IPv6 (in-place rewrite to ::ffff:SILO_IP)
     assert!(
-        stdout.contains("family=v4"),
-        "expected IPv6→IPv4 replacement, got: {stdout}"
-    );
-    assert!(
-        stdout.contains(&format!("bound={TEST_IP}")),
-        "expected bind to {TEST_IP}, got: {stdout}"
+        stdout.contains("family=v6"),
+        "expected in-place IPv6 rewrite (dual-stack), got: {stdout}"
     );
 
-    // SO_REUSEADDR must be preserved (macOS may return a non-zero value other than 1)
+    // SO_REUSEADDR must be preserved (trivially, since fd is untouched)
     let reuseaddr_line = stdout
         .lines()
         .find(|l| l.starts_with("reuseaddr="))
@@ -247,28 +198,75 @@ fn bind_v6_preserves_socket_options() {
         .trim()
         .parse()
         .expect("bad reuseaddr value");
-    assert!(
-        reuseaddr_val != 0,
-        "SO_REUSEADDR was lost during socket replacement (got 0)"
-    );
+    assert!(reuseaddr_val != 0, "SO_REUSEADDR was lost (got 0)");
 
     // O_NONBLOCK must be preserved
     assert!(
         stdout.contains("nonblock=true"),
-        "O_NONBLOCK was lost during socket replacement, got: {stdout}"
+        "O_NONBLOCK was lost, got: {stdout}"
+    );
+}
+
+/// Dual-stack IPv6 socket bound to [::]:0 should stay AF_INET6 with
+/// ::ffff:SILO_IP, and IPv4 clients must be able to connect through it.
+#[test]
+#[cfg(target_os = "macos")]
+fn bind_v6_dualstack_stays_ipv6() {
+    let (stdout, _, success) = run_helper("bind_v6_dualstack", Some(TEST_IP));
+    assert!(success, "helper failed");
+    assert!(
+        stdout.contains("v6only_before=0"),
+        "expected dual-stack default (IPV6_V6ONLY=0), got: {stdout}"
+    );
+    assert!(
+        stdout.contains("family=v6"),
+        "dual-stack socket should stay AF_INET6 after in-place rewrite, got: {stdout}"
+    );
+    assert!(
+        stdout.contains(&format!("::ffff:{TEST_IP}")),
+        "expected bound to ::ffff:{TEST_IP}, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("accept=ok"),
+        "IPv4 client should reach dual-stack listener via {TEST_IP}, got: {stdout}"
+    );
+}
+
+/// IPV6_V6ONLY=1 socket must fall back to replace_with_ipv4, becoming AF_INET4.
+#[test]
+#[cfg(target_os = "macos")]
+fn bind_v6_v6only_falls_back_to_ipv4() {
+    let (stdout, _, success) = run_helper("bind_v6_v6only", Some(TEST_IP));
+    assert!(success, "helper failed");
+    assert!(
+        stdout.contains("family=v4"),
+        "v6-only socket should fall back to IPv4 replacement, got: {stdout}"
+    );
+    assert!(
+        stdout.contains(&format!("bound={TEST_IP}")),
+        "expected bind to {TEST_IP} after fallback, got: {stdout}"
+    );
+}
+
+/// kqueue registration on an IPv6 fd must survive bind rewrite. This is the
+/// decisive test: replace_with_ipv4 (dup2) would invalidate kqueue, while
+/// in-place rewrite preserves it.
+#[test]
+#[cfg(target_os = "macos")]
+fn bind_v6_kqueue_survives_rewrite() {
+    let (stdout, _, success) = run_helper("bind_v6_kqueue", Some(TEST_IP));
+    assert!(success, "helper failed");
+    assert!(
+        stdout.contains("kqueue_events=1"),
+        "kqueue should fire after in-place rewrite (fd preserved), got: {stdout}"
     );
 }
 
 // ── shell-mediated tests (macOS SIP scenario) ──
 
-/// Simulates what config scripts (e.g. `silo dev`) do: runs bind-helper through `sh -c`.
-/// On macOS, this verifies that DYLD_INSERT_LIBRARIES works when the shell
-/// is NOT SIP-protected. The test finds a non-SIP shell (e.g. Homebrew bash)
-/// and runs the helper through it.
 #[test]
 #[cfg(target_os = "macos")]
 fn bind_through_non_sip_shell() {
-    // Find a non-SIP shell, similar to what resolve_program now does
     let shell = find_non_sip_shell();
     let Some(shell) = shell else {
         eprintln!("SKIP: no non-SIP shell available (install Homebrew bash/zsh)");
@@ -302,9 +300,6 @@ fn bind_through_non_sip_shell() {
     );
 }
 
-// ── runtime smoke tests ──
-
-/// Helper: run an arbitrary command with silo-bind injected.
 fn run_injected(program: &str, args: &[&str], silo_ip: &str) -> (String, String, bool) {
     let mut cmd = Command::new(program);
     cmd.args(args);
@@ -323,7 +318,6 @@ fn run_injected(program: &str, args: &[&str], silo_ip: &str) -> (String, String,
     (stdout, stderr, success)
 }
 
-/// Node.js: `net.createServer().listen(0, '0.0.0.0')` should be rewritten.
 #[test]
 fn runtime_node_bind_is_rewritten() {
     if which::which("node").is_err() {
@@ -344,9 +338,6 @@ fn runtime_node_bind_is_rewritten() {
     );
 }
 
-/// Go (default CGO): documents platform difference for bind interception.
-/// - macOS: DYLD_INSERT_LIBRARIES works, bind is rewritten.
-/// - Linux: Go uses raw syscalls for bind(), bypassing LD_PRELOAD, so bind is NOT rewritten.
 #[test]
 fn runtime_go_bind_is_rewritten() {
     if which::which("go").is_err() {
@@ -382,8 +373,6 @@ fn runtime_go_bind_is_rewritten() {
             "expected bind to {TEST_IP} on macOS, got: {stdout}"
         );
     } else {
-        // Linux: Go uses raw syscalls for socket operations even with CGO enabled,
-        // so LD_PRELOAD cannot intercept bind().
         assert!(
             stdout.contains("0.0.0.0"),
             "expected Go to bypass LD_PRELOAD on Linux, got: {stdout}"
@@ -391,9 +380,6 @@ fn runtime_go_bind_is_rewritten() {
     }
 }
 
-/// Go with CGO_ENABLED=0: documents platform difference.
-/// - macOS: libSystem is always dynamically linked, so DYLD_INSERT_LIBRARIES works.
-/// - Linux: static binary bypasses LD_PRELOAD, so bind is NOT rewritten.
 #[test]
 fn runtime_go_cgo_disabled_bind() {
     if which::which("go").is_err() {
@@ -425,14 +411,11 @@ fn runtime_go_cgo_disabled_bind() {
     assert!(success, "go helper failed");
 
     if cfg!(target_os = "macos") {
-        // macOS: DYLD_INSERT_LIBRARIES works even with CGO_ENABLED=0
-        // because Go still links against libSystem dynamically.
         assert!(
             stdout.contains(TEST_IP),
             "expected bind to {TEST_IP} on macOS (libSystem), got: {stdout}"
         );
     } else {
-        // Linux: static binary bypasses LD_PRELOAD — bind stays as 0.0.0.0
         assert!(
             stdout.contains("0.0.0.0"),
             "expected static Go binary to bypass LD_PRELOAD on Linux, got: {stdout}"
@@ -440,9 +423,6 @@ fn runtime_go_cgo_disabled_bind() {
     }
 }
 
-/// Verifies that DYLD_INSERT_LIBRARIES is stripped when using a SIP-protected
-/// shell (/bin/sh), causing bind interception to NOT work. This documents the
-/// known limitation that motivates the SIP resolution in shebang.rs.
 #[test]
 #[cfg(target_os = "macos")]
 fn bind_through_sip_shell_is_stripped() {
@@ -459,14 +439,11 @@ fn bind_through_sip_shell_is_stripped() {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     if output.status.success() {
-        // With SIP shell, DYLD_INSERT_LIBRARIES gets stripped.
-        // bind(0.0.0.0) should NOT be rewritten — it stays as 0.0.0.0
         assert!(
             stdout.contains("0.0.0.0"),
             "expected SIP shell to strip DYLD_INSERT_LIBRARIES, but interception worked: {stdout}"
         );
     }
-    // If the process failed, that's also acceptable — SIP can cause issues
 }
 
 #[cfg(target_os = "macos")]
