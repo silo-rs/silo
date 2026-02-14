@@ -40,8 +40,8 @@ fn install() -> eyre::Result<()> {
         if !warnings.is_empty() {
             eprintln!(
                 "  {} {}",
-                "WARNING:".yellow().bold(),
-                "sudoers will reference a potentially insecure binary path:".yellow()
+                "ERROR:".red().bold(),
+                "refusing to install sudoers rules for an insecure binary path:".red()
             );
             eprintln!("    {}", bin_path.display());
             for w in &warnings {
@@ -52,7 +52,23 @@ fn install() -> eyre::Result<()> {
                 "  {}",
                 "To fix: install silo to a root-owned path (e.g. /usr/local/bin/silo)".yellow()
             );
+            eprintln!(
+                "  {}",
+                "  sudo cp ~/.cargo/bin/silo /usr/local/bin/silo".dimmed()
+            );
             eprintln!();
+            if std::env::var("SILO_ALLOW_INSECURE_PATH").is_ok() {
+                eprintln!(
+                    "  {} proceeding anyway (SILO_ALLOW_INSECURE_PATH is set)",
+                    "WARNING:".yellow().bold()
+                );
+                eprintln!();
+            } else {
+                bail!(
+                    "sudoers installation blocked: binary path is not secure. \
+                     Set SILO_ALLOW_INSECURE_PATH=1 to override (not recommended)."
+                );
+            }
         }
     }
 
@@ -93,9 +109,20 @@ fn install() -> eyre::Result<()> {
 }
 
 fn validate_sudoers_syntax(rules: &str) -> eyre::Result<()> {
-    let tmp_path = "/tmp/.silo-sudoers-check";
+    use std::io::Write;
 
-    if let Err(e) = std::fs::write(tmp_path, rules.as_bytes()) {
+    let mut tmp_file = match tempfile::NamedTempFile::new() {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!(
+                "  {} could not create temp file for visudo check: {e}",
+                "WARNING:".yellow().bold()
+            );
+            return Ok(());
+        }
+    };
+
+    if let Err(e) = tmp_file.write_all(rules.as_bytes()) {
         eprintln!(
             "  {} could not write temp file for visudo check: {e}",
             "WARNING:".yellow().bold()
@@ -104,12 +131,15 @@ fn validate_sudoers_syntax(rules: &str) -> eyre::Result<()> {
     }
 
     let result = Command::new("visudo")
-        .args(["-cf", tmp_path])
+        .args([
+            "-cf",
+            tmp_file.path().to_str().expect("temp path is valid UTF-8"),
+        ])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
 
-    let _ = std::fs::remove_file(tmp_path);
+    drop(tmp_file);
 
     match result {
         Ok(status) if status.success() => Ok(()),
@@ -337,9 +367,7 @@ mod tests {
         let filtered: Vec<_> = warnings
             .iter()
             .filter(|w| {
-                w.contains("/usr/bin/true")
-                    || w.contains("/usr/bin ")
-                    || w.contains("/usr ")
+                w.contains("/usr/bin/true") || w.contains("/usr/bin ") || w.contains("/usr ")
             })
             .collect();
         assert!(
@@ -364,15 +392,19 @@ mod tests {
 
     #[test]
     fn visudo_validates_generated_rules() {
+        use std::io::Write;
         let rules = sudoers_rules();
-        let tmp_path = "/tmp/.silo-sudoers-test-validate";
-        std::fs::write(tmp_path, rules.as_bytes()).unwrap();
+        let mut tmp_file = tempfile::NamedTempFile::new().unwrap();
+        tmp_file.write_all(rules.as_bytes()).unwrap();
         let result = std::process::Command::new("visudo")
-            .args(["-cf", tmp_path])
+            .args([
+                "-cf",
+                tmp_file.path().to_str().expect("temp path is valid UTF-8"),
+            ])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
-        let _ = std::fs::remove_file(tmp_path);
+        drop(tmp_file);
         if let Ok(status) = result {
             assert!(
                 status.success(),
