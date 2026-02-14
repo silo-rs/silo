@@ -42,6 +42,28 @@ your app → bind("0.0.0.0:3000") → [ silo ] → bind("127.1.42.7:3000") ✅
 | `silo prune`  | Remove unused aliases and /etc/hosts entries |
 | `silo doctor` | Diagnose environment issues                  |
 
+## Multi-service
+
+Child processes inherit the silo session, so wrap your process manager:
+
+```sh
+silo make dev             # Makefile
+silo just dev             # Justfile
+silo overmind start       # Procfile
+silo turbo run dev        # Turborepo
+```
+
+All services share the same isolated IP — no extra config needed.
+
+## Works with worktree managers
+
+Silo pairs with tools that run parallel agents in git worktrees:
+
+- [vibe-kanban](https://github.com/junhsss/vibe-kanban) — kanban board for coding agents
+- [claude-squad](https://github.com/smtg-ai/claude-squad) — parallel Claude Code sessions
+- [ccmanager](https://github.com/QuantGeekDev/ccmanager) — session manager for coding agents
+- [workmux](https://github.com/jleight/workmux) — worktrees + tmux
+
 ## Environment variables
 
 Automatically set inside every silo session:
