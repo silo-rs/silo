@@ -266,6 +266,8 @@ fn is_sip_path(path: &str) -> bool {
 fn find_non_sip_in_path(name: &str) -> Option<CString> {
     let fallbacks: &[&str] = match name {
         "sh" => &["sh", "bash", "zsh"],
+        // Homebrew installs make as "gmake"
+        "make" => &["make", "gmake"],
         _ => &[],
     };
     let names = if fallbacks.is_empty() {

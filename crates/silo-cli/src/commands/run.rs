@@ -62,6 +62,10 @@ pub fn run(
 
     #[cfg(target_os = "macos")]
     if silo::shebang::is_sip_protected(std::path::Path::new(&program)) {
+        let name = std::path::Path::new(&program)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(&program);
         eprintln!(
             "{} running SIP-protected binary: {}",
             "warning:".yellow().bold(),
@@ -73,7 +77,7 @@ pub fn run(
         );
         eprintln!(
             "  {}",
-            "install a shell via Homebrew to fix: brew install bash".dimmed()
+            format!("install via Homebrew to fix: brew install {name}").dimmed()
         );
     }
 

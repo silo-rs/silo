@@ -20,6 +20,11 @@ pub(crate) fn ensure() -> eyre::Result<()> {
         {
             return Ok(());
         }
+    } else if std::path::Path::new(SUDOERS_PATH).exists() {
+        // File exists but is not readable (e.g. root:wheel, user not in wheel).
+        // Assume it is correctly configured — if not, the actual sudo commands
+        // (ifconfig, silo _hosts) will fail later with a clear error.
+        return Ok(());
     }
     install()
 }

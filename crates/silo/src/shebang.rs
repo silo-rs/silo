@@ -24,9 +24,16 @@ pub fn resolve_program(program: &str, args: &[String]) -> (String, Vec<String>) 
         return (prog, resolved_args);
     }
 
-    let program_path = Path::new(program);
-    if is_sip_protected(program_path)
-        && let Some(name) = program_path.file_name().and_then(|n| n.to_str())
+    // Resolve bare command names (e.g. "make") to full paths (e.g. "/usr/bin/make")
+    // so SIP detection works correctly.
+    let full_path = if Path::new(program).is_absolute() {
+        PathBuf::from(program)
+    } else {
+        which::which(program).unwrap_or_else(|_| PathBuf::from(program))
+    };
+
+    if is_sip_protected(&full_path)
+        && let Some(name) = full_path.file_name().and_then(|n| n.to_str())
     {
         if let Some(resolved) = find_non_sip_binary(name) {
             debug!(
@@ -40,6 +47,8 @@ pub fn resolve_program(program: &str, args: &[String]) -> (String, Vec<String>) 
             original = program,
             "no non-SIP alternative found for SIP-protected binary"
         );
+        // Return the full resolved path so the caller can detect SIP and warn.
+        return (full_path.to_string_lossy().into_owned(), args.to_vec());
     }
 
     (program.to_string(), args.to_vec())
@@ -56,20 +65,27 @@ pub fn find_non_sip_binary(name: &str) -> Option<String> {
             }
             c
         }
+        // Homebrew installs make as "gmake"
+        "make" => vec!["make", "gmake"],
         _ => vec![name],
     };
 
     for candidate in candidates {
-        if let Ok(path) = which::which(candidate)
-            && !is_sip_protected(&path)
-        {
-            debug!(
-                name,
-                candidate,
-                resolved = %path.display(),
-                "found non-SIP binary"
-            );
-            return Some(path.to_string_lossy().into_owned());
+        // Search ALL matching paths in PATH, not just the first.
+        // The first match may be SIP-protected (e.g. /usr/bin/make) while a
+        // later entry (e.g. /opt/homebrew/bin/make) is not.
+        if let Ok(paths) = which::which_all(candidate) {
+            for path in paths {
+                if !is_sip_protected(&path) {
+                    debug!(
+                        name,
+                        candidate,
+                        resolved = %path.display(),
+                        "found non-SIP binary"
+                    );
+                    return Some(path.to_string_lossy().into_owned());
+                }
+            }
         }
     }
 
@@ -339,5 +355,49 @@ mod tests {
         let (prog, resolved_args) = resolve_program("/opt/homebrew/bin/bash", &args);
         assert_eq!(prog, "/opt/homebrew/bin/bash");
         assert_eq!(resolved_args, args);
+    }
+
+    #[test]
+    fn test_resolve_program_bare_name_detects_sip() {
+        // A bare name like "make" should be resolved to its full path
+        // so SIP detection works (e.g. /usr/bin/make → SIP detected).
+        let args = vec!["dev".to_string()];
+        let (prog, _) = resolve_program("make", &args);
+        // If the resolved path is SIP-protected, resolve_program should have
+        // either found a non-SIP alternative or returned the full SIP path
+        // (not the bare name) so the caller can warn.
+        if is_sip_protected(Path::new(&prog)) {
+            assert!(
+                prog.contains('/'),
+                "SIP binary should be returned as a full path, got: {}",
+                prog,
+            );
+        }
+    }
+
+    #[test]
+    fn test_resolve_program_make_resolves_to_non_sip() {
+        // "make" at /usr/bin/make is SIP-protected. resolve_program should
+        // find a non-SIP alternative (e.g. gmake from Homebrew) if available.
+        let args = vec!["dev".to_string()];
+        let (prog, resolved_args) = resolve_program("make", &args);
+        // If a non-SIP alternative exists, it should be returned
+        if let Some(non_sip) = find_non_sip_binary("make") {
+            assert_eq!(prog, non_sip);
+            assert!(!is_sip_protected(Path::new(&prog)));
+        }
+        assert_eq!(resolved_args, args);
+    }
+
+    #[test]
+    fn test_find_non_sip_binary_make_gmake_fallback() {
+        // make → gmake fallback should be tried when searching for non-SIP make
+        if let Some(path) = find_non_sip_binary("make") {
+            assert!(
+                !is_sip_protected(Path::new(&path)),
+                "find_non_sip_binary(\"make\") returned SIP path: {}",
+                path
+            );
+        }
     }
 }
