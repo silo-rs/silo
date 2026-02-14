@@ -163,11 +163,6 @@ unsafe fn rewrite_addr(addr: *const sockaddr, match_any: bool) {
 // Bind probe: check if SILO_IP:port has an active listener
 // ---------------------------------------------------------------------------
 
-/// Get a pointer to errno (platform-specific).
-///
-/// # Safety
-///
-/// The returned pointer is valid for the calling thread's errno location.
 unsafe fn errno_ptr() -> *mut c_int {
     #[cfg(target_os = "linux")]
     {
@@ -179,16 +174,6 @@ unsafe fn errno_ptr() -> *mut c_int {
     }
 }
 
-/// Call the real (non-intercepted) `bind(2)`.
-///
-/// On macOS this uses the FFI declaration (dyld interpose doesn't affect
-/// calls within the same library). On Linux we must resolve the real symbol
-/// via `dlsym(RTLD_NEXT)` because our `bind` IS the LD_PRELOAD override.
-///
-/// # Safety
-///
-/// Same contract as `bind(2)`: `fd` must be a valid socket, `addr` must
-/// point to a valid sockaddr of at least `len` bytes (or be null).
 #[cfg(target_os = "macos")]
 unsafe fn call_real_bind(fd: c_int, addr: *const sockaddr, len: socklen_t) -> c_int {
     unsafe { real_bind(fd, addr, len) }
@@ -198,40 +183,22 @@ unsafe fn call_real_bind(fd: c_int, addr: *const sockaddr, len: socklen_t) -> c_
 unsafe fn call_real_bind(fd: c_int, addr: *const sockaddr, len: socklen_t) -> c_int {
     static REAL_BIND: OnceLock<unsafe extern "C" fn(c_int, *const sockaddr, socklen_t) -> c_int> =
         OnceLock::new();
-    let f = *REAL_BIND.get_or_init(|| {
-        // SAFETY: Resolving the real bind(2) from libc via RTLD_NEXT.
-        // The null-terminated literal is valid for dlsym. transmute is safe
-        // because we assert non-null and the type matches bind(2) ABI.
-        unsafe {
-            let ptr = libc::dlsym(libc::RTLD_NEXT, c"bind".as_ptr());
-            assert!(!ptr.is_null(), "silo-bind: dlsym failed to resolve bind");
-            std::mem::transmute(ptr)
-        }
+    let f = *REAL_BIND.get_or_init(|| unsafe {
+        let ptr = libc::dlsym(libc::RTLD_NEXT, c"bind".as_ptr());
+        assert!(!ptr.is_null(), "silo-bind: dlsym failed to resolve bind");
+        std::mem::transmute(ptr)
     });
     unsafe { f(fd, addr, len) }
 }
 
-/// Probe whether `silo_ip:port` has an active listener by attempting to bind
-/// a temporary socket to the same address.
-///
-/// Returns `true` if `EADDRINUSE` is returned (meaning something is already
-/// listening on that port at `silo_ip`). Returns `false` for any other
-/// result, including success (no listener) or other errors.
-///
-/// Saves and restores `errno` so the probe is transparent to the caller.
-///
-/// # Safety
-///
-/// `fd` must be a valid socket file descriptor (used to read `SO_TYPE`).
-/// `port` must be in network byte order.
+/// Probe whether `silo_ip:port` has an active listener by attempting to
+/// bind a temporary socket. Returns `true` on `EADDRINUSE`.
+/// Saves and restores `errno` to stay transparent to the caller.
 unsafe fn probe_has_listener(fd: c_int, silo_ip: u32, port: u16) -> bool {
-    // SAFETY: Reading thread-local errno location.
     let saved_errno = unsafe { *errno_ptr() };
 
-    // Read socket type from the original fd so we probe with the same type.
     let mut sock_type: c_int = libc::SOCK_STREAM;
     let mut optlen: socklen_t = std::mem::size_of::<c_int>() as socklen_t;
-    // SAFETY: fd is valid; getsockopt reads SO_TYPE into sock_type.
     unsafe {
         if libc::getsockopt(
             fd,
@@ -245,25 +212,21 @@ unsafe fn probe_has_listener(fd: c_int, silo_ip: u32, port: u16) -> bool {
         }
     }
 
-    // SAFETY: Creating a temporary AF_INET socket for the probe.
     let probe_fd = unsafe { libc::socket(AF_INET, sock_type, 0) };
     if probe_fd < 0 {
-        // SAFETY: Restoring saved errno.
         unsafe { *errno_ptr() = saved_errno };
         return false;
     }
 
-    // SAFETY: zeroed sockaddr_in is valid; we set all relevant fields.
     let mut sin: sockaddr_in = unsafe { std::mem::zeroed() };
     #[cfg(target_os = "macos")]
     {
         sin.sin_len = std::mem::size_of::<sockaddr_in>() as u8;
     }
     sin.sin_family = AF_INET as _;
-    sin.sin_port = port; // already in network byte order
+    sin.sin_port = port;
     sin.sin_addr.s_addr = silo_ip;
 
-    // SAFETY: probe_fd is a valid socket; sin is fully initialized.
     let ret = unsafe {
         call_real_bind(
             probe_fd,
@@ -272,33 +235,17 @@ unsafe fn probe_has_listener(fd: c_int, silo_ip: u32, port: u16) -> bool {
         )
     };
 
-    // SAFETY: Reading errno to check for EADDRINUSE.
     let has_listener = ret < 0 && unsafe { *errno_ptr() } == libc::EADDRINUSE;
-
-    // SAFETY: Closing the temporary probe socket.
     unsafe { libc::close(probe_fd) };
-
-    // SAFETY: Restoring the caller's errno.
     unsafe { *errno_ptr() = saved_errno };
 
     has_listener
 }
 
-/// Conditionally rewrite a connect(2) sockaddr to SILO_IP, but only if
-/// the target port has an active listener on SILO_IP.
-///
-/// Unlike `rewrite_addr` (used for bind/sendto), this function probes the
-/// kernel before rewriting, so connections to external services on
-/// `127.0.0.1` (e.g. PostgreSQL, Redis) are not hijacked.
-///
-/// # Safety
-///
-/// `fd` must be a valid socket. `addr` must be null or a valid, mutable
-/// sockaddr whose `sa_family` is initialized. If `AF_INET`, the underlying
-/// storage must be a valid `sockaddr_in`. If `AF_INET6`, a valid
-/// `sockaddr_in6`.
+/// Rewrite a connect(2) sockaddr to SILO_IP only if the target port has
+/// an active listener on SILO_IP. This avoids hijacking connections to
+/// external services (PostgreSQL, Redis, etc.) on `127.0.0.1`.
 unsafe fn rewrite_connect_addr(fd: c_int, addr: *const sockaddr) {
-    // SAFETY: Caller guarantees addr is null or valid sockaddr.
     let Some(family) = (unsafe { read_sa_family(addr) }) else {
         return;
     };
@@ -308,15 +255,11 @@ unsafe fn rewrite_connect_addr(fd: c_int, addr: *const sockaddr) {
 
     if family == AF_INET {
         let sin = addr as *mut sockaddr_in;
-        // SAFETY: family == AF_INET; addr is a valid sockaddr_in.
         let s_addr = unsafe { (*sin).sin_addr.s_addr };
         let localhost_be = u32::from(Ipv4Addr::LOCALHOST).to_be();
         if s_addr == localhost_be {
-            // SAFETY: Reading port from the valid sockaddr_in.
             let port = unsafe { (*sin).sin_port };
-            // SAFETY: fd is valid; port is in network byte order.
             if unsafe { probe_has_listener(fd, silo_ip, port) } {
-                // SAFETY: Writing back to the same valid sockaddr_in.
                 unsafe { (*sin).sin_addr.s_addr = silo_ip };
             }
         }
@@ -325,15 +268,11 @@ unsafe fn rewrite_connect_addr(fd: c_int, addr: *const sockaddr) {
     #[cfg(target_os = "linux")]
     if family == libc::AF_INET6 as c_int {
         let sin6 = addr as *mut libc::sockaddr_in6;
-        // SAFETY: family == AF_INET6; addr is a valid sockaddr_in6.
         let s6_addr = unsafe { (*sin6).sin6_addr.s6_addr };
         if s6_addr == rewrite::V6_LOOPBACK {
-            // SAFETY: Reading port from the valid sockaddr_in6.
             let port = unsafe { (*sin6).sin6_port };
-            // SAFETY: fd is valid; port is in network byte order.
             if unsafe { probe_has_listener(fd, silo_ip, port) } {
                 let new_addr = rewrite::ipv4_mapped_v6(silo_ip);
-                // SAFETY: Writing back to the same valid sockaddr_in6.
                 unsafe { (*sin6).sin6_addr.s6_addr = new_addr };
             }
         }
@@ -726,33 +665,23 @@ mod platform {
         len: socklen_t,
     ) -> c_int {
         if !addr.is_null() {
-            // SAFETY: addr is non-null; reading sa_family is safe.
             let family = unsafe { (*addr).sa_family } as c_int;
 
             if family == libc::AF_INET6 as c_int {
                 let sin6 = addr as *const libc::sockaddr_in6;
-                // SAFETY: family == AF_INET6; reading s6_addr and sin6_port
-                // are within bounds of the valid sockaddr_in6.
                 let v6_addr = unsafe { (*sin6).sin6_addr.s6_addr };
                 if v6_addr == rewrite::V6_LOOPBACK {
                     if let Some(ip) = get_silo_ip() {
                         let port = unsafe { (*sin6).sin6_port };
-                        // Only reconnect if SILO_IP:port has a listener.
-                        // SAFETY: fd is valid; port is in network byte order.
                         if unsafe { probe_has_listener(fd, ip, port) } {
-                            // SAFETY: Valid fd and port; reconnect_as_ipv4
-                            // handles socket replacement safely.
                             return unsafe { reconnect_as_ipv4(fd, port, ip) };
                         }
                     }
-                    // No listener on SILO_IP — pass through to real connect.
                     return unsafe { real_connect(fd, addr, len) };
                 }
             }
         }
 
-        // SAFETY: fd is valid; addr is valid or null. Probe-based rewrite
-        // only rewrites if SILO_IP:port has a listener.
         unsafe {
             rewrite_connect_addr(fd, addr);
             real_connect(fd, addr, len)
@@ -1386,10 +1315,7 @@ mod platform {
             "connect",
             unsafe extern "C" fn(c_int, *const sockaddr, socklen_t) -> c_int
         );
-        // SAFETY: fd is valid; addr is valid or null per connect(2) contract.
-        // Probe-based rewrite only rewrites if SILO_IP:port has a listener.
         unsafe { rewrite_connect_addr(fd, addr) };
-        // SAFETY: Forwarding caller's arguments to the real connect(2).
         unsafe { real_fn(fd, addr, len) }
     }
 
