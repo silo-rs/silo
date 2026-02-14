@@ -24,10 +24,6 @@ silo npm run dev
 # Listening on http://localhost:3000
 ```
 
-## Why not just use a different port?
-
-`PORT=3001` works for one app. It falls apart when your frontend hardcodes `localhost:3000/api`, when Turborepo spawns five services, or when multiple agents spin up worktrees at the same time. Silo gives each branch its own IP, so every service keeps its default port.
-
 ## How it works
 
 Prefix any command with `silo`. Each directory and branch gets its own localhost IP, so the same port never conflicts.
