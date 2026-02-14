@@ -203,7 +203,7 @@ unsafe fn call_real_bind(fd: c_int, addr: *const sockaddr, len: socklen_t) -> c_
         // The null-terminated literal is valid for dlsym. transmute is safe
         // because we assert non-null and the type matches bind(2) ABI.
         unsafe {
-            let ptr = libc::dlsym(libc::RTLD_NEXT, "bind\0".as_ptr().cast());
+            let ptr = libc::dlsym(libc::RTLD_NEXT, c"bind".as_ptr());
             assert!(!ptr.is_null(), "silo-bind: dlsym failed to resolve bind");
             std::mem::transmute(ptr)
         }
