@@ -20,6 +20,10 @@ pub enum Commands {
         #[arg(long, short = 'n')]
         name: Option<String>,
 
+        /// Override IP address (must be in 127.0.0.0/8)
+        #[arg(long)]
+        ip: Option<std::net::Ipv4Addr>,
+
         /// Suppress the silo banner
         #[arg(long, short)]
         quiet: bool,

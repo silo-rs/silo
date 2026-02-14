@@ -7,7 +7,11 @@ use tracing::debug;
 use crate::context::Context;
 use crate::error::{Error, Result};
 
-pub fn resolve(cwd: &Path, name_override: Option<&str>) -> Result<Context> {
+pub fn resolve(
+    cwd: &Path,
+    name_override: Option<&str>,
+    ip_override: Option<Ipv4Addr>,
+) -> Result<Context> {
     let git_root = find_git_root(cwd)?;
     let canonical = git_root.canonicalize().unwrap_or_else(|_| git_root.clone());
 
@@ -19,7 +23,15 @@ pub fn resolve(cwd: &Path, name_override: Option<&str>) -> Result<Context> {
         }
     };
 
-    let ip = compute_ip(&canonical, &name);
+    let ip = match ip_override {
+        Some(ip) => {
+            if ip.octets()[0] != 127 {
+                return Err(Error::InvalidIpOverride(ip));
+            }
+            ip
+        }
+        None => compute_ip(&canonical, &name),
+    };
 
     let project_name = main_repo_name(&git_root);
     let hostname = format!("{}.{}.silo", name, project_name);

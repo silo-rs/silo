@@ -10,6 +10,7 @@ use silo::Session;
 
 pub fn run(
     name: Option<&str>,
+    ip: Option<std::net::Ipv4Addr>,
     command: &[String],
     quiet: bool,
     emit_json: bool,
@@ -23,7 +24,7 @@ pub fn run(
 
     crate::sudoers::ensure()?;
 
-    let ctx = silo::Context::current(name)?;
+    let ctx = silo::Context::current(name, ip)?;
     let backend = make_backend(&ctx)?;
 
     let session = Session::activate(ctx, silo::ActivateOptions::default(), backend)?;
@@ -136,7 +137,7 @@ fn verify_session(session: &Session) {
                 ui::check_warn(
                     "hosts",
                     format!(
-                        "ip collision — {} is also mapped to {}",
+                        "ip collision — {} is also mapped to {}. fix: silo run --ip 127.x.y.z <cmd>",
                         session.ip(),
                         e.hostname
                     ),

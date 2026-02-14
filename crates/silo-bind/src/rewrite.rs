@@ -42,27 +42,6 @@ pub fn rewrite_ipv6_addr(s6_addr: [u8; 16], silo_ip: u32, match_any: bool) -> Op
     }
 }
 
-/// Decide whether an AF_INET `s_addr` from a DNS result (getaddrinfo/gethostbyname)
-/// should be rewritten. Both `127.0.0.1` and `0.0.0.0` always match.
-pub fn rewrite_resolved_ipv4(s_addr: u32, silo_ip: u32) -> Option<u32> {
-    let localhost_be = u32::from(Ipv4Addr::LOCALHOST).to_be();
-    if s_addr == localhost_be || s_addr == 0 {
-        Some(silo_ip)
-    } else {
-        None
-    }
-}
-
-/// Decide whether an AF_INET6 `s6_addr` from a DNS result should be rewritten.
-/// Only `::1` matches (not `::`, matching existing behavior).
-pub fn rewrite_resolved_ipv6(s6_addr: [u8; 16], silo_ip: u32) -> Option<[u8; 16]> {
-    if s6_addr == V6_LOOPBACK {
-        Some(ipv4_mapped_v6(silo_ip))
-    } else {
-        None
-    }
-}
-
 /// Decide whether an ifaddrs AF_INET address should be hidden (rewritten to
 /// `127.0.0.1`). Returns `Some(localhost_be)` if the address is in `127.0.0.0/8`
 /// but is neither `127.0.0.1` nor `silo_ip`.
@@ -241,49 +220,6 @@ mod tests {
         assert_eq!(rewrite_ipv6_addr(mapped, silo_ip(), true), None);
     }
 
-    // ── rewrite_resolved_ipv4 ──
-
-    #[test]
-    fn resolved_ipv4_localhost() {
-        assert_eq!(
-            rewrite_resolved_ipv4(localhost_be(), silo_ip()),
-            Some(silo_ip())
-        );
-    }
-
-    #[test]
-    fn resolved_ipv4_any() {
-        assert_eq!(rewrite_resolved_ipv4(0, silo_ip()), Some(silo_ip()));
-    }
-
-    #[test]
-    fn resolved_ipv4_other() {
-        let other = u32::from(Ipv4Addr::new(10, 0, 0, 1)).to_be();
-        assert_eq!(rewrite_resolved_ipv4(other, silo_ip()), None);
-    }
-
-    // ── rewrite_resolved_ipv6 ──
-
-    #[test]
-    fn resolved_ipv6_loopback() {
-        let expected = ipv4_mapped_v6(silo_ip());
-        assert_eq!(
-            rewrite_resolved_ipv6(V6_LOOPBACK, silo_ip()),
-            Some(expected)
-        );
-    }
-
-    #[test]
-    fn resolved_ipv6_any_does_not_match() {
-        assert_eq!(rewrite_resolved_ipv6(V6_ANY, silo_ip()), None);
-    }
-
-    #[test]
-    fn resolved_ipv6_other() {
-        let link_local = [0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
-        assert_eq!(rewrite_resolved_ipv6(link_local, silo_ip()), None);
-    }
-
     // ── hide_alias ──
 
     #[test]
@@ -336,20 +272,6 @@ mod tests {
             fn ipv6_rewrite_idempotent(s6_addr in arb_v6(), silo_ip: u32, match_any: bool) {
                 let first = rewrite_ipv6_addr(s6_addr, silo_ip, match_any).unwrap_or(s6_addr);
                 let second = rewrite_ipv6_addr(first, silo_ip, match_any).unwrap_or(first);
-                prop_assert_eq!(first, second);
-            }
-
-            #[test]
-            fn resolved_ipv4_idempotent(s_addr: u32, silo_ip: u32) {
-                let first = rewrite_resolved_ipv4(s_addr, silo_ip).unwrap_or(s_addr);
-                let second = rewrite_resolved_ipv4(first, silo_ip).unwrap_or(first);
-                prop_assert_eq!(first, second);
-            }
-
-            #[test]
-            fn resolved_ipv6_idempotent(s6_addr in arb_v6(), silo_ip: u32) {
-                let first = rewrite_resolved_ipv6(s6_addr, silo_ip).unwrap_or(s6_addr);
-                let second = rewrite_resolved_ipv6(first, silo_ip).unwrap_or(first);
                 prop_assert_eq!(first, second);
             }
 

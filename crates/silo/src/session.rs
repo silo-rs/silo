@@ -115,7 +115,7 @@ pub struct Session {
 impl Session {
     /// Compute the deterministic IP for a directory without any side effects.
     pub fn ip_for(dir: &Path, name: Option<&str>) -> Result<Ipv4Addr> {
-        let ctx = Context::for_dir(dir, name)?;
+        let ctx = Context::for_dir(dir, name, None)?;
         Ok(ctx.ip())
     }
 

@@ -23,6 +23,7 @@ fn main() {
         "bind_any" => cmd_bind(Ipv4Addr::UNSPECIFIED),
         "bind_localhost" => cmd_bind(Ipv4Addr::LOCALHOST),
         "connect_localhost" => cmd_connect_localhost(),
+        "connect_no_listener" => cmd_connect_no_listener(),
         "getaddrinfo" => cmd_getaddrinfo(),
         "getaddrinfo_v6" => cmd_getaddrinfo_v6(),
         "sendto_any" => cmd_sendto(Ipv4Addr::UNSPECIFIED),
@@ -70,6 +71,32 @@ fn cmd_connect_localhost() -> io::Result<()> {
     let stream = std::net::TcpStream::connect(format!("127.0.0.1:{}", listener_addr.port()))?;
     let peer = stream.peer_addr()?;
     println!("connected={peer}");
+    Ok(())
+}
+
+/// Connect to 127.0.0.1:<port> where nothing is listening on SILO_IP.
+/// With the bind probe, the connect should NOT be rewritten, and since
+/// nothing is listening on that port, we should get ECONNREFUSED.
+fn cmd_connect_no_listener() -> io::Result<()> {
+    // Create a listener to discover a free port, then immediately close it.
+    // This gives us a port that has no active listener.
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let port = listener.local_addr()?.port();
+    drop(listener); // close → no listener on SILO_IP:port anymore
+
+    // Connect to 127.0.0.1:port — probe should find no listener → no rewrite
+    match std::net::TcpStream::connect(format!("127.0.0.1:{port}")) {
+        Err(e) if e.kind() == io::ErrorKind::ConnectionRefused => {
+            println!("connect_result=refused");
+        }
+        Ok(stream) => {
+            let peer = stream.peer_addr()?;
+            println!("connect_result=connected:{peer}");
+        }
+        Err(e) => {
+            println!("connect_result=error:{e}");
+        }
+    }
     Ok(())
 }
 

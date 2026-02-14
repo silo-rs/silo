@@ -1,7 +1,6 @@
 pub mod rewrite;
 
 use std::env;
-#[cfg(target_os = "macos")]
 use std::net::Ipv4Addr;
 use std::os::raw::c_int;
 use std::sync::OnceLock;
@@ -55,20 +54,6 @@ unsafe extern "C" {
         path: *const libc::c_char,
         argv: *const *const libc::c_char,
         envp: *const *const libc::c_char,
-    ) -> c_int;
-
-    #[link_name = "gethostbyname"]
-    fn real_gethostbyname(name: *const libc::c_char) -> *mut libc::hostent;
-
-    #[link_name = "gethostbyname2"]
-    fn real_gethostbyname2(name: *const libc::c_char, af: c_int) -> *mut libc::hostent;
-
-    #[link_name = "getaddrinfo"]
-    fn real_getaddrinfo(
-        node: *const libc::c_char,
-        service: *const libc::c_char,
-        hints: *const libc::addrinfo,
-        res: *mut *mut libc::addrinfo,
     ) -> c_int;
 
     #[link_name = "sendto"]
@@ -175,157 +160,183 @@ unsafe fn rewrite_addr(addr: *const sockaddr, match_any: bool) {
 }
 
 // ---------------------------------------------------------------------------
-// Safe addrinfo helpers
+// Bind probe: check if SILO_IP:port has an active listener
 // ---------------------------------------------------------------------------
 
-/// Rewrite a single `addrinfo` node's address in-place.
+/// Get a pointer to errno (platform-specific).
 ///
 /// # Safety
 ///
-/// `ai` must point to a valid `addrinfo` whose `ai_addr` (if non-null)
-/// points to a correctly-typed sockaddr matching `ai_family`.
-unsafe fn rewrite_one_addrinfo(ai: &mut libc::addrinfo, silo_ip: u32) {
-    if ai.ai_addr.is_null() {
-        return;
+/// The returned pointer is valid for the calling thread's errno location.
+unsafe fn errno_ptr() -> *mut c_int {
+    #[cfg(target_os = "linux")]
+    {
+        unsafe { libc::__errno_location() }
     }
-    if ai.ai_family == AF_INET {
-        let sin = ai.ai_addr as *mut sockaddr_in;
-        // SAFETY: ai_family == AF_INET and ai_addr is non-null, so ai_addr
-        // points to a valid sockaddr_in as guaranteed by getaddrinfo(3).
+    #[cfg(target_os = "macos")]
+    {
+        unsafe { libc::__error() }
+    }
+}
+
+/// Call the real (non-intercepted) `bind(2)`.
+///
+/// On macOS this uses the FFI declaration (dyld interpose doesn't affect
+/// calls within the same library). On Linux we must resolve the real symbol
+/// via `dlsym(RTLD_NEXT)` because our `bind` IS the LD_PRELOAD override.
+///
+/// # Safety
+///
+/// Same contract as `bind(2)`: `fd` must be a valid socket, `addr` must
+/// point to a valid sockaddr of at least `len` bytes (or be null).
+#[cfg(target_os = "macos")]
+unsafe fn call_real_bind(fd: c_int, addr: *const sockaddr, len: socklen_t) -> c_int {
+    unsafe { real_bind(fd, addr, len) }
+}
+
+#[cfg(target_os = "linux")]
+unsafe fn call_real_bind(fd: c_int, addr: *const sockaddr, len: socklen_t) -> c_int {
+    static REAL_BIND: OnceLock<unsafe extern "C" fn(c_int, *const sockaddr, socklen_t) -> c_int> =
+        OnceLock::new();
+    let f = *REAL_BIND.get_or_init(|| {
+        // SAFETY: Resolving the real bind(2) from libc via RTLD_NEXT.
+        // The null-terminated literal is valid for dlsym. transmute is safe
+        // because we assert non-null and the type matches bind(2) ABI.
+        unsafe {
+            let ptr = libc::dlsym(libc::RTLD_NEXT, "bind\0".as_ptr().cast());
+            assert!(!ptr.is_null(), "silo-bind: dlsym failed to resolve bind");
+            std::mem::transmute(ptr)
+        }
+    });
+    unsafe { f(fd, addr, len) }
+}
+
+/// Probe whether `silo_ip:port` has an active listener by attempting to bind
+/// a temporary socket to the same address.
+///
+/// Returns `true` if `EADDRINUSE` is returned (meaning something is already
+/// listening on that port at `silo_ip`). Returns `false` for any other
+/// result, including success (no listener) or other errors.
+///
+/// Saves and restores `errno` so the probe is transparent to the caller.
+///
+/// # Safety
+///
+/// `fd` must be a valid socket file descriptor (used to read `SO_TYPE`).
+/// `port` must be in network byte order.
+unsafe fn probe_has_listener(fd: c_int, silo_ip: u32, port: u16) -> bool {
+    // SAFETY: Reading thread-local errno location.
+    let saved_errno = unsafe { *errno_ptr() };
+
+    // Read socket type from the original fd so we probe with the same type.
+    let mut sock_type: c_int = libc::SOCK_STREAM;
+    let mut optlen: socklen_t = std::mem::size_of::<c_int>() as socklen_t;
+    // SAFETY: fd is valid; getsockopt reads SO_TYPE into sock_type.
+    unsafe {
+        if libc::getsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_TYPE,
+            &mut sock_type as *mut _ as *mut libc::c_void,
+            &mut optlen,
+        ) != 0
+        {
+            sock_type = libc::SOCK_STREAM;
+        }
+    }
+
+    // SAFETY: Creating a temporary AF_INET socket for the probe.
+    let probe_fd = unsafe { libc::socket(AF_INET, sock_type, 0) };
+    if probe_fd < 0 {
+        // SAFETY: Restoring saved errno.
+        unsafe { *errno_ptr() = saved_errno };
+        return false;
+    }
+
+    // SAFETY: zeroed sockaddr_in is valid; we set all relevant fields.
+    let mut sin: sockaddr_in = unsafe { std::mem::zeroed() };
+    #[cfg(target_os = "macos")]
+    {
+        sin.sin_len = std::mem::size_of::<sockaddr_in>() as u8;
+    }
+    sin.sin_family = AF_INET as _;
+    sin.sin_port = port; // already in network byte order
+    sin.sin_addr.s_addr = silo_ip;
+
+    // SAFETY: probe_fd is a valid socket; sin is fully initialized.
+    let ret = unsafe {
+        call_real_bind(
+            probe_fd,
+            &sin as *const sockaddr_in as *const sockaddr,
+            std::mem::size_of::<sockaddr_in>() as socklen_t,
+        )
+    };
+
+    // SAFETY: Reading errno to check for EADDRINUSE.
+    let has_listener = ret < 0 && unsafe { *errno_ptr() } == libc::EADDRINUSE;
+
+    // SAFETY: Closing the temporary probe socket.
+    unsafe { libc::close(probe_fd) };
+
+    // SAFETY: Restoring the caller's errno.
+    unsafe { *errno_ptr() = saved_errno };
+
+    has_listener
+}
+
+/// Conditionally rewrite a connect(2) sockaddr to SILO_IP, but only if
+/// the target port has an active listener on SILO_IP.
+///
+/// Unlike `rewrite_addr` (used for bind/sendto), this function probes the
+/// kernel before rewriting, so connections to external services on
+/// `127.0.0.1` (e.g. PostgreSQL, Redis) are not hijacked.
+///
+/// # Safety
+///
+/// `fd` must be a valid socket. `addr` must be null or a valid, mutable
+/// sockaddr whose `sa_family` is initialized. If `AF_INET`, the underlying
+/// storage must be a valid `sockaddr_in`. If `AF_INET6`, a valid
+/// `sockaddr_in6`.
+unsafe fn rewrite_connect_addr(fd: c_int, addr: *const sockaddr) {
+    // SAFETY: Caller guarantees addr is null or valid sockaddr.
+    let Some(family) = (unsafe { read_sa_family(addr) }) else {
+        return;
+    };
+    let Some(silo_ip) = get_silo_ip() else {
+        return;
+    };
+
+    if family == AF_INET {
+        let sin = addr as *mut sockaddr_in;
+        // SAFETY: family == AF_INET; addr is a valid sockaddr_in.
         let s_addr = unsafe { (*sin).sin_addr.s_addr };
-        if let Some(new_addr) = rewrite::rewrite_resolved_ipv4(s_addr, silo_ip) {
-            // SAFETY: Same pointer validity as above.
-            unsafe { (*sin).sin_addr.s_addr = new_addr };
+        let localhost_be = u32::from(Ipv4Addr::LOCALHOST).to_be();
+        if s_addr == localhost_be {
+            // SAFETY: Reading port from the valid sockaddr_in.
+            let port = unsafe { (*sin).sin_port };
+            // SAFETY: fd is valid; port is in network byte order.
+            if unsafe { probe_has_listener(fd, silo_ip, port) } {
+                // SAFETY: Writing back to the same valid sockaddr_in.
+                unsafe { (*sin).sin_addr.s_addr = silo_ip };
+            }
         }
-    } else if ai.ai_family == libc::AF_INET6 as c_int {
-        let sin6 = ai.ai_addr as *mut libc::sockaddr_in6;
-        // SAFETY: ai_family == AF_INET6 and ai_addr is non-null, so ai_addr
-        // points to a valid sockaddr_in6 as guaranteed by getaddrinfo(3).
+    }
+
+    #[cfg(target_os = "linux")]
+    if family == libc::AF_INET6 as c_int {
+        let sin6 = addr as *mut libc::sockaddr_in6;
+        // SAFETY: family == AF_INET6; addr is a valid sockaddr_in6.
         let s6_addr = unsafe { (*sin6).sin6_addr.s6_addr };
-        if let Some(new_addr) = rewrite::rewrite_resolved_ipv6(s6_addr, silo_ip) {
-            // SAFETY: Same pointer validity as above.
-            unsafe { (*sin6).sin6_addr.s6_addr = new_addr };
+        if s6_addr == rewrite::V6_LOOPBACK {
+            // SAFETY: Reading port from the valid sockaddr_in6.
+            let port = unsafe { (*sin6).sin6_port };
+            // SAFETY: fd is valid; port is in network byte order.
+            if unsafe { probe_has_listener(fd, silo_ip, port) } {
+                let new_addr = rewrite::ipv4_mapped_v6(silo_ip);
+                // SAFETY: Writing back to the same valid sockaddr_in6.
+                unsafe { (*sin6).sin6_addr.s6_addr = new_addr };
+            }
         }
-    }
-}
-
-/// Rewrite addresses in a `getaddrinfo` result linked list.
-///
-/// # Safety
-///
-/// `res` must point to a valid `*mut addrinfo` (the out-parameter from
-/// `getaddrinfo(3)`). Each node in the linked list must be a valid `addrinfo`
-/// with correctly-typed `ai_addr`.
-unsafe fn rewrite_addrinfo_results(res: *mut *mut libc::addrinfo) {
-    let Some(silo_ip) = get_silo_ip() else {
-        return;
-    };
-    // SAFETY: Caller guarantees `res` points to a valid addrinfo pointer.
-    let mut cur = unsafe { *res };
-    while !cur.is_null() {
-        // SAFETY: `cur` is non-null and points to a valid addrinfo node
-        // allocated by getaddrinfo(3). The linked list is well-formed.
-        let ai = unsafe { &mut *cur };
-        // SAFETY: ai is a valid addrinfo reference; ai_addr type matches
-        // ai_family as guaranteed by getaddrinfo(3).
-        unsafe { rewrite_one_addrinfo(ai, silo_ip) };
-        cur = ai.ai_next;
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Safe hostent helpers
-// ---------------------------------------------------------------------------
-
-/// Rewrite IPv4 addresses in a hostent's `h_addr_list`.
-///
-/// Uses unaligned reads/writes throughout because macOS `gethostbyname(3)`
-/// may return misaligned `hostent` pointers.
-///
-/// # Safety
-///
-/// `h_addr_list` must be a valid, null-terminated array of pointers. Each
-/// non-null entry must point to at least 4 bytes of writable memory.
-unsafe fn rewrite_hostent_ipv4(h_addr_list: *mut *mut libc::c_char, silo_ip: u32) {
-    let mut i = 0usize;
-    loop {
-        // SAFETY: h_addr_list is a null-terminated array; we read entries
-        // sequentially until we hit null. Using read_unaligned because the
-        // array itself may be misaligned (macOS).
-        let entry = unsafe { h_addr_list.add(i).read_unaligned() };
-        if entry.is_null() {
-            break;
-        }
-        // SAFETY: Non-null entry points to an IPv4 address (4 bytes) as
-        // guaranteed by h_addrtype == AF_INET && h_length == 4. Using
-        // read_unaligned because the buffer may not be u32-aligned.
-        let addr = unsafe { std::ptr::read_unaligned(entry as *const u32) };
-        if let Some(new_addr) = rewrite::rewrite_resolved_ipv4(addr, silo_ip) {
-            // SAFETY: Same pointer validity; write back to the same location.
-            unsafe { std::ptr::write_unaligned(entry as *mut u32, new_addr) };
-        }
-        i += 1;
-    }
-}
-
-/// Rewrite IPv6 addresses in a hostent's `h_addr_list`.
-///
-/// # Safety
-///
-/// `h_addr_list` must be a valid, null-terminated array of pointers. Each
-/// non-null entry must point to at least 16 bytes of writable memory.
-unsafe fn rewrite_hostent_ipv6(h_addr_list: *mut *mut libc::c_char, silo_ip: u32) {
-    let mut i = 0usize;
-    loop {
-        // SAFETY: Same as rewrite_hostent_ipv4 — null-terminated array,
-        // unaligned reads for macOS compatibility.
-        let entry = unsafe { h_addr_list.add(i).read_unaligned() };
-        if entry.is_null() {
-            break;
-        }
-        let ptr = entry as *mut u8;
-        let mut v6 = [0u8; 16];
-        // SAFETY: entry points to 16 bytes (h_length == 16). Copying into a
-        // stack buffer avoids alignment issues.
-        unsafe { std::ptr::copy_nonoverlapping(ptr, v6.as_mut_ptr(), 16) };
-        if let Some(new_v6) = rewrite::rewrite_resolved_ipv6(v6, silo_ip) {
-            // SAFETY: Same pointer; writing back 16 bytes.
-            unsafe { std::ptr::copy_nonoverlapping(new_v6.as_ptr(), ptr, 16) };
-        }
-        i += 1;
-    }
-}
-
-/// Rewrite addresses in a `hostent` returned by `gethostbyname(3)`.
-///
-/// # Safety
-///
-/// `hp` must be either null or point to a valid `hostent`. The `h_addr_list`
-/// field must be a valid, null-terminated array whose entries match the
-/// size indicated by `h_length`. Fields may be misaligned (macOS).
-unsafe fn rewrite_hostent(hp: *mut libc::hostent) {
-    if hp.is_null() {
-        return;
-    }
-    let Some(silo_ip) = get_silo_ip() else {
-        return;
-    };
-
-    // SAFETY: `hp` is non-null. Using addr_of! + read_unaligned to avoid
-    // creating a reference to a potentially misaligned hostent struct
-    // (macOS gethostbyname may return misaligned pointers).
-    let h_addrtype = unsafe { std::ptr::addr_of!((*hp).h_addrtype).read_unaligned() };
-    let h_length = unsafe { std::ptr::addr_of!((*hp).h_length).read_unaligned() };
-    let h_addr_list = unsafe { std::ptr::addr_of!((*hp).h_addr_list).read_unaligned() };
-
-    if h_addrtype == AF_INET && h_length == 4 {
-        // SAFETY: h_addrtype and h_length confirm IPv4; h_addr_list entries
-        // each point to 4 bytes.
-        unsafe { rewrite_hostent_ipv4(h_addr_list, silo_ip) };
-    } else if h_addrtype == libc::AF_INET6 && h_length == 16 {
-        // SAFETY: h_addrtype and h_length confirm IPv6; h_addr_list entries
-        // each point to 16 bytes.
-        unsafe { rewrite_hostent_ipv6(h_addr_list, silo_ip) };
     }
 }
 
@@ -723,20 +734,27 @@ mod platform {
                 // SAFETY: family == AF_INET6; reading s6_addr and sin6_port
                 // are within bounds of the valid sockaddr_in6.
                 let v6_addr = unsafe { (*sin6).sin6_addr.s6_addr };
-                if let Some(ip) = get_silo_ip()
-                    && rewrite::rewrite_ipv6_addr(v6_addr, ip, false).is_some()
-                {
-                    let port = unsafe { (*sin6).sin6_port };
-                    // SAFETY: Valid fd and port; reconnect_as_ipv4 handles
-                    // socket replacement safely.
-                    return unsafe { reconnect_as_ipv4(fd, port, ip) };
+                if v6_addr == rewrite::V6_LOOPBACK {
+                    if let Some(ip) = get_silo_ip() {
+                        let port = unsafe { (*sin6).sin6_port };
+                        // Only reconnect if SILO_IP:port has a listener.
+                        // SAFETY: fd is valid; port is in network byte order.
+                        if unsafe { probe_has_listener(fd, ip, port) } {
+                            // SAFETY: Valid fd and port; reconnect_as_ipv4
+                            // handles socket replacement safely.
+                            return unsafe { reconnect_as_ipv4(fd, port, ip) };
+                        }
+                    }
+                    // No listener on SILO_IP — pass through to real connect.
+                    return unsafe { real_connect(fd, addr, len) };
                 }
             }
         }
 
-        // SAFETY: Forwarding valid arguments to the real connect(2).
+        // SAFETY: fd is valid; addr is valid or null. Probe-based rewrite
+        // only rewrites if SILO_IP:port has a listener.
         unsafe {
-            rewrite_addr(addr, false);
+            rewrite_connect_addr(fd, addr);
             real_connect(fd, addr, len)
         }
     }
@@ -997,121 +1015,6 @@ mod platform {
         }
         // SAFETY: Forwarding all original arguments to real execve.
         unsafe { real_execve(path, argv, envp) }
-    }
-
-    // -- getaddrinfo ----------------------------------------------------------
-
-    type GetaddrinfoFn = unsafe extern "C" fn(
-        *const libc::c_char,
-        *const libc::c_char,
-        *const libc::addrinfo,
-        *mut *mut libc::addrinfo,
-    ) -> c_int;
-
-    #[repr(C)]
-    struct InterposeGetaddrinfo {
-        replacement: GetaddrinfoFn,
-        original: GetaddrinfoFn,
-    }
-
-    // SAFETY: Interpose table entry; signatures match getaddrinfo(3) ABI.
-    #[unsafe(no_mangle)]
-    #[used]
-    #[unsafe(link_section = "__DATA,__interpose")]
-    static INTERPOSE_GETADDRINFO: InterposeGetaddrinfo = InterposeGetaddrinfo {
-        replacement: silo_getaddrinfo_entry,
-        original: real_getaddrinfo,
-    };
-
-    #[unsafe(no_mangle)]
-    unsafe extern "C" fn silo_getaddrinfo_entry(
-        node: *const libc::c_char,
-        service: *const libc::c_char,
-        hints: *const libc::addrinfo,
-        res: *mut *mut libc::addrinfo,
-    ) -> c_int {
-        // SAFETY: Forwarding all arguments to real getaddrinfo(3).
-        let ret = unsafe { real_getaddrinfo(node, service, hints, res) };
-        if ret != 0 || res.is_null() {
-            return ret;
-        }
-
-        if debug_enabled() && !res.is_null() {
-            let node_str = if !node.is_null() {
-                // SAFETY: node is non-null and null-terminated.
-                unsafe { CStr::from_ptr(node) }
-                    .to_string_lossy()
-                    .into_owned()
-            } else {
-                "(null)".into()
-            };
-            eprintln!("[silo-bind] getaddrinfo: {} rewriting → SILO_IP", node_str);
-        }
-
-        // SAFETY: ret == 0 means getaddrinfo succeeded and res points to a
-        // valid addrinfo linked list.
-        unsafe { rewrite_addrinfo_results(res) };
-        ret
-    }
-
-    // -- gethostbyname --------------------------------------------------------
-
-    type GethostbynameFn = unsafe extern "C" fn(*const libc::c_char) -> *mut libc::hostent;
-
-    #[repr(C)]
-    struct InterposeGethostbyname {
-        replacement: GethostbynameFn,
-        original: GethostbynameFn,
-    }
-
-    // SAFETY: Interpose table entry; signatures match gethostbyname(3) ABI.
-    #[unsafe(no_mangle)]
-    #[used]
-    #[unsafe(link_section = "__DATA,__interpose")]
-    static INTERPOSE_GETHOSTBYNAME: InterposeGethostbyname = InterposeGethostbyname {
-        replacement: silo_gethostbyname_entry,
-        original: real_gethostbyname,
-    };
-
-    #[unsafe(no_mangle)]
-    unsafe extern "C" fn silo_gethostbyname_entry(name: *const libc::c_char) -> *mut libc::hostent {
-        // SAFETY: Forwarding argument to real gethostbyname(3).
-        let result = unsafe { real_gethostbyname(name) };
-        // SAFETY: result is either null (handled inside) or a valid hostent
-        // from gethostbyname(3).
-        unsafe { rewrite_hostent(result) };
-        result
-    }
-
-    // -- gethostbyname2 -------------------------------------------------------
-
-    type Gethostbyname2Fn = unsafe extern "C" fn(*const libc::c_char, c_int) -> *mut libc::hostent;
-
-    #[repr(C)]
-    struct InterposeGethostbyname2 {
-        replacement: Gethostbyname2Fn,
-        original: Gethostbyname2Fn,
-    }
-
-    // SAFETY: Interpose table entry; signatures match gethostbyname2(3) ABI.
-    #[unsafe(no_mangle)]
-    #[used]
-    #[unsafe(link_section = "__DATA,__interpose")]
-    static INTERPOSE_GETHOSTBYNAME2: InterposeGethostbyname2 = InterposeGethostbyname2 {
-        replacement: silo_gethostbyname2_entry,
-        original: real_gethostbyname2,
-    };
-
-    #[unsafe(no_mangle)]
-    unsafe extern "C" fn silo_gethostbyname2_entry(
-        name: *const libc::c_char,
-        af: c_int,
-    ) -> *mut libc::hostent {
-        // SAFETY: Forwarding arguments to real gethostbyname2(3).
-        let result = unsafe { real_gethostbyname2(name, af) };
-        // SAFETY: result is either null or a valid hostent.
-        unsafe { rewrite_hostent(result) };
-        result
     }
 
     // -- sendto ---------------------------------------------------------------
@@ -1483,68 +1386,11 @@ mod platform {
             "connect",
             unsafe extern "C" fn(c_int, *const sockaddr, socklen_t) -> c_int
         );
-        // SAFETY: addr is a valid sockaddr (or null) per connect(2) contract.
-        unsafe { rewrite_addr(addr, false) };
+        // SAFETY: fd is valid; addr is valid or null per connect(2) contract.
+        // Probe-based rewrite only rewrites if SILO_IP:port has a listener.
+        unsafe { rewrite_connect_addr(fd, addr) };
         // SAFETY: Forwarding caller's arguments to the real connect(2).
         unsafe { real_fn(fd, addr, len) }
-    }
-
-    #[unsafe(no_mangle)]
-    pub unsafe extern "C" fn getaddrinfo(
-        node: *const libc::c_char,
-        service: *const libc::c_char,
-        hints: *const libc::addrinfo,
-        res: *mut *mut libc::addrinfo,
-    ) -> c_int {
-        let real_fn = real!(
-            "getaddrinfo",
-            unsafe extern "C" fn(
-                *const libc::c_char,
-                *const libc::c_char,
-                *const libc::addrinfo,
-                *mut *mut libc::addrinfo,
-            ) -> c_int
-        );
-
-        // SAFETY: Forwarding caller's arguments to the real getaddrinfo(3).
-        let ret = unsafe { real_fn(node, service, hints, res) };
-        if ret != 0 || res.is_null() {
-            return ret;
-        }
-
-        // SAFETY: ret == 0 means getaddrinfo succeeded; res points to a valid
-        // addrinfo linked list.
-        unsafe { rewrite_addrinfo_results(res) };
-        ret
-    }
-
-    #[unsafe(no_mangle)]
-    pub unsafe extern "C" fn gethostbyname(name: *const libc::c_char) -> *mut libc::hostent {
-        let real_fn = real!(
-            "gethostbyname",
-            unsafe extern "C" fn(*const libc::c_char) -> *mut libc::hostent
-        );
-        // SAFETY: Forwarding caller's argument to real gethostbyname(3).
-        let result = unsafe { real_fn(name) };
-        // SAFETY: result is either null (handled) or a valid hostent.
-        unsafe { rewrite_hostent(result) };
-        result
-    }
-
-    #[unsafe(no_mangle)]
-    pub unsafe extern "C" fn gethostbyname2(
-        name: *const libc::c_char,
-        af: c_int,
-    ) -> *mut libc::hostent {
-        let real_fn = real!(
-            "gethostbyname2",
-            unsafe extern "C" fn(*const libc::c_char, c_int) -> *mut libc::hostent
-        );
-        // SAFETY: Forwarding caller's arguments to real gethostbyname2(3).
-        let result = unsafe { real_fn(name, af) };
-        // SAFETY: result is either null (handled) or a valid hostent.
-        unsafe { rewrite_hostent(result) };
-        result
     }
 
     #[unsafe(no_mangle)]

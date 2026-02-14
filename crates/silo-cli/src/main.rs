@@ -73,10 +73,11 @@ fn run() -> eyre::Result<()> {
     match cli.command {
         Commands::Run {
             name,
+            ip,
             quiet,
             emit_json,
             command,
-        } => commands::run::run(name.as_deref(), &command, quiet, emit_json),
+        } => commands::run::run(name.as_deref(), ip, &command, quiet, emit_json),
         Commands::Ip { json } => commands::ip::run(json),
         Commands::Doctor { json } => commands::doctor::run(json),
         Commands::Ls { json } => commands::ls::run(json),

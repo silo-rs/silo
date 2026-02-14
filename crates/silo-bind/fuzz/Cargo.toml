@@ -28,11 +28,6 @@ path = "fuzz_targets/fuzz_rewrite_ipv6.rs"
 doc = false
 
 [[bin]]
-name = "fuzz_rewrite_resolved"
-path = "fuzz_targets/fuzz_rewrite_resolved.rs"
-doc = false
-
-[[bin]]
 name = "fuzz_hide_alias"
 path = "fuzz_targets/fuzz_hide_alias.rs"
 doc = false

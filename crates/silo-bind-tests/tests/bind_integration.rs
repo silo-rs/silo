@@ -121,73 +121,42 @@ fn connect_localhost_is_rewritten() {
 
 // ── getaddrinfo() tests ──
 
-/// getaddrinfo("localhost") results should have 127.0.0.1 rewritten to SILO_IP.
+/// getaddrinfo("localhost") should pass through without rewriting (DNS
+/// interception has been removed). On Linux (where SILO_IP != 127.0.0.1),
+/// this verifies that getaddrinfo returns the real system result.
 #[test]
-fn getaddrinfo_localhost_is_rewritten() {
+fn getaddrinfo_localhost_passes_through() {
+    let (stdout, _, success) = run_helper("getaddrinfo", Some(TEST_IP));
+    assert!(success, "helper failed");
+    // getaddrinfo should return the real system result (127.0.0.1), not SILO_IP
+    assert!(
+        stdout.contains("127.0.0.1"),
+        "expected getaddrinfo to return real 127.0.0.1, got: {stdout}"
+    );
+}
+
+/// On Linux where SILO_IP is 127.0.99.1, verify getaddrinfo does NOT return SILO_IP.
+#[test]
+#[cfg(target_os = "linux")]
+fn getaddrinfo_localhost_not_rewritten_to_silo_ip() {
     let (stdout, _, success) = run_helper("getaddrinfo", Some(TEST_IP));
     assert!(success, "helper failed");
     assert!(
-        stdout.contains(TEST_IP),
-        "expected getaddrinfo to resolve to {TEST_IP}, got: {stdout}"
+        !stdout.contains(TEST_IP),
+        "getaddrinfo should NOT rewrite to SILO_IP ({TEST_IP}), got: {stdout}"
     );
 }
 
-/// getaddrinfo("localhost") with AF_UNSPEC should rewrite IPv6 ::1 results
-/// to ::ffff:SILO_IP (IPv4-mapped IPv6 address).
+// ── connect() probe tests ──
+
+/// When no listener exists on SILO_IP:port, connect(127.0.0.1:port) should
+/// NOT be rewritten — the connection should be refused (no listener anywhere).
 #[test]
-fn getaddrinfo_v6_localhost_is_rewritten() {
-    let (stdout, _, success) = run_helper("getaddrinfo_v6", Some(TEST_IP));
-    assert!(success, "helper failed");
-
-    // IPv4 results should be rewritten
-    for line in stdout.lines() {
-        if let Some(ip) = line.strip_prefix("v4=") {
-            assert_eq!(
-                ip, TEST_IP,
-                "expected IPv4 result to be {TEST_IP}, got: {ip}"
-            );
-        }
-    }
-
-    // IPv6 results should be rewritten to ::ffff:SILO_IP
-    let expected_mapped = format!("::ffff:{TEST_IP}");
-    for line in stdout.lines() {
-        if let Some(ip) = line.strip_prefix("v6=") {
-            assert_eq!(
-                ip, expected_mapped,
-                "expected IPv6 result to be {expected_mapped}, got: {ip}"
-            );
-        }
-    }
-
-    // Should NOT contain raw ::1
+fn connect_to_unbound_port_not_rewritten() {
+    let (stdout, _, _) = run_helper("connect_no_listener", Some(TEST_IP));
     assert!(
-        !stdout.contains("v6=::1"),
-        "IPv6 loopback ::1 should have been rewritten, got: {stdout}"
-    );
-}
-
-// ── gethostbyname() tests ──
-
-/// gethostbyname("localhost") results should have 127.0.0.1 rewritten to SILO_IP.
-#[test]
-fn gethostbyname_localhost_is_rewritten() {
-    let (stdout, _, success) = run_helper("gethostbyname", Some(TEST_IP));
-    assert!(success, "helper failed");
-    assert!(
-        stdout.contains(TEST_IP),
-        "expected gethostbyname to resolve to {TEST_IP}, got: {stdout}"
-    );
-}
-
-/// gethostbyname2("localhost", AF_INET) results should have 127.0.0.1 rewritten to SILO_IP.
-#[test]
-fn gethostbyname2_localhost_is_rewritten() {
-    let (stdout, _, success) = run_helper("gethostbyname2", Some(TEST_IP));
-    assert!(success, "helper failed");
-    assert!(
-        stdout.contains(TEST_IP),
-        "expected gethostbyname2 to resolve to {TEST_IP}, got: {stdout}"
+        stdout.contains("connect_result=refused"),
+        "expected ECONNREFUSED for unbound port, got: {stdout}"
     );
 }
 
