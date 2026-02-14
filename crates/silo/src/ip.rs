@@ -6,8 +6,6 @@ use tracing::{debug, info, instrument};
 
 use crate::error::{Error, Result};
 
-/// Locate the `ip` command on Linux. Tries `which` first, then falls back to
-/// well-known paths across distributions (Debian, Fedora, Arch, etc.).
 #[cfg(target_os = "linux")]
 fn find_ip_command() -> String {
     if let Ok(p) = which::which("ip") {
@@ -75,10 +73,6 @@ pub fn alias_exists(ip: Ipv4Addr) -> Result<bool> {
     Ok(is_ip_in_output(&lo_output, ip))
 }
 
-/// Return all active silo loopback aliases (127.x.y.z, excluding 127.0.0.1).
-///
-/// Queries the loopback interface and returns every address in the
-/// `127.0.0.0/8` range that is not the default `127.0.0.1`.
 pub fn active_aliases() -> Result<Vec<Ipv4Addr>> {
     let output = loopback_output()?;
     let mut aliases = Vec::new();

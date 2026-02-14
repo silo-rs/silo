@@ -1,12 +1,3 @@
-//! eBPF backend: cgroup/sock_addr program management (Linux only).
-//!
-//! This module loads BPF programs that intercept socket operations at the kernel
-//! level, providing address rewriting that works with all binaries regardless of
-//! linking strategy (static Go, musl Rust, io_uring, etc.).
-//!
-//! Two loading modes:
-//! - **Embedded**: Load programs from bytes compiled into the binary (requires CAP_BPF).
-//! - **Pinned**: Attach pre-pinned programs from `/sys/fs/bpf/silo/` (rootless).
 #![allow(unsafe_code)]
 
 use std::collections::HashSet;
@@ -22,13 +13,8 @@ use aya::maps::HashMap;
 use aya::programs::{CgroupAttachMode, CgroupSockAddr, CgroupSockAddrAttachType};
 use eyre::{Context, ContextCompat};
 
-/// Base path for silo per-session cgroups.
 const CGROUP_BASE: &str = "/sys/fs/cgroup/silo";
-
-/// Base path for pinned BPF programs.
 const PIN_BASE: &str = "/sys/fs/bpf/silo";
-
-/// All BPF program names (must match function names in silo-ebpf/src/main.rs).
 pub const PROGRAM_NAMES: &[&str] = &[
     "silo_bind4",
     "silo_bind6",
@@ -63,20 +49,14 @@ fn attach_type_for(name: &str) -> CgroupSockAddrAttachType {
     }
 }
 
-/// Internal state depending on how programs were loaded.
 enum SessionMode {
-    /// Programs loaded from embedded bytes. Ebpf object owns everything.
-    /// When dropped, programs are unloaded and maps are destroyed.
     Embedded(#[allow(dead_code)] Ebpf),
-    /// Programs loaded from pinned paths. Config map handle for cleanup.
-    /// On drop, removes our cgroup_id entry from the shared config map.
     Pinned {
         _programs: Vec<CgroupSockAddr>,
         config_map: Option<HashMap<aya::maps::MapData, u64, u32>>,
     },
 }
 
-/// Manages an eBPF session: cgroup + attached BPF programs + config map.
 pub struct EbpfSession {
     cgroup_path: PathBuf,
     cgroup_id: u64,
@@ -84,15 +64,7 @@ pub struct EbpfSession {
 }
 
 impl EbpfSession {
-    /// Create a new eBPF session.
-    ///
-    /// 1. Creates a cgroup under `/sys/fs/cgroup/silo/{session_id}/`
-    /// 2. Loads BPF programs (from pinned paths or embedded bytes)
-    /// 3. Writes `(cgroup_id, silo_ip)` to the BPF config map
-    /// 4. Attaches all programs to the cgroup
     pub fn new(session_id: &str, silo_ip: Ipv4Addr) -> eyre::Result<Self> {
-        // Prune stale state to prevent map exhaustion (entries leak because
-        // exec() replaces the process before Drop can run).
         auto_prune();
 
         let cgroup_path = PathBuf::from(CGROUP_BASE).join(session_id);
@@ -115,7 +87,6 @@ impl EbpfSession {
         }
     }
 
-    /// Load programs from embedded bytes (requires CAP_BPF + CAP_NET_ADMIN).
     fn new_from_embedded(
         cgroup_path: PathBuf,
         cgroup_id: u64,
@@ -124,7 +95,6 @@ impl EbpfSession {
     ) -> eyre::Result<Self> {
         let mut bpf = Ebpf::load(EBPF_BYTES).context("failed to load eBPF programs")?;
 
-        // Write (cgroup_id, silo_ip) to the config map
         let mut config: HashMap<_, u64, u32> = HashMap::try_from(
             bpf.map_mut("SILO_CONFIG")
                 .context("BPF map SILO_CONFIG not found")?,
@@ -134,7 +104,6 @@ impl EbpfSession {
             .insert(cgroup_id, ip_nbo, 0)
             .context("failed to write silo IP to BPF map")?;
 
-        // Attach all programs to the cgroup
         for name in PROGRAM_NAMES {
             let prog: &mut CgroupSockAddr = bpf
                 .program_mut(name)
@@ -154,14 +123,12 @@ impl EbpfSession {
         })
     }
 
-    /// Load programs from pinned paths (rootless after `silo setup-ebpf`).
     fn new_from_pinned(
         cgroup_path: PathBuf,
         cgroup_id: u64,
         cgroup_fd: &fs::File,
         ip_nbo: u32,
     ) -> eyre::Result<Self> {
-        // Open the pinned config map and write our (cgroup_id, silo_ip) entry
         let map_data = aya::maps::MapData::from_pin(PathBuf::from(PIN_BASE).join("SILO_CONFIG"))
             .context("failed to open pinned SILO_CONFIG map")?;
         let map = aya::maps::Map::HashMap(map_data);
@@ -171,7 +138,6 @@ impl EbpfSession {
             .insert(cgroup_id, ip_nbo, 0)
             .context("failed to write silo IP to pinned BPF map")?;
 
-        // Open and attach each pinned program
         let mut programs = Vec::new();
         for name in PROGRAM_NAMES {
             let pin_path = PathBuf::from(PIN_BASE).join(name);
@@ -192,15 +158,12 @@ impl EbpfSession {
         })
     }
 
-    /// Write a PID into this session's cgroup, making it (and its children)
-    /// subject to the attached BPF programs.
     pub fn add_pid(&self, pid: u32) -> eyre::Result<()> {
         let procs_path = self.cgroup_path.join("cgroup.procs");
         fs::write(&procs_path, pid.to_string())
             .with_context(|| format!("failed to write PID to {}", procs_path.display()))
     }
 
-    /// The cgroup directory for this session.
     #[allow(dead_code)]
     pub fn cgroup_path(&self) -> &Path {
         &self.cgroup_path
@@ -220,48 +183,31 @@ impl silo::BackendSession for EbpfSession {
 
 impl Drop for EbpfSession {
     fn drop(&mut self) {
-        // For pinned mode, remove our entry from the shared config map
         if let SessionMode::Pinned { config_map, .. } = &mut self.mode
             && let Some(mut config) = config_map.take()
         {
             let _ = config.remove(&self.cgroup_id);
         }
-        // For embedded mode, the Ebpf object drop destroys maps and programs.
-
-        // Links are dropped automatically, detaching programs.
-        // Try to remove the cgroup directory (only succeeds if empty).
         let _ = fs::remove_dir(&self.cgroup_path);
     }
 }
 
-// --- Detection ---
-
-/// Check if the eBPF backend is available on this system.
-///
-/// Requires: Linux, kernel >= 5.8, cgroup v2 mounted.
-/// Also needs CAP_BPF + CAP_NET_ADMIN, or pre-pinned BPF programs.
 pub fn ebpf_available() -> bool {
-    // cgroup v2 must be mounted
     if !Path::new("/sys/fs/cgroup/cgroup.controllers").exists() {
         return false;
     }
 
-    // Kernel >= 5.8 for full cgroup/sock_addr support
     if !kernel_version_sufficient() {
         return false;
     }
 
-    // Pinned programs work even without embedded bytes (e.g. stable build
-    // after `sudo silo setup-ebpf` was run with a nightly build).
     if pinned_programs_exist() {
         return true;
     }
 
-    // Embedded mode requires bytecode + capabilities
     !EBPF_BYTES.is_empty() && has_bpf_caps()
 }
 
-/// Check if programs are pinned at /sys/fs/bpf/silo/.
 fn pinned_programs_exist() -> bool {
     Path::new(PIN_BASE).join("silo_bind4").exists()
 }

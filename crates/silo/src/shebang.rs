@@ -45,11 +45,6 @@ pub fn resolve_program(program: &str, args: &[String]) -> (String, Vec<String>) 
     (program.to_string(), args.to_vec())
 }
 
-/// Find a non-SIP-protected binary with the given name.
-///
-/// For shell binaries (`sh`, `bash`, `zsh`, etc.), tries compatible alternatives
-/// since macOS SIP protects all shells in `/bin/` and `/usr/bin/`.
-/// Returns `None` if no non-SIP alternative exists in PATH.
 pub fn find_non_sip_binary(name: &str) -> Option<String> {
     let candidates: Vec<&str> = match name {
         "sh" | "bash" | "zsh" | "dash" | "ksh" => {
@@ -277,12 +272,7 @@ mod tests {
 
     #[test]
     fn test_resolve_sip_interpreter_strips_env_s_flag() {
-        // resolve_sip_interpreter should strip -S and find the actual command
-        // We can't test the full resolution without a real PATH, but we can
-        // verify the stripping logic by checking it doesn't panic/return None
-        // on "-S node" when "node" isn't installed (graceful failure).
         let result = resolve_sip_interpreter("/usr/bin/env", Some("-S node"));
-        // Result depends on whether node is in PATH; just ensure no panic
         let _ = result;
 
         let result = resolve_sip_interpreter("/usr/bin/env", Some("-S python3 -u"));
@@ -297,7 +287,6 @@ mod tests {
 
     #[test]
     fn test_find_non_sip_binary_never_returns_sip_path() {
-        // If find_non_sip_binary returns a path, it must NOT be SIP-protected
         for name in &["sh", "bash", "zsh", "python3", "nonexistent-binary-xyz"] {
             if let Some(ref path) = find_non_sip_binary(name) {
                 assert!(
@@ -312,7 +301,6 @@ mod tests {
 
     #[test]
     fn test_find_non_sip_binary_shell_fallbacks_dont_panic() {
-        // Verify the function handles all shell types without panicking
         let _ = find_non_sip_binary("sh");
         let _ = find_non_sip_binary("bash");
         let _ = find_non_sip_binary("zsh");
@@ -327,7 +315,6 @@ mod tests {
 
     #[test]
     fn test_resolve_program_sip_binary_preserves_args() {
-        // Even if /bin/sh can't be resolved, args must pass through unchanged
         let args = vec!["-c".to_string(), "echo hello".to_string()];
         let (_, resolved_args) = resolve_program("/bin/sh", &args);
         assert_eq!(resolved_args, args);
@@ -335,7 +322,6 @@ mod tests {
 
     #[test]
     fn test_resolve_program_sip_binary_resolves_to_non_sip() {
-        // If a non-SIP alternative is found, it should be used
         let args = vec!["-c".to_string(), "echo hi".to_string()];
         let (prog, _) = resolve_program("/bin/sh", &args);
         if prog != "/bin/sh" {
@@ -351,8 +337,6 @@ mod tests {
     fn test_resolve_program_non_sip_path_unchanged() {
         let args = vec!["-c".to_string(), "echo hi".to_string()];
         let (prog, resolved_args) = resolve_program("/opt/homebrew/bin/bash", &args);
-        // Non-SIP path should NOT be modified (it's not a script so shebang
-        // resolution returns None, and the SIP check doesn't apply)
         assert_eq!(prog, "/opt/homebrew/bin/bash");
         assert_eq!(resolved_args, args);
     }

@@ -7,24 +7,6 @@ use serde::Serialize;
 use crate::error::{Error, Result};
 use crate::resolve;
 
-/// Pure-computation project context: resolved name, IP, hostname, and directory.
-///
-/// Creating a `Context` performs zero side effects — no network changes,
-/// no file writes, no privilege escalation. It locates the git root,
-/// derives the branch name, and computes the deterministic loopback IP.
-///
-/// Use [`Session::activate`] to apply side effects (IP alias, `/etc/hosts`, etc.)
-/// based on a resolved context.
-///
-/// # Examples
-///
-/// ```no_run
-/// use silo::Context;
-///
-/// let ctx = Context::for_dir("/path/to/repo".as_ref(), None, None)?;
-/// println!("{} → {} ({})", ctx.name(), ctx.ip(), ctx.hostname());
-/// # Ok::<(), silo::Error>(())
-/// ```
 #[derive(Debug, Clone, Serialize)]
 #[non_exhaustive]
 pub struct Context {
@@ -35,46 +17,32 @@ pub struct Context {
 }
 
 impl Context {
-    /// Resolve context for the current working directory.
     pub fn current(name: Option<&str>, ip: Option<Ipv4Addr>) -> Result<Self> {
         let cwd = std::env::current_dir().map_err(|e| Error::io("failed to get cwd", e))?;
         let cwd = cwd.canonicalize().unwrap_or(cwd);
         Self::for_dir(&cwd, name, ip)
     }
 
-    /// Resolve context for an explicit directory.
-    ///
-    /// Walks up from `dir` to find the git root, reads the branch name
-    /// (or uses `name` if provided), and computes the deterministic IP.
-    /// If `ip` is provided, it overrides the computed IP (must be in `127.0.0.0/8`).
     pub fn for_dir(dir: &Path, name: Option<&str>, ip: Option<Ipv4Addr>) -> Result<Self> {
         resolve::resolve(dir, name, ip)
     }
 
-    /// The deterministic loopback IP (`127.x.y.z`) for this project.
     pub fn ip(&self) -> Ipv4Addr {
         self.ip
     }
 
-    /// The resolved session name (sanitized branch name or override).
     pub fn name(&self) -> &str {
         &self.name
     }
 
-    /// The hostname (`{name}.{project}.silo`) for service discovery.
     pub fn hostname(&self) -> &str {
         &self.hostname
     }
 
-    /// The git root directory.
     pub fn dir(&self) -> &Path {
         &self.dir
     }
 
-    /// Environment variables: `SILO_IP`, `SILO_NAME`, `SILO_DIR`, `SILO_HOST`.
-    ///
-    /// Does **not** include `DYLD_INSERT_LIBRARIES` / `LD_PRELOAD`.
-    /// Use [`Session::env`] for the full set including the bind library.
     pub fn env_vars(&self) -> HashMap<String, String> {
         HashMap::from([
             ("SILO_IP".into(), self.ip.to_string()),

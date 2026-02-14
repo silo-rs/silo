@@ -13,26 +13,14 @@ use crate::error::{Error, Result};
 const HOSTS_PATH: &str = "/etc/hosts";
 const BEGIN_MARKER: &str = "# BEGIN silo managed block - do not edit";
 const END_MARKER: &str = "# END silo managed block";
+const HOSTS_TMP: &str = "/etc/.hosts.silo.tmp";
+const LOCK_PATH: &str = "/tmp/silo-hosts.lock";
 
-/// Ensure an entry exists in /etc/hosts for the given IP and hostname.
-/// Idempotent: updates existing entry or adds a new one.
-///
-/// The `dir` path is stored as an inline comment so that external tools can
-/// recover the project directory from `/etc/hosts` alone, without needing to
-/// reverse the IP hash.
-///
-/// Uses an advisory exclusive lock on /etc/hosts to prevent concurrent
-/// silo instances from racing on the read-modify-write cycle.
 pub fn ensure_entry(ip: Ipv4Addr, hostname: &str, dir: &Path) -> Result<()> {
-    // Advisory exclusive lock on /etc/hosts to prevent TOCTOU races
-    // between concurrent silo sessions. flock(2) allows exclusive locks
-    // on files opened read-only.
-    let lock_file = std::fs::File::open(HOSTS_PATH)
-        .map_err(|e| Error::io("failed to open /etc/hosts for locking", e))?;
-    let mut lock = RwLock::new(lock_file);
+    let mut lock = open_hosts_lock()?;
     let _guard = lock
         .write()
-        .map_err(|e| Error::io("failed to acquire /etc/hosts lock", e))?;
+        .map_err(|e| Error::io("failed to acquire silo hosts lock", e))?;
 
     let content = std::fs::read_to_string(HOSTS_PATH)
         .map_err(|e| Error::io("failed to read /etc/hosts", e))?;
@@ -60,17 +48,13 @@ pub fn ensure_entry(ip: Ipv4Addr, hostname: &str, dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// A parsed entry from the silo-managed block in `/etc/hosts`.
 #[derive(Debug, Clone, Serialize)]
 pub struct HostEntry {
     pub ip: Ipv4Addr,
     pub hostname: String,
-    /// Project directory, recovered from the inline comment.
-    /// `None` for entries written by older silo versions.
     pub dir: Option<PathBuf>,
 }
 
-/// Parse the silo managed block and return all entries.
 pub fn list_entries() -> Result<Vec<HostEntry>> {
     let content = std::fs::read_to_string(HOSTS_PATH)
         .map_err(|e| Error::io("failed to read /etc/hosts", e))?;
@@ -95,16 +79,11 @@ pub fn list_entries() -> Result<Vec<HostEntry>> {
     Ok(result)
 }
 
-/// Remove all /etc/hosts entries whose IP is in the given set.
-/// Uses the same flock pattern as `ensure_entry` for safety.
-/// Returns the list of (ip, hostname) pairs that were removed.
 pub fn remove_entries(ips_to_remove: &HashSet<Ipv4Addr>) -> Result<Vec<(Ipv4Addr, String)>> {
-    let lock_file = std::fs::File::open(HOSTS_PATH)
-        .map_err(|e| Error::io("failed to open /etc/hosts for locking", e))?;
-    let mut lock = RwLock::new(lock_file);
+    let mut lock = open_hosts_lock()?;
     let _guard = lock
         .write()
-        .map_err(|e| Error::io("failed to acquire /etc/hosts lock", e))?;
+        .map_err(|e| Error::io("failed to acquire silo hosts lock", e))?;
 
     let content = std::fs::read_to_string(HOSTS_PATH)
         .map_err(|e| Error::io("failed to read /etc/hosts", e))?;
@@ -138,27 +117,65 @@ pub fn remove_entries(ips_to_remove: &HashSet<Ipv4Addr>) -> Result<Vec<(Ipv4Addr
     Ok(removed)
 }
 
+/// Open (or create) the dedicated silo lock file for serializing
+/// read-modify-write cycles on `/etc/hosts`.
+///
+/// A separate lock file is used instead of locking `/etc/hosts` itself because
+/// the atomic-rename write strategy replaces the inode, which would silently
+/// invalidate a lock held on the old inode.
+fn open_hosts_lock() -> Result<RwLock<std::fs::File>> {
+    let file = match std::fs::File::open(LOCK_PATH) {
+        Ok(f) => f,
+        Err(_) => {
+            // Create the lock file if it doesn't exist yet.
+            let _ = std::fs::File::create(LOCK_PATH);
+            std::fs::File::open(LOCK_PATH)
+                .map_err(|e| Error::io("failed to open silo hosts lock file", e))?
+        }
+    };
+    Ok(RwLock::new(file))
+}
+
+/// Write `content` to `/etc/hosts` atomically.
+///
+/// Writes to a temp file on the same filesystem first, then does an atomic
+/// `rename(2)` to replace the target. This prevents a truncated `/etc/hosts`
+/// if the process is killed mid-write.
 fn write_hosts(content: &str) -> Result<()> {
+    // Step 1: Write the complete content to a temp file on the same filesystem.
     let mut child = Command::new("sudo")
-        .args(["tee", HOSTS_PATH])
+        .args(["tee", HOSTS_TMP])
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())
         .spawn()
-        .map_err(|e| Error::io("failed to run sudo tee /etc/hosts", e))?;
+        .map_err(|e| Error::io("failed to run sudo tee for temp hosts file", e))?;
 
     if let Some(ref mut stdin) = child.stdin {
         stdin
             .write_all(content.as_bytes())
-            .map_err(|e| Error::io("failed to write to sudo tee stdin", e))?;
+            .map_err(|e| Error::io("failed to write to temp hosts file", e))?;
     }
 
     let status = child
         .wait()
         .map_err(|e| Error::io("failed to wait for sudo tee", e))?;
     if !status.success() {
+        let _ = Command::new("sudo").args(["rm", "-f", HOSTS_TMP]).status();
         return Err(Error::CommandFailed {
-            command: "sudo tee /etc/hosts".into(),
+            command: format!("sudo tee {}", HOSTS_TMP),
+        });
+    }
+
+    // Step 2: Atomic rename. Same filesystem (/etc → /etc) guarantees rename(2).
+    let status = Command::new("sudo")
+        .args(["mv", "-f", HOSTS_TMP, HOSTS_PATH])
+        .status()
+        .map_err(|e| Error::io("failed to run sudo mv for atomic hosts replace", e))?;
+    if !status.success() {
+        let _ = Command::new("sudo").args(["rm", "-f", HOSTS_TMP]).status();
+        return Err(Error::CommandFailed {
+            command: format!("sudo mv {} {}", HOSTS_TMP, HOSTS_PATH),
         });
     }
 

@@ -19,14 +19,14 @@ curl -fsSL https://setup.silo.rs | sh
 
 ```sh
 silo npm run dev
-# silo ● main
+# silo ● main [preload]
 #      127.1.42.7 · main.repo.silo
 # Listening on http://localhost:3000
 ```
 
 ## How it works
 
-Prefix any command with `silo`. Each project gets its own localhost IP, so the same port never conflicts, even across branches.
+Prefix any command with `silo`. Each directory and branch gets its own localhost IP, so the same port never conflicts.
 
 ```
 your app → bind("0.0.0.0:3000") → [ silo ] → bind("127.1.42.7:3000") ✅
@@ -37,6 +37,7 @@ your app → bind("0.0.0.0:3000") → [ silo ] → bind("127.1.42.7:3000") ✅
 | Command       | Description                                  |
 | ------------- | -------------------------------------------- |
 | `silo <cmd>`  | Run command with transparent IP isolation    |
+| `silo env`    | Print session env vars for shell eval        |
 | `silo ip`     | Show the resolved IP for current directory   |
 | `silo ls`     | List active silo sessions                    |
 | `silo prune`  | Remove unused aliases and /etc/hosts entries |

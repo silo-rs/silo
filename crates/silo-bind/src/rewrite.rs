@@ -5,14 +5,11 @@ use std::net::Ipv4Addr;
 pub const V6_LOOPBACK: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
 pub const V6_ANY: [u8; 16] = [0u8; 16];
 
-/// Parse a SILO_IP string (e.g. `"127.0.99.1"`) into a network-byte-order u32.
 pub fn parse_silo_ip(val: &str) -> Option<u32> {
     let ip: Ipv4Addr = val.parse().ok()?;
     Some(u32::from(ip).to_be())
 }
 
-/// Construct an IPv4-mapped IPv6 address `::ffff:x.x.x.x` from a
-/// network-byte-order u32.
 pub fn ipv4_mapped_v6(silo_ip: u32) -> [u8; 16] {
     let octets = silo_ip.to_ne_bytes();
     [
@@ -20,8 +17,6 @@ pub fn ipv4_mapped_v6(silo_ip: u32) -> [u8; 16] {
     ]
 }
 
-/// Decide whether an AF_INET `s_addr` (network byte order) should be rewritten
-/// to `silo_ip`. When `match_any` is true, INADDR_ANY (`0`) also matches.
 pub fn rewrite_ipv4_addr(s_addr: u32, silo_ip: u32, match_any: bool) -> Option<u32> {
     let localhost_be = u32::from(Ipv4Addr::LOCALHOST).to_be();
     if (match_any && s_addr == 0) || s_addr == localhost_be {
@@ -31,9 +26,6 @@ pub fn rewrite_ipv4_addr(s_addr: u32, silo_ip: u32, match_any: bool) -> Option<u
     }
 }
 
-/// Decide whether an AF_INET6 `s6_addr` should be rewritten to an
-/// IPv4-mapped IPv6 address derived from `silo_ip`. When `match_any` is true,
-/// `::` also matches.
 pub fn rewrite_ipv6_addr(s6_addr: [u8; 16], silo_ip: u32, match_any: bool) -> Option<[u8; 16]> {
     if (match_any && s6_addr == V6_ANY) || s6_addr == V6_LOOPBACK {
         Some(ipv4_mapped_v6(silo_ip))
@@ -42,9 +34,6 @@ pub fn rewrite_ipv6_addr(s6_addr: [u8; 16], silo_ip: u32, match_any: bool) -> Op
     }
 }
 
-/// Decide whether an ifaddrs AF_INET address should be hidden (rewritten to
-/// `127.0.0.1`). Returns `Some(localhost_be)` if the address is in `127.0.0.0/8`
-/// but is neither `127.0.0.1` nor `silo_ip`.
 pub fn hide_alias(s_addr: u32, silo_ip: u32) -> Option<u32> {
     let localhost_be = u32::from(Ipv4Addr::LOCALHOST).to_be();
     let octets = s_addr.to_ne_bytes();
@@ -66,8 +55,6 @@ mod tests {
     fn localhost_be() -> u32 {
         u32::from(Ipv4Addr::LOCALHOST).to_be()
     }
-
-    // ── parse_silo_ip ──
 
     #[test]
     fn parse_valid_ipv4() {
@@ -104,8 +91,6 @@ mod tests {
         assert_eq!(parse_silo_ip("256.0.0.1"), None);
     }
 
-    // ── ipv4_mapped_v6 ──
-
     #[test]
     fn mapped_localhost() {
         let result = ipv4_mapped_v6(localhost_be());
@@ -132,8 +117,6 @@ mod tests {
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0, 0, 0, 0]
         );
     }
-
-    // ── rewrite_ipv4_addr ──
 
     #[test]
     fn ipv4_localhost_match_any_true() {
@@ -177,8 +160,6 @@ mod tests {
         assert_eq!(rewrite_ipv4_addr(0xFFFFFFFF, silo_ip(), true), None);
     }
 
-    // ── rewrite_ipv6_addr ──
-
     #[test]
     fn ipv6_loopback_match_any_true() {
         let expected = ipv4_mapped_v6(silo_ip());
@@ -220,8 +201,6 @@ mod tests {
         assert_eq!(rewrite_ipv6_addr(mapped, silo_ip(), true), None);
     }
 
-    // ── hide_alias ──
-
     #[test]
     fn hide_other_loopback() {
         let other = u32::from(Ipv4Addr::new(127, 0, 0, 2)).to_be();
@@ -249,8 +228,6 @@ mod tests {
         let addr = u32::from(Ipv4Addr::new(127, 255, 255, 255)).to_be();
         assert_eq!(hide_alias(addr, silo_ip()), Some(localhost_be()));
     }
-
-    // ── Property-based tests ──
 
     mod prop {
         use super::*;
