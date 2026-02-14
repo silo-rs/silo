@@ -814,6 +814,7 @@ dependencies = [
  "silo",
  "tracing",
  "tracing-subscriber",
+ "which",
 ]
 
 [[package]]

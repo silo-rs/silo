@@ -26,4 +26,5 @@ tracing-subscriber = { workspace = true }
 [target.'cfg(target_os = "linux")'.dependencies]
 aya = { workspace = true }
 libc = { workspace = true }
+which = { workspace = true }
 
