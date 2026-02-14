@@ -153,7 +153,7 @@ unsafe fn maybe_rewrite_connect_addr(
             && unsafe { probe_has_listener(fd, silo_ip, sin6.sin6_port) }
         {
             storage.v6 = *sin6;
-            unsafe { storage.v6.sin6_addr.s6_addr = rewrite::ipv4_mapped_v6(silo_ip) };
+            storage.v6.sin6_addr.s6_addr = rewrite::ipv4_mapped_v6(silo_ip);
             return (unsafe { &storage.sa as *const sockaddr }, len);
         }
     }
