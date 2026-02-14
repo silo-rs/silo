@@ -795,6 +795,7 @@ name = "silo-bind-tests"
 version = "0.2.4"
 dependencies = [
  "libc",
+ "tempfile",
  "which",
 ]
 

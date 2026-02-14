@@ -8,6 +8,7 @@ publish = false
 libc = { workspace = true }
 
 [dev-dependencies]
+tempfile = { workspace = true }
 which = { workspace = true }
 
 [[bin]]

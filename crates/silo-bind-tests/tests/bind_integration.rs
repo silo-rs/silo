@@ -302,6 +302,132 @@ fn bind_through_non_sip_shell() {
     );
 }
 
+// ── runtime smoke tests ──
+
+/// Helper: run an arbitrary command with silo-bind injected.
+fn run_injected(program: &str, args: &[&str], silo_ip: &str) -> (String, String, bool) {
+    let mut cmd = Command::new(program);
+    cmd.args(args);
+    cmd.env(INJECT_KEY, dylib_path().to_str().unwrap());
+    cmd.env("SILO_IP", silo_ip);
+
+    let output = cmd.output().expect("failed to spawn process");
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let success = output.status.success();
+
+    if !success {
+        eprintln!("--- injected stderr ---\n{stderr}--- end stderr ---");
+    }
+
+    (stdout, stderr, success)
+}
+
+/// Node.js: `net.createServer().listen(0, '0.0.0.0')` should be rewritten.
+#[test]
+fn runtime_node_bind_is_rewritten() {
+    if which::which("node").is_err() {
+        eprintln!("SKIP: node not found");
+        return;
+    }
+
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/node_helper.mjs");
+    let (stdout, _, success) = run_injected("node", &[fixture.to_str().unwrap()], TEST_IP);
+    assert!(success, "node helper failed");
+    assert!(
+        stdout.contains(TEST_IP),
+        "expected bind to {TEST_IP}, got: {stdout}"
+    );
+    assert!(
+        !stdout.contains("0.0.0.0"),
+        "INADDR_ANY should have been rewritten, got: {stdout}"
+    );
+}
+
+/// Go (default CGO): `net.Listen("tcp", "0.0.0.0:0")` should be rewritten.
+#[test]
+fn runtime_go_bind_is_rewritten() {
+    if which::which("go").is_err() {
+        eprintln!("SKIP: go not found");
+        return;
+    }
+
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/go_helper.go");
+    let tmp = tempfile::tempdir().expect("failed to create tempdir");
+    let bin = tmp.path().join("go_helper");
+
+    let build = Command::new("go")
+        .args([
+            "build",
+            "-o",
+            bin.to_str().unwrap(),
+            fixture.to_str().unwrap(),
+        ])
+        .output()
+        .expect("failed to run go build");
+    assert!(
+        build.status.success(),
+        "go build failed: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let (stdout, _, success) = run_injected(bin.to_str().unwrap(), &[], TEST_IP);
+    assert!(success, "go helper failed");
+    assert!(
+        stdout.contains(TEST_IP),
+        "expected bind to {TEST_IP}, got: {stdout}"
+    );
+}
+
+/// Go with CGO_ENABLED=0: documents platform difference.
+/// - macOS: libSystem is always dynamically linked, so DYLD_INSERT_LIBRARIES works.
+/// - Linux: static binary bypasses LD_PRELOAD, so bind is NOT rewritten.
+#[test]
+fn runtime_go_cgo_disabled_bind() {
+    if which::which("go").is_err() {
+        eprintln!("SKIP: go not found");
+        return;
+    }
+
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/go_helper.go");
+    let tmp = tempfile::tempdir().expect("failed to create tempdir");
+    let bin = tmp.path().join("go_helper_static");
+
+    let build = Command::new("go")
+        .env("CGO_ENABLED", "0")
+        .args([
+            "build",
+            "-o",
+            bin.to_str().unwrap(),
+            fixture.to_str().unwrap(),
+        ])
+        .output()
+        .expect("failed to run go build");
+    assert!(
+        build.status.success(),
+        "go build (CGO_ENABLED=0) failed: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let (stdout, _, success) = run_injected(bin.to_str().unwrap(), &[], TEST_IP);
+    assert!(success, "go helper failed");
+
+    if cfg!(target_os = "macos") {
+        // macOS: DYLD_INSERT_LIBRARIES works even with CGO_ENABLED=0
+        // because Go still links against libSystem dynamically.
+        assert!(
+            stdout.contains(TEST_IP),
+            "expected bind to {TEST_IP} on macOS (libSystem), got: {stdout}"
+        );
+    } else {
+        // Linux: static binary bypasses LD_PRELOAD — bind stays as 0.0.0.0
+        assert!(
+            stdout.contains("0.0.0.0"),
+            "expected static Go binary to bypass LD_PRELOAD on Linux, got: {stdout}"
+        );
+    }
+}
+
 /// Verifies that DYLD_INSERT_LIBRARIES is stripped when using a SIP-protected
 /// shell (/bin/sh), causing bind interception to NOT work. This documents the
 /// known limitation that motivates the SIP resolution in shebang.rs.
