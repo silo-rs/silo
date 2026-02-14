@@ -813,6 +813,7 @@ dependencies = [
  "serde",
  "serde_json",
  "silo",
+ "tempfile",
  "tracing",
  "tracing-subscriber",
  "which",

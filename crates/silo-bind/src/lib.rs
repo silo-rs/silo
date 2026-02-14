@@ -77,37 +77,88 @@ unsafe fn read_sa_family(addr: *const sockaddr) -> Option<c_int> {
     Some(unsafe { (*addr).sa_family } as c_int)
 }
 
-unsafe fn rewrite_sockaddr_v4(addr: *const sockaddr, silo_ip: u32, match_any: bool) {
-    let sin = addr as *mut sockaddr_in;
-    let s_addr = unsafe { (*sin).sin_addr.s_addr };
-    if let Some(new_addr) = rewrite::rewrite_ipv4_addr(s_addr, silo_ip, match_any) {
-        unsafe { (*sin).sin_addr.s_addr = new_addr };
-    }
+#[repr(C)]
+union SockaddrStorage {
+    sa: sockaddr,
+    v4: sockaddr_in,
+    v6: libc::sockaddr_in6,
 }
 
-unsafe fn rewrite_sockaddr_v6(addr: *const sockaddr, silo_ip: u32, match_any: bool) {
-    let sin6 = addr as *mut libc::sockaddr_in6;
-    let s6_addr = unsafe { (*sin6).sin6_addr.s6_addr };
-    if let Some(new_addr) = rewrite::rewrite_ipv6_addr(s6_addr, silo_ip, match_any) {
-        unsafe { (*sin6).sin6_addr.s6_addr = new_addr };
-    }
-}
-
-unsafe fn rewrite_addr(addr: *const sockaddr, match_any: bool) {
+unsafe fn maybe_rewrite_addr(
+    addr: *const sockaddr,
+    len: socklen_t,
+    match_any: bool,
+    storage: &mut SockaddrStorage,
+) -> (*const sockaddr, socklen_t) {
     let Some(family) = (unsafe { read_sa_family(addr) }) else {
-        return;
+        return (addr, len);
     };
     let Some(silo_ip) = get_silo_ip() else {
-        return;
+        return (addr, len);
     };
 
     if family == AF_INET {
-        unsafe { rewrite_sockaddr_v4(addr, silo_ip, match_any) };
+        let sin = unsafe { &*(addr as *const sockaddr_in) };
+        if let Some(new_addr) = rewrite::rewrite_ipv4_addr(sin.sin_addr.s_addr, silo_ip, match_any)
+        {
+            storage.v4 = *sin;
+            storage.v4.sin_addr.s_addr = new_addr;
+            return (unsafe { &storage.sa as *const sockaddr }, len);
+        }
     }
 
     if family == libc::AF_INET6 as c_int {
-        unsafe { rewrite_sockaddr_v6(addr, silo_ip, match_any) };
+        let sin6 = unsafe { &*(addr as *const libc::sockaddr_in6) };
+        if let Some(new_addr) =
+            rewrite::rewrite_ipv6_addr(sin6.sin6_addr.s6_addr, silo_ip, match_any)
+        {
+            storage.v6 = *sin6;
+            storage.v6.sin6_addr.s6_addr = new_addr;
+            return (unsafe { &storage.sa as *const sockaddr }, len);
+        }
     }
+
+    (addr, len)
+}
+
+unsafe fn maybe_rewrite_connect_addr(
+    fd: c_int,
+    addr: *const sockaddr,
+    len: socklen_t,
+    storage: &mut SockaddrStorage,
+) -> (*const sockaddr, socklen_t) {
+    let Some(family) = (unsafe { read_sa_family(addr) }) else {
+        return (addr, len);
+    };
+    let Some(silo_ip) = get_silo_ip() else {
+        return (addr, len);
+    };
+
+    if family == AF_INET {
+        let sin = unsafe { &*(addr as *const sockaddr_in) };
+        let localhost_be = u32::from(Ipv4Addr::LOCALHOST).to_be();
+        if sin.sin_addr.s_addr == localhost_be
+            && unsafe { probe_has_listener(fd, silo_ip, sin.sin_port) }
+        {
+            storage.v4 = *sin;
+            storage.v4.sin_addr.s_addr = silo_ip;
+            return (unsafe { &storage.sa as *const sockaddr }, len);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    if family == libc::AF_INET6 as c_int {
+        let sin6 = unsafe { &*(addr as *const libc::sockaddr_in6) };
+        if sin6.sin6_addr.s6_addr == rewrite::V6_LOOPBACK
+            && unsafe { probe_has_listener(fd, silo_ip, sin6.sin6_port) }
+        {
+            storage.v6 = *sin6;
+            unsafe { storage.v6.sin6_addr.s6_addr = rewrite::ipv4_mapped_v6(silo_ip) };
+            return (unsafe { &storage.sa as *const sockaddr }, len);
+        }
+    }
+
+    (addr, len)
 }
 
 unsafe fn errno_ptr() -> *mut c_int {
@@ -186,40 +237,6 @@ unsafe fn probe_has_listener(fd: c_int, silo_ip: u32, port: u16) -> bool {
     has_listener
 }
 
-unsafe fn rewrite_connect_addr(fd: c_int, addr: *const sockaddr) {
-    let Some(family) = (unsafe { read_sa_family(addr) }) else {
-        return;
-    };
-    let Some(silo_ip) = get_silo_ip() else {
-        return;
-    };
-
-    if family == AF_INET {
-        let sin = addr as *mut sockaddr_in;
-        let s_addr = unsafe { (*sin).sin_addr.s_addr };
-        let localhost_be = u32::from(Ipv4Addr::LOCALHOST).to_be();
-        if s_addr == localhost_be {
-            let port = unsafe { (*sin).sin_port };
-            if unsafe { probe_has_listener(fd, silo_ip, port) } {
-                unsafe { (*sin).sin_addr.s_addr = silo_ip };
-            }
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    if family == libc::AF_INET6 as c_int {
-        let sin6 = addr as *mut libc::sockaddr_in6;
-        let s6_addr = unsafe { (*sin6).sin6_addr.s6_addr };
-        if s6_addr == rewrite::V6_LOOPBACK {
-            let port = unsafe { (*sin6).sin6_port };
-            if unsafe { probe_has_listener(fd, silo_ip, port) } {
-                let new_addr = rewrite::ipv4_mapped_v6(silo_ip);
-                unsafe { (*sin6).sin6_addr.s6_addr = new_addr };
-            }
-        }
-    }
-}
-
 fn get_silo_ip() -> Option<u32> {
     *SILO_IP.get_or_init(|| {
         let val = env::var("SILO_IP").ok()?;
@@ -266,7 +283,6 @@ fn is_sip_path(path: &str) -> bool {
 fn find_non_sip_in_path(name: &str) -> Option<CString> {
     let fallbacks: &[&str] = match name {
         "sh" => &["sh", "bash", "zsh"],
-        // Homebrew installs make as "gmake"
         "make" => &["make", "gmake"],
         _ => &[],
     };
@@ -405,10 +421,6 @@ unsafe fn resolve_sip_exec(
 #[cfg(target_os = "macos")]
 #[used]
 #[unsafe(link_section = "__DATA,__mod_init_func")]
-// SAFETY: This static places `init` into the __mod_init_func section, which
-// dyld calls exactly once when the library is loaded. The function only reads
-// environment variables and initializes OnceLock statics, which is safe during
-// library initialization.
 static INIT_FN: unsafe extern "C" fn() = {
     unsafe extern "C" fn init() {
         let _ = get_silo_ip();
@@ -502,7 +514,7 @@ mod platform {
                 let sin6 = addr as *const libc::sockaddr_in6;
                 let v6_addr = unsafe { (*sin6).sin6_addr.s6_addr };
                 if let Some(ip) = get_silo_ip()
-                    && rewrite::rewrite_ipv6_addr(v6_addr, ip, true).is_some()
+                    && let Some(new_v6) = rewrite::rewrite_ipv6_addr(v6_addr, ip, true)
                 {
                     let kind = if v6_addr == rewrite::V6_ANY {
                         "::"
@@ -510,16 +522,19 @@ mod platform {
                         "::1"
                     };
 
-                    // Dual-stack socket (IPV6_V6ONLY=0, the default): rewrite
-                    // in-place to ::ffff:SILO_IP. This preserves the original
-                    // fd, keeping kqueue/kevent registrations and async runtime
-                    // state intact.
                     if !unsafe { is_v6only(fd) } {
-                        unsafe { rewrite_sockaddr_v6(addr, ip, true) };
-                        let ret = unsafe { real_bind(fd, addr, len) };
+                        let mut sin6_copy: libc::sockaddr_in6 = unsafe { *sin6 };
+                        sin6_copy.sin6_addr.s6_addr = new_v6;
+                        let ret = unsafe {
+                            real_bind(
+                                fd,
+                                &sin6_copy as *const libc::sockaddr_in6 as *const sockaddr,
+                                len,
+                            )
+                        };
                         if debug_enabled() {
                             eprintln!(
-                                "[silo-bind] pid={} bind {} → ::ffff:SILO_IP (in-place) → {}",
+                                "[silo-bind] pid={} bind {} → ::ffff:SILO_IP (copy) → {}",
                                 std::process::id(),
                                 kind,
                                 ret
@@ -528,7 +543,6 @@ mod platform {
                         return ret;
                     }
 
-                    // V6-only socket: must replace with an IPv4 socket.
                     let port = unsafe { (*sin6).sin6_port };
                     let ret = unsafe { rebind_as_ipv4(fd, port, ip) };
                     if debug_enabled() {
@@ -544,10 +558,9 @@ mod platform {
             }
         }
 
-        unsafe {
-            rewrite_addr(addr, true);
-            real_bind(fd, addr, len)
-        }
+        let mut storage = std::mem::MaybeUninit::<SockaddrStorage>::uninit();
+        let (addr, len) = unsafe { maybe_rewrite_addr(addr, len, true, storage.assume_init_mut()) };
+        unsafe { real_bind(fd, addr, len) }
     }
 
     #[unsafe(no_mangle)]
@@ -566,12 +579,17 @@ mod platform {
                     if let Some(ip) = get_silo_ip() {
                         let port = unsafe { (*sin6).sin6_port };
                         if unsafe { probe_has_listener(fd, ip, port) } {
-                            // Dual-stack: rewrite in-place to ::ffff:SILO_IP
                             if !unsafe { is_v6only(fd) } {
-                                unsafe { rewrite_sockaddr_v6(addr, ip, false) };
-                                return unsafe { real_connect(fd, addr, len) };
+                                let mut sin6_copy: libc::sockaddr_in6 = unsafe { *sin6 };
+                                sin6_copy.sin6_addr.s6_addr = rewrite::ipv4_mapped_v6(ip);
+                                return unsafe {
+                                    real_connect(
+                                        fd,
+                                        &sin6_copy as *const libc::sockaddr_in6 as *const sockaddr,
+                                        len,
+                                    )
+                                };
                             }
-                            // V6-only: must replace socket
                             return unsafe { reconnect_as_ipv4(fd, port, ip) };
                         }
                     }
@@ -580,10 +598,10 @@ mod platform {
             }
         }
 
-        unsafe {
-            rewrite_connect_addr(fd, addr);
-            real_connect(fd, addr, len)
-        }
+        let mut storage = std::mem::MaybeUninit::<SockaddrStorage>::uninit();
+        let (addr, len) =
+            unsafe { maybe_rewrite_connect_addr(fd, addr, len, storage.assume_init_mut()) };
+        unsafe { real_connect(fd, addr, len) }
     }
 
     unsafe fn rebind_as_ipv4(fd: c_int, port: u16, ip: u32) -> c_int {
@@ -822,7 +840,9 @@ mod platform {
         dest_addr: *const sockaddr,
         addrlen: socklen_t,
     ) -> libc::ssize_t {
-        unsafe { rewrite_addr(dest_addr, true) };
+        let mut storage = std::mem::MaybeUninit::<SockaddrStorage>::uninit();
+        let (dest_addr, addrlen) =
+            unsafe { maybe_rewrite_addr(dest_addr, addrlen, true, storage.assume_init_mut()) };
         unsafe { real_sendto(fd, buf, len, flags, dest_addr, addrlen) }
     }
 
@@ -879,7 +899,21 @@ mod platform {
         if !msg.is_null() {
             let msg_ref = unsafe { &*msg };
             if !msg_ref.msg_name.is_null() && msg_ref.msg_namelen > 0 {
-                unsafe { rewrite_addr(msg_ref.msg_name as *const sockaddr, true) };
+                let mut storage = std::mem::MaybeUninit::<SockaddrStorage>::uninit();
+                let (new_addr, new_len) = unsafe {
+                    maybe_rewrite_addr(
+                        msg_ref.msg_name as *const sockaddr,
+                        msg_ref.msg_namelen,
+                        true,
+                        storage.assume_init_mut(),
+                    )
+                };
+                if new_addr != msg_ref.msg_name as *const sockaddr {
+                    let mut msg_copy: libc::msghdr = *msg_ref;
+                    msg_copy.msg_name = new_addr as *mut libc::c_void;
+                    msg_copy.msg_namelen = new_len;
+                    return unsafe { real_sendmsg(fd, &msg_copy as *const libc::msghdr, flags) };
+                }
             }
         }
         unsafe { real_sendmsg(fd, msg, flags) }
@@ -1051,7 +1085,8 @@ mod platform {
             "bind",
             unsafe extern "C" fn(c_int, *const sockaddr, socklen_t) -> c_int
         );
-        unsafe { rewrite_addr(addr, true) };
+        let mut storage = std::mem::MaybeUninit::<SockaddrStorage>::uninit();
+        let (addr, len) = unsafe { maybe_rewrite_addr(addr, len, true, storage.assume_init_mut()) };
         unsafe { real_fn(fd, addr, len) }
     }
 
@@ -1061,7 +1096,9 @@ mod platform {
             "connect",
             unsafe extern "C" fn(c_int, *const sockaddr, socklen_t) -> c_int
         );
-        unsafe { rewrite_connect_addr(fd, addr) };
+        let mut storage = std::mem::MaybeUninit::<SockaddrStorage>::uninit();
+        let (addr, len) =
+            unsafe { maybe_rewrite_connect_addr(fd, addr, len, storage.assume_init_mut()) };
         unsafe { real_fn(fd, addr, len) }
     }
 
@@ -1099,7 +1136,9 @@ mod platform {
             ) -> libc::ssize_t
         );
 
-        unsafe { rewrite_addr(dest_addr, true) };
+        let mut storage = std::mem::MaybeUninit::<SockaddrStorage>::uninit();
+        let (dest_addr, addrlen) =
+            unsafe { maybe_rewrite_addr(dest_addr, addrlen, true, storage.assume_init_mut()) };
         unsafe { real_fn(fd, buf, len, flags, dest_addr, addrlen) }
     }
 
@@ -1116,7 +1155,21 @@ mod platform {
         if !msg.is_null() {
             let msg_ref = unsafe { &*msg };
             if !msg_ref.msg_name.is_null() && msg_ref.msg_namelen > 0 {
-                unsafe { rewrite_addr(msg_ref.msg_name as *const sockaddr, true) };
+                let mut storage = std::mem::MaybeUninit::<SockaddrStorage>::uninit();
+                let (new_addr, new_len) = unsafe {
+                    maybe_rewrite_addr(
+                        msg_ref.msg_name as *const sockaddr,
+                        msg_ref.msg_namelen,
+                        true,
+                        storage.assume_init_mut(),
+                    )
+                };
+                if new_addr != msg_ref.msg_name as *const sockaddr {
+                    let mut msg_copy: libc::msghdr = *msg_ref;
+                    msg_copy.msg_name = new_addr as *mut libc::c_void;
+                    msg_copy.msg_namelen = new_len;
+                    return unsafe { real_fn(fd, &msg_copy as *const libc::msghdr, flags) };
+                }
             }
         }
         unsafe { real_fn(fd, msg, flags) }

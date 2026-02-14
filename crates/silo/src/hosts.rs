@@ -184,13 +184,27 @@ pub fn open_helper_lock() -> Result<RwLock<std::fs::File>> {
 }
 
 pub fn write_hosts_direct(content: &str) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
-    std::fs::write(HOSTS_TMP, content.as_bytes())
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o644)
+        .open(HOSTS_TMP)
+        .map_err(|e| Error::io("failed to create temp hosts file", e))?;
+
+    file.write_all(content.as_bytes())
         .map_err(|e| Error::io("failed to write temp hosts file", e))?;
 
-    std::fs::set_permissions(HOSTS_TMP, std::fs::Permissions::from_mode(0o644))
+    file.set_permissions(std::fs::Permissions::from_mode(0o644))
         .map_err(|e| Error::io("failed to set permissions on temp hosts file", e))?;
+
+    file.sync_all()
+        .map_err(|e| Error::io("failed to sync temp hosts file", e))?;
+
+    drop(file);
 
     std::fs::rename(HOSTS_TMP, HOSTS_PATH)
         .map_err(|e| Error::io("failed to rename temp hosts to /etc/hosts", e))?;

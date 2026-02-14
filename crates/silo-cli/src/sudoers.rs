@@ -1,5 +1,6 @@
 use std::process::{Command, Stdio};
 
+use colored::Colorize;
 use eyre::{Context, bail};
 
 const SUDOERS_PATH: &str = "/etc/sudoers.d/silo";
@@ -21,9 +22,6 @@ pub(crate) fn ensure() -> eyre::Result<()> {
             return Ok(());
         }
     } else if std::path::Path::new(SUDOERS_PATH).exists() {
-        // File exists but is not readable (e.g. root:wheel, user not in wheel).
-        // Assume it is correctly configured — if not, the actual sudo commands
-        // (ifconfig, silo _hosts) will fail later with a clear error.
         return Ok(());
     }
     install()
@@ -36,6 +34,29 @@ fn install() -> eyre::Result<()> {
     eprintln!();
 
     let rules = sudoers_rules();
+
+    if let Ok(bin_path) = std::env::current_exe() {
+        let warnings = check_path_security(&bin_path);
+        if !warnings.is_empty() {
+            eprintln!(
+                "  {} {}",
+                "WARNING:".yellow().bold(),
+                "sudoers will reference a potentially insecure binary path:".yellow()
+            );
+            eprintln!("    {}", bin_path.display());
+            for w in &warnings {
+                eprintln!("    - {w}");
+            }
+            eprintln!();
+            eprintln!(
+                "  {}",
+                "To fix: install silo to a root-owned path (e.g. /usr/local/bin/silo)".yellow()
+            );
+            eprintln!();
+        }
+    }
+
+    validate_sudoers_syntax(&rules)?;
 
     let status = Command::new("sudo")
         .args(["tee", SUDOERS_PATH])
@@ -69,6 +90,75 @@ fn install() -> eyre::Result<()> {
     eprintln!();
 
     Ok(())
+}
+
+fn validate_sudoers_syntax(rules: &str) -> eyre::Result<()> {
+    let tmp_path = "/tmp/.silo-sudoers-check";
+
+    if let Err(e) = std::fs::write(tmp_path, rules.as_bytes()) {
+        eprintln!(
+            "  {} could not write temp file for visudo check: {e}",
+            "WARNING:".yellow().bold()
+        );
+        return Ok(());
+    }
+
+    let result = Command::new("visudo")
+        .args(["-cf", tmp_path])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+
+    let _ = std::fs::remove_file(tmp_path);
+
+    match result {
+        Ok(status) if status.success() => Ok(()),
+        Ok(status) => {
+            bail!(
+                "generated sudoers rules failed visudo validation (exit {status}). \
+                 This is a silo bug — please report it at https://github.com/silo-rs/silo/issues"
+            );
+        }
+        Err(_) => {
+            eprintln!(
+                "  {} visudo not found; skipping syntax validation",
+                "WARNING:".yellow().bold()
+            );
+            Ok(())
+        }
+    }
+}
+
+pub(crate) fn check_path_security(bin_path: &std::path::Path) -> Vec<String> {
+    use std::os::unix::fs::MetadataExt;
+
+    let mut warnings = Vec::new();
+    let mut current = Some(bin_path);
+
+    while let Some(path) = current {
+        if let Ok(meta) = std::fs::symlink_metadata(path) {
+            let uid = meta.uid();
+            let mode = meta.mode();
+            let display = path.display();
+
+            if uid != 0 {
+                warnings.push(format!("{display} is owned by uid {uid} (not root)"));
+            }
+            if mode & 0o002 != 0 {
+                warnings.push(format!("{display} is world-writable"));
+            }
+            if mode & 0o020 != 0 && uid != 0 {
+                warnings.push(format!("{display} is group-writable and not root-owned"));
+            }
+        }
+
+        if path == std::path::Path::new("/") {
+            break;
+        }
+        current = path.parent();
+    }
+
+    warnings
 }
 
 fn sudoers_rules() -> String {
@@ -107,7 +197,7 @@ fn find_ip_command() -> String {
         return p.to_string_lossy().into_owned();
     }
     for candidate in ["/usr/sbin/ip", "/sbin/ip", "/usr/bin/ip", "/bin/ip"] {
-        if Path::new(candidate).exists() {
+        if std::path::Path::new(candidate).exists() {
             return candidate.to_string();
         }
     }
@@ -209,5 +299,81 @@ mod tests {
     fn admin_group_neither_defaults_sudo() {
         let etc_group = "root:x:0:\nusers:x:100:\n";
         assert_eq!(admin_group_from_etc_group(etc_group), "%sudo");
+    }
+
+    #[test]
+    fn path_security_detects_non_root_owner() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let warnings = check_path_security(tmp.path());
+        assert!(
+            warnings.iter().any(|w| w.contains("not root")),
+            "should detect non-root owner, got: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn path_security_checks_parent_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin_path = dir.path().join("silo");
+        std::fs::write(&bin_path, b"fake").unwrap();
+        let warnings = check_path_security(&bin_path);
+        let has_dir_warning = warnings
+            .iter()
+            .any(|w| w.contains(&dir.path().display().to_string()));
+        assert!(
+            has_dir_warning,
+            "should check parent directory, got: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn path_security_root_path_ok() {
+        let warnings = check_path_security(std::path::Path::new("/usr/local/bin/silo"));
+        let root_warnings: Vec<_> = warnings
+            .iter()
+            .filter(|w| {
+                w.contains("/usr/local/bin/silo")
+                    || w.contains("/usr/local/bin ")
+                    || w.contains("/usr/local ")
+                    || w.contains("/usr ")
+            })
+            .collect();
+        assert!(
+            root_warnings.is_empty(),
+            "root-owned paths should not warn, got: {root_warnings:?}"
+        );
+    }
+
+    #[test]
+    fn path_security_world_writable() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let bin_path = dir.path().join("silo");
+        std::fs::write(&bin_path, b"fake").unwrap();
+        std::fs::set_permissions(&bin_path, std::fs::Permissions::from_mode(0o777)).unwrap();
+        let warnings = check_path_security(&bin_path);
+        assert!(
+            warnings.iter().any(|w| w.contains("world-writable")),
+            "should detect world-writable, got: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn visudo_validates_generated_rules() {
+        let rules = sudoers_rules();
+        let tmp_path = "/tmp/.silo-sudoers-test-validate";
+        std::fs::write(tmp_path, rules.as_bytes()).unwrap();
+        let result = std::process::Command::new("visudo")
+            .args(["-cf", tmp_path])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        let _ = std::fs::remove_file(tmp_path);
+        if let Ok(status) = result {
+            assert!(
+                status.success(),
+                "generated sudoers rules must pass visudo validation"
+            );
+        }
     }
 }
