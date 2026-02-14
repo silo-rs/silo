@@ -14,85 +14,82 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Run a command with automatic bind() interception
     Run {
-        /// Override name (default: git branch)
         #[arg(long, short = 'n')]
         name: Option<String>,
 
-        /// Override IP address (must be in 127.0.0.0/8)
         #[arg(long)]
         ip: Option<std::net::Ipv4Addr>,
 
-        /// Suppress the silo banner
         #[arg(long, short)]
         quiet: bool,
 
-        /// Emit session info as a JSON line to stderr before exec
         #[arg(long)]
         emit_json: bool,
 
-        /// Command and arguments to run
         #[arg(trailing_var_arg = true, required = true)]
         command: Vec<String>,
     },
 
-    /// Print environment variables for shell eval or programmatic use
     Env {
-        /// Override name (default: git branch)
         #[arg(long, short = 'n')]
         name: Option<String>,
 
-        /// Override IP address (must be in 127.0.0.0/8)
         #[arg(long)]
         ip: Option<std::net::Ipv4Addr>,
 
-        /// Output as JSON
         #[arg(long)]
         json: bool,
     },
 
-    /// Show the resolved IP for the current directory
     Ip {
-        /// Output as JSON
         #[arg(long)]
         json: bool,
     },
 
-    /// Check environment and diagnose common problems
     Doctor {
-        /// Output as JSON
         #[arg(long)]
         json: bool,
     },
 
-    /// List active silo sessions
     Ls {
-        /// Output as JSON
         #[arg(long)]
         json: bool,
     },
 
-    /// Remove unused loopback aliases and /etc/hosts entries
     Prune {
-        /// Remove ALL aliases and hosts entries, even those with active ports
         #[arg(long)]
         all: bool,
 
-        /// Skip confirmation prompt
         #[arg(long, short)]
         yes: bool,
 
-        /// Output as JSON (implies --yes)
         #[arg(long)]
         json: bool,
     },
 
-    /// Load and pin eBPF programs for rootless operation (requires sudo, Linux only)
     #[cfg(target_os = "linux")]
     SetupEbpf,
 
-    /// Remove pinned eBPF programs (requires sudo, Linux only)
     #[cfg(target_os = "linux")]
     TeardownEbpf,
+
+    #[command(name = "_hosts", hide = true)]
+    Hosts {
+        #[command(subcommand)]
+        action: HostsAction,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum HostsAction {
+    Add {
+        ip: std::net::Ipv4Addr,
+        hostname: String,
+        dir: String,
+    },
+    Remove {
+        #[arg(required = true)]
+        ips: Vec<std::net::Ipv4Addr>,
+    },
 }

@@ -1,5 +1,6 @@
 pub mod doctor;
 pub mod env;
+pub mod hosts_helper;
 pub mod ip;
 pub mod ls;
 pub mod prune;

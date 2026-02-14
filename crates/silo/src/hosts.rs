@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::io::Write;
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -11,38 +10,93 @@ use tracing::debug;
 use crate::error::{Error, Result};
 
 pub const HOSTS_PATH: &str = "/etc/hosts";
+pub const HOSTS_TMP: &str = "/etc/.hosts.silo.tmp";
 const BEGIN_MARKER: &str = "# BEGIN silo managed block - do not edit";
 const END_MARKER: &str = "# END silo managed block";
-pub const HOSTS_TMP: &str = "/etc/.hosts.silo.tmp";
-const LOCK_PATH: &str = "/tmp/silo-hosts.lock";
+const HELPER_LOCK_PATH: &str = "/etc/.silo-hosts.lock";
+
+pub fn validate_ip(ip: Ipv4Addr) -> Result<()> {
+    if ip.octets()[0] != 127 {
+        return Err(Error::HostsValidation(format!(
+            "IP {} is not in 127.0.0.0/8",
+            ip
+        )));
+    }
+    if ip == Ipv4Addr::new(127, 0, 0, 1) {
+        return Err(Error::HostsValidation(
+            "127.0.0.1 is reserved for localhost".into(),
+        ));
+    }
+    Ok(())
+}
+
+pub fn validate_hostname(hostname: &str) -> Result<()> {
+    if !hostname.ends_with(".silo") {
+        return Err(Error::HostsValidation(format!(
+            "hostname '{}' does not end with .silo",
+            hostname
+        )));
+    }
+    let prefix = &hostname[..hostname.len() - 5];
+    if prefix.is_empty() || prefix == "." {
+        return Err(Error::HostsValidation(
+            "hostname must have labels before .silo".into(),
+        ));
+    }
+    if hostname.len() > 253 {
+        return Err(Error::HostsValidation("hostname too long".into()));
+    }
+    if !hostname
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+    {
+        return Err(Error::HostsValidation(format!(
+            "hostname '{}' contains invalid characters",
+            hostname
+        )));
+    }
+    Ok(())
+}
+
+pub fn validate_dir(dir: &str) -> Result<()> {
+    if dir.is_empty() {
+        return Err(Error::HostsValidation("directory path is empty".into()));
+    }
+    if dir.contains('\n') || dir.contains('\r') || dir.contains('\t') || dir.contains('\0') {
+        return Err(Error::HostsValidation(
+            "directory path contains invalid characters".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn silo_bin() -> Result<PathBuf> {
+    std::env::current_exe().map_err(|e| Error::io("failed to resolve silo binary path", e))
+}
 
 pub fn ensure_entry(ip: Ipv4Addr, hostname: &str, dir: &Path) -> Result<()> {
-    let mut lock = open_hosts_lock()?;
-    let _guard = lock
-        .write()
-        .map_err(|e| Error::io("failed to acquire silo hosts lock", e))?;
+    let bin = silo_bin()?;
 
-    let content = std::fs::read_to_string(HOSTS_PATH)
-        .map_err(|e| Error::io("failed to read /etc/hosts", e))?;
-    let (before, mut entries, after) = parse_block(&content);
+    let status = Command::new("sudo")
+        .arg(&bin)
+        .args([
+            "_hosts",
+            "add",
+            &ip.to_string(),
+            hostname,
+            &dir.display().to_string(),
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .status()
+        .map_err(|e| Error::io("failed to run silo _hosts add", e))?;
 
-    let new_line = format!("{}\t{}\t# {}", ip, hostname, dir.display());
-
-    if let Some(pos) = entries
-        .iter()
-        .position(|e| e.split('\t').nth(1).map(|h| h == hostname).unwrap_or(false))
-    {
-        if entries[pos] == new_line {
-            debug!(%hostname, "hosts entry already up to date");
-            return Ok(());
-        }
-        entries[pos] = new_line;
-    } else {
-        entries.push(new_line);
+    if !status.success() {
+        return Err(Error::CommandFailed {
+            command: format!("sudo {} _hosts add {} {}", bin.display(), ip, hostname),
+        });
     }
-
-    let output = rebuild(before, &entries, after);
-    write_hosts(&output)?;
 
     debug!(%hostname, %ip, "hosts entry ensured");
     Ok(())
@@ -80,95 +134,71 @@ pub fn list_entries() -> Result<Vec<HostEntry>> {
 }
 
 pub fn remove_entries(ips_to_remove: &HashSet<Ipv4Addr>) -> Result<Vec<(Ipv4Addr, String)>> {
-    let mut lock = open_hosts_lock()?;
-    let _guard = lock
-        .write()
-        .map_err(|e| Error::io("failed to acquire silo hosts lock", e))?;
+    if ips_to_remove.is_empty() {
+        return Ok(Vec::new());
+    }
 
-    let content = std::fs::read_to_string(HOSTS_PATH)
-        .map_err(|e| Error::io("failed to read /etc/hosts", e))?;
-    let (before, entries, after) = parse_block(&content);
+    let bin = silo_bin()?;
+    let ip_args: Vec<String> = ips_to_remove.iter().map(|ip| ip.to_string()).collect();
 
+    let output = Command::new("sudo")
+        .arg(&bin)
+        .arg("_hosts")
+        .arg("remove")
+        .args(&ip_args)
+        .stdin(Stdio::null())
+        .stderr(Stdio::inherit())
+        .output()
+        .map_err(|e| Error::io("failed to run silo _hosts remove", e))?;
+
+    if !output.status.success() {
+        return Err(Error::CommandFailed {
+            command: "sudo silo _hosts remove".to_string(),
+        });
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
     let mut removed = Vec::new();
-    let mut kept = Vec::new();
-
-    for entry in &entries {
-        let ip: Option<Ipv4Addr> = entry.split('\t').next().and_then(|s| s.parse().ok());
-
-        if let Some(ip) = ip
-            && ips_to_remove.contains(&ip)
+    for line in stdout.lines() {
+        if let Some((ip_str, hostname)) = line.split_once('\t')
+            && let Ok(ip) = ip_str.parse::<Ipv4Addr>()
         {
-            let main = entry.split_once("\t# ").map_or(entry.as_str(), |(m, _)| m);
-            let hostname = main.split('\t').nth(1).unwrap_or("").to_string();
-            removed.push((ip, hostname));
-            continue;
+            removed.push((ip, hostname.to_string()));
         }
-        kept.push(entry.clone());
     }
-
-    if removed.is_empty() {
-        return Ok(removed);
-    }
-
-    let output = rebuild(before, &kept, after);
-    write_hosts(&output)?;
 
     debug!(count = removed.len(), "removed hosts entries");
     Ok(removed)
 }
 
-fn open_hosts_lock() -> Result<RwLock<std::fs::File>> {
-    let file = match std::fs::File::open(LOCK_PATH) {
+pub fn open_helper_lock() -> Result<RwLock<std::fs::File>> {
+    let file = match std::fs::File::open(HELPER_LOCK_PATH) {
         Ok(f) => f,
         Err(_) => {
-            let _ = std::fs::File::create(LOCK_PATH);
-            std::fs::File::open(LOCK_PATH)
+            let _ = std::fs::File::create(HELPER_LOCK_PATH);
+            std::fs::File::open(HELPER_LOCK_PATH)
                 .map_err(|e| Error::io("failed to open silo hosts lock file", e))?
         }
     };
     Ok(RwLock::new(file))
 }
 
-fn write_hosts(content: &str) -> Result<()> {
-    let mut child = Command::new("sudo")
-        .args(["tee", HOSTS_TMP])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .map_err(|e| Error::io("failed to run sudo tee for temp hosts file", e))?;
+pub fn write_hosts_direct(content: &str) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
 
-    if let Some(ref mut stdin) = child.stdin {
-        stdin
-            .write_all(content.as_bytes())
-            .map_err(|e| Error::io("failed to write to temp hosts file", e))?;
-    }
+    std::fs::write(HOSTS_TMP, content.as_bytes())
+        .map_err(|e| Error::io("failed to write temp hosts file", e))?;
 
-    let status = child
-        .wait()
-        .map_err(|e| Error::io("failed to wait for sudo tee", e))?;
-    if !status.success() {
-        let _ = Command::new("sudo").args(["rm", "-f", HOSTS_TMP]).status();
-        return Err(Error::CommandFailed {
-            command: format!("sudo tee {}", HOSTS_TMP),
-        });
-    }
+    std::fs::set_permissions(HOSTS_TMP, std::fs::Permissions::from_mode(0o644))
+        .map_err(|e| Error::io("failed to set permissions on temp hosts file", e))?;
 
-    let status = Command::new("sudo")
-        .args(["mv", "-f", HOSTS_TMP, HOSTS_PATH])
-        .status()
-        .map_err(|e| Error::io("failed to run sudo mv for atomic hosts replace", e))?;
-    if !status.success() {
-        let _ = Command::new("sudo").args(["rm", "-f", HOSTS_TMP]).status();
-        return Err(Error::CommandFailed {
-            command: format!("sudo mv {} {}", HOSTS_TMP, HOSTS_PATH),
-        });
-    }
+    std::fs::rename(HOSTS_TMP, HOSTS_PATH)
+        .map_err(|e| Error::io("failed to rename temp hosts to /etc/hosts", e))?;
 
     Ok(())
 }
 
-fn parse_block(content: &str) -> (String, Vec<String>, String) {
+pub fn parse_block(content: &str) -> (String, Vec<String>, String) {
     enum State {
         Before,
         Inside,
@@ -210,7 +240,7 @@ fn parse_block(content: &str) -> (String, Vec<String>, String) {
     (before, entries, after)
 }
 
-fn rebuild(before: String, entries: &[String], after: String) -> String {
+pub fn rebuild(before: String, entries: &[String], after: String) -> String {
     let mut out = before;
 
     if !out.ends_with('\n') && !out.is_empty() {
@@ -345,5 +375,89 @@ mod tests {
         assert_eq!(ip_str, "127.0.1.1");
         assert_eq!(hostname, "api.myapp.silo");
         assert!(dir.is_none());
+    }
+
+    #[test]
+    fn validate_ip_accepts_loopback() {
+        assert!(validate_ip(Ipv4Addr::new(127, 0, 1, 1)).is_ok());
+        assert!(validate_ip(Ipv4Addr::new(127, 255, 255, 254)).is_ok());
+    }
+
+    #[test]
+    fn validate_ip_rejects_localhost() {
+        assert!(validate_ip(Ipv4Addr::new(127, 0, 0, 1)).is_err());
+    }
+
+    #[test]
+    fn validate_ip_rejects_non_loopback() {
+        assert!(validate_ip(Ipv4Addr::new(10, 0, 0, 1)).is_err());
+        assert!(validate_ip(Ipv4Addr::new(192, 168, 1, 1)).is_err());
+        assert!(validate_ip(Ipv4Addr::new(0, 0, 0, 0)).is_err());
+    }
+
+    #[test]
+    fn validate_hostname_accepts_valid() {
+        assert!(validate_hostname("feat.project.silo").is_ok());
+        assert!(validate_hostname("main.my-app.silo").is_ok());
+        assert!(validate_hostname("a.silo").is_ok());
+        assert!(validate_hostname("feature-auth.my_project.silo").is_ok());
+    }
+
+    #[test]
+    fn validate_hostname_rejects_no_silo_suffix() {
+        assert!(validate_hostname("foo.com").is_err());
+        assert!(validate_hostname("foo.sil").is_err());
+    }
+
+    #[test]
+    fn validate_hostname_rejects_empty_prefix() {
+        assert!(validate_hostname(".silo").is_err());
+    }
+
+    #[test]
+    fn validate_hostname_rejects_newline() {
+        assert!(validate_hostname("foo.silo\n127.0.0.1 evil").is_err());
+    }
+
+    #[test]
+    fn validate_hostname_rejects_tab() {
+        assert!(validate_hostname("foo.silo\tevil").is_err());
+    }
+
+    #[test]
+    fn validate_hostname_rejects_space() {
+        assert!(validate_hostname("foo .silo").is_err());
+    }
+
+    #[test]
+    fn validate_hostname_rejects_too_long() {
+        let long = format!("{}.silo", "a".repeat(250));
+        assert!(validate_hostname(&long).is_err());
+    }
+
+    #[test]
+    fn validate_dir_accepts_valid() {
+        assert!(validate_dir("/home/user/project").is_ok());
+        assert!(validate_dir("/tmp/my app").is_ok());
+    }
+
+    #[test]
+    fn validate_dir_rejects_newline() {
+        assert!(validate_dir("/home/user\n# evil").is_err());
+    }
+
+    #[test]
+    fn validate_dir_rejects_tab() {
+        assert!(validate_dir("/home/user\tevil").is_err());
+    }
+
+    #[test]
+    fn validate_dir_rejects_empty() {
+        assert!(validate_dir("").is_err());
+    }
+
+    #[test]
+    fn validate_dir_rejects_null() {
+        assert!(validate_dir("/home/user\0evil").is_err());
     }
 }

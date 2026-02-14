@@ -21,6 +21,9 @@ pub enum Error {
     #[error("ip override {0} is not in 127.0.0.0/8")]
     InvalidIpOverride(std::net::Ipv4Addr),
 
+    #[error("hosts validation: {0}")]
+    HostsValidation(String),
+
     #[error("{0}")]
     Backend(#[source] Box<dyn std::error::Error + Send + Sync>),
 }

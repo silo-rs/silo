@@ -1,14 +1,25 @@
-use std::path::Path;
 use std::process::{Command, Stdio};
 
 use eyre::{Context, bail};
-use silo::hosts::{HOSTS_PATH, HOSTS_TMP};
 
 const SUDOERS_PATH: &str = "/etc/sudoers.d/silo";
+const SUDOERS_VERSION: u32 = 2;
+const SUDOERS_VERSION_PREFIX: &str = "# silo sudoers v";
 
 pub(crate) fn ensure() -> eyre::Result<()> {
-    if Path::new(SUDOERS_PATH).exists() {
-        return Ok(());
+    if let Ok(content) = std::fs::read_to_string(SUDOERS_PATH) {
+        let current_bin = std::env::current_exe()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+
+        if let Some(first_line) = content.lines().next()
+            && let Some(ver_str) = first_line.strip_prefix(SUDOERS_VERSION_PREFIX)
+            && let Ok(ver) = ver_str.parse::<u32>()
+            && ver >= SUDOERS_VERSION
+            && content.contains(&current_bin)
+        {
+            return Ok(());
+        }
     }
     install()
 }
@@ -56,13 +67,18 @@ fn install() -> eyre::Result<()> {
 }
 
 fn sudoers_rules() -> String {
+    let silo_bin = std::env::current_exe()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| "silo".to_string());
+
     #[cfg(target_os = "macos")]
     {
         format!(
-            "%admin ALL=(root) NOPASSWD: /sbin/ifconfig lo0 alias 127.* netmask 255.0.0.0\n\
+            "{SUDOERS_VERSION_PREFIX}{SUDOERS_VERSION}\n\
+             %admin ALL=(root) NOPASSWD: /sbin/ifconfig lo0 alias 127.* netmask 255.0.0.0\n\
              %admin ALL=(root) NOPASSWD: /sbin/ifconfig lo0 -alias 127.*\n\
-             %admin ALL=(root) NOPASSWD: /usr/bin/tee {HOSTS_TMP}\n\
-             %admin ALL=(root) NOPASSWD: /bin/mv -f {HOSTS_TMP} {HOSTS_PATH}\n"
+             %admin ALL=(root) NOPASSWD: {silo_bin} _hosts add 127.* *.silo *\n\
+             %admin ALL=(root) NOPASSWD: {silo_bin} _hosts remove *\n"
         )
     }
 
@@ -70,17 +86,12 @@ fn sudoers_rules() -> String {
     {
         let group = detect_admin_group();
         let ip_cmd = find_ip_command();
-        let tee_cmd = which::which("tee")
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_else(|_| "/usr/bin/tee".to_string());
-        let mv_cmd = which::which("mv")
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_else(|_| "/usr/bin/mv".to_string());
         format!(
-            "{group} ALL=(root) NOPASSWD: {ip_cmd} addr add 127.*/8 dev lo\n\
+            "{SUDOERS_VERSION_PREFIX}{SUDOERS_VERSION}\n\
+             {group} ALL=(root) NOPASSWD: {ip_cmd} addr add 127.*/8 dev lo\n\
              {group} ALL=(root) NOPASSWD: {ip_cmd} addr del 127.*/8 dev lo\n\
-             {group} ALL=(root) NOPASSWD: {tee_cmd} {HOSTS_TMP}\n\
-             {group} ALL=(root) NOPASSWD: {mv_cmd} -f {HOSTS_TMP} {HOSTS_PATH}\n"
+             {group} ALL=(root) NOPASSWD: {silo_bin} _hosts add 127.* *.silo *\n\
+             {group} ALL=(root) NOPASSWD: {silo_bin} _hosts remove *\n"
         )
     }
 }
@@ -124,19 +135,50 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sudoers_rules_match_hosts_paths() {
+    fn sudoers_rules_use_silo_hosts_helper() {
         let rules = sudoers_rules();
         assert!(
-            rules.contains(HOSTS_TMP),
-            "sudoers rules must allow tee to {HOSTS_TMP}, got:\n{rules}"
+            rules.contains("_hosts add"),
+            "sudoers rules must use silo _hosts add, got:\n{rules}"
         );
         assert!(
-            rules.contains(&format!("{HOSTS_TMP} {HOSTS_PATH}")),
-            "sudoers rules must allow mv from {HOSTS_TMP} to {HOSTS_PATH}, got:\n{rules}"
+            rules.contains("_hosts remove"),
+            "sudoers rules must use silo _hosts remove, got:\n{rules}"
         );
         assert!(
-            !rules.contains(&format!("tee {HOSTS_PATH}\n")),
-            "sudoers must not allow direct tee to {HOSTS_PATH} (use atomic write via {HOSTS_TMP}), got:\n{rules}"
+            !rules.contains("/usr/bin/tee"),
+            "sudoers rules must not allow tee, got:\n{rules}"
+        );
+        assert!(
+            !rules.contains(" mv "),
+            "sudoers rules must not allow mv, got:\n{rules}"
+        );
+    }
+
+    #[test]
+    fn sudoers_has_version_header() {
+        let rules = sudoers_rules();
+        assert!(
+            rules.starts_with(SUDOERS_VERSION_PREFIX),
+            "sudoers rules must start with version header, got:\n{rules}"
+        );
+    }
+
+    #[test]
+    fn sudoers_ip_rules_restricted_to_loopback() {
+        let rules = sudoers_rules();
+        assert!(
+            rules.contains("127.*"),
+            "sudoers rules must restrict IPs to 127.*, got:\n{rules}"
+        );
+    }
+
+    #[test]
+    fn sudoers_hosts_rules_restrict_to_silo_suffix() {
+        let rules = sudoers_rules();
+        assert!(
+            rules.contains("*.silo"),
+            "sudoers rules must restrict hostnames to *.silo, got:\n{rules}"
         );
     }
 
