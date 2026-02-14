@@ -344,7 +344,9 @@ fn runtime_node_bind_is_rewritten() {
     );
 }
 
-/// Go (default CGO): `net.Listen("tcp", "0.0.0.0:0")` should be rewritten.
+/// Go (default CGO): documents platform difference for bind interception.
+/// - macOS: DYLD_INSERT_LIBRARIES works, bind is rewritten.
+/// - Linux: Go uses raw syscalls for bind(), bypassing LD_PRELOAD, so bind is NOT rewritten.
 #[test]
 fn runtime_go_bind_is_rewritten() {
     if which::which("go").is_err() {
@@ -373,10 +375,20 @@ fn runtime_go_bind_is_rewritten() {
 
     let (stdout, _, success) = run_injected(bin.to_str().unwrap(), &[], TEST_IP);
     assert!(success, "go helper failed");
-    assert!(
-        stdout.contains(TEST_IP),
-        "expected bind to {TEST_IP}, got: {stdout}"
-    );
+
+    if cfg!(target_os = "macos") {
+        assert!(
+            stdout.contains(TEST_IP),
+            "expected bind to {TEST_IP} on macOS, got: {stdout}"
+        );
+    } else {
+        // Linux: Go uses raw syscalls for socket operations even with CGO enabled,
+        // so LD_PRELOAD cannot intercept bind().
+        assert!(
+            stdout.contains("0.0.0.0"),
+            "expected Go to bypass LD_PRELOAD on Linux, got: {stdout}"
+        );
+    }
 }
 
 /// Go with CGO_ENABLED=0: documents platform difference.
