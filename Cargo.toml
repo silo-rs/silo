@@ -4,10 +4,10 @@ exclude = ["crates/silo-ebpf"]
 resolver = "2"
 
 [workspace.package]
-version = "0.2.4"
+version = "0.2.5"
 edition = "2024"
 authors = ["Jun Ryu <junhsss@gmail.com>"]
-description = "Syscall interception on loopback"
+description = "Transparent port isolation for parallel development"
 license = "MIT"
 repository = "https://github.com/silo-rs/silo"
 homepage = "https://github.com/silo-rs/silo"
@@ -38,7 +38,7 @@ aya = "0.13"
 # dev deps
 tempfile = "3"
 
-# Theㅣ profile that 'dist' will build with
+# The profile that 'dist' will build with
 [profile.dist]
 inherits = "release"
 lto = "thin"
