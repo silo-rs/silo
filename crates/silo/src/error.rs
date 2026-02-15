@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::io;
 
 use thiserror::Error as ThisError;
@@ -10,7 +11,7 @@ pub enum Error {
 
     #[error("{context}")]
     Io {
-        context: String,
+        context: Cow<'static, str>,
         #[source]
         source: io::Error,
     },
@@ -39,7 +40,7 @@ pub enum Error {
 }
 
 impl Error {
-    pub(crate) fn io(context: impl Into<String>, source: io::Error) -> Self {
+    pub(crate) fn io(context: impl Into<Cow<'static, str>>, source: io::Error) -> Self {
         Self::Io {
             context: context.into(),
             source,
