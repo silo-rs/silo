@@ -4,22 +4,30 @@ use colored::Colorize;
 use eyre::{Context, bail};
 
 const SUDOERS_PATH: &str = "/etc/sudoers.d/silo";
-const SUDOERS_VERSION: u32 = 2;
+const SUDOERS_VERSION: u32 = 3;
 const SUDOERS_VERSION_PREFIX: &str = "# silo sudoers v";
+const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub(crate) fn ensure() -> eyre::Result<()> {
     if let Ok(content) = std::fs::read_to_string(SUDOERS_PATH) {
-        let current_bin = std::env::current_exe()
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_default();
-
         if let Some(first_line) = content.lines().next()
-            && let Some(ver_str) = first_line.strip_prefix(SUDOERS_VERSION_PREFIX)
-            && let Ok(ver) = ver_str.parse::<u32>()
-            && ver >= SUDOERS_VERSION
-            && content.contains(&current_bin)
+            && let Some(rest) = first_line.strip_prefix(SUDOERS_VERSION_PREFIX)
         {
-            return Ok(());
+            let parts: Vec<&str> = rest.splitn(2, ' ').collect();
+            let ver_ok = parts
+                .first()
+                .and_then(|v| v.parse::<u32>().ok())
+                .map(|v| v >= SUDOERS_VERSION)
+                .unwrap_or(false);
+            let pkg_ok = parts
+                .get(1)
+                .and_then(|s| s.strip_prefix("pkg="))
+                .map(|v| v == PKG_VERSION)
+                .unwrap_or(false);
+
+            if ver_ok && pkg_ok && content.contains(silo::hosts::SECURE_SILO_BIN) {
+                return Ok(());
+            }
         }
     } else if std::path::Path::new(SUDOERS_PATH).exists() {
         return Ok(());
@@ -28,50 +36,34 @@ pub(crate) fn ensure() -> eyre::Result<()> {
 }
 
 fn install() -> eyre::Result<()> {
+    let secure_bin = silo::hosts::SECURE_SILO_BIN;
+
     eprintln!();
     eprintln!("silo needs passwordless sudo for loopback IP aliases (one-time setup)");
-    eprintln!("this will create {SUDOERS_PATH}");
+    eprintln!("this will copy the binary to {secure_bin} and create {SUDOERS_PATH}");
     eprintln!();
 
-    let rules = sudoers_rules();
+    let current_bin = std::env::current_exe().context("failed to resolve current binary path")?;
 
-    if let Ok(bin_path) = std::env::current_exe() {
-        let warnings = check_path_security(&bin_path);
-        if !warnings.is_empty() {
-            eprintln!(
-                "  {} {}",
-                "ERROR:".red().bold(),
-                "refusing to install sudoers rules for an insecure binary path:".red()
-            );
-            eprintln!("    {}", bin_path.display());
-            for w in &warnings {
-                eprintln!("    - {w}");
-            }
-            eprintln!();
-            eprintln!(
-                "  {}",
-                "To fix: install silo to a root-owned path (e.g. /usr/local/bin/silo)".yellow()
-            );
-            eprintln!(
-                "  {}",
-                "  sudo cp ~/.cargo/bin/silo /usr/local/bin/silo".dimmed()
-            );
-            eprintln!();
-            if std::env::var("SILO_ALLOW_INSECURE_PATH").is_ok() {
-                eprintln!(
-                    "  {} proceeding anyway (SILO_ALLOW_INSECURE_PATH is set)",
-                    "WARNING:".yellow().bold()
-                );
-                eprintln!();
-            } else {
-                bail!(
-                    "sudoers installation blocked: binary path is not secure. \
-                     Set SILO_ALLOW_INSECURE_PATH=1 to override (not recommended)."
-                );
-            }
-        }
+    let status = Command::new("sudo")
+        .args(["cp", &current_bin.to_string_lossy(), secure_bin])
+        .status()
+        .context("failed to copy binary to secure path")?;
+
+    if !status.success() {
+        bail!("sudo cp to {secure_bin} failed");
     }
 
+    let status = Command::new("sudo")
+        .args(["chmod", "755", secure_bin])
+        .status()
+        .context("failed to chmod secure binary")?;
+
+    if !status.success() {
+        bail!("sudo chmod 755 {secure_bin} failed");
+    }
+
+    let rules = sudoers_rules();
     validate_sudoers_syntax(&rules)?;
 
     let status = Command::new("sudo")
@@ -192,14 +184,12 @@ pub(crate) fn check_path_security(bin_path: &std::path::Path) -> Vec<String> {
 }
 
 fn sudoers_rules() -> String {
-    let silo_bin = std::env::current_exe()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| "silo".to_string());
+    let silo_bin = silo::hosts::SECURE_SILO_BIN;
 
     #[cfg(target_os = "macos")]
     {
         format!(
-            "{SUDOERS_VERSION_PREFIX}{SUDOERS_VERSION}\n\
+            "{SUDOERS_VERSION_PREFIX}{SUDOERS_VERSION} pkg={PKG_VERSION}\n\
              %admin ALL=(root) NOPASSWD: /sbin/ifconfig lo0 alias 127.* netmask 255.0.0.0\n\
              %admin ALL=(root) NOPASSWD: /sbin/ifconfig lo0 -alias 127.*\n\
              %admin ALL=(root) NOPASSWD: {silo_bin} _hosts add 127.* *.silo *\n\
@@ -212,7 +202,7 @@ fn sudoers_rules() -> String {
         let group = detect_admin_group();
         let ip_cmd = find_ip_command();
         format!(
-            "{SUDOERS_VERSION_PREFIX}{SUDOERS_VERSION}\n\
+            "{SUDOERS_VERSION_PREFIX}{SUDOERS_VERSION} pkg={PKG_VERSION}\n\
              {group} ALL=(root) NOPASSWD: {ip_cmd} addr add 127.*/8 dev lo\n\
              {group} ALL=(root) NOPASSWD: {ip_cmd} addr del 127.*/8 dev lo\n\
              {group} ALL=(root) NOPASSWD: {silo_bin} _hosts add 127.* *.silo *\n\
@@ -284,9 +274,20 @@ mod tests {
     #[test]
     fn sudoers_has_version_header() {
         let rules = sudoers_rules();
+        let expected_prefix =
+            format!("{SUDOERS_VERSION_PREFIX}{SUDOERS_VERSION} pkg={PKG_VERSION}");
         assert!(
-            rules.starts_with(SUDOERS_VERSION_PREFIX),
-            "sudoers rules must start with version header, got:\n{rules}"
+            rules.starts_with(&expected_prefix),
+            "sudoers rules must start with version+pkg header, got:\n{rules}"
+        );
+    }
+
+    #[test]
+    fn sudoers_rules_reference_secure_path() {
+        let rules = sudoers_rules();
+        assert!(
+            rules.contains(silo::hosts::SECURE_SILO_BIN),
+            "sudoers rules must reference secure binary path, got:\n{rules}"
         );
     }
 

@@ -89,21 +89,34 @@ pub fn run(json: bool) -> eyre::Result<()> {
         warnings += 1;
     }
 
-    if let Ok(bin_path) = std::env::current_exe() {
-        let path_warnings = crate::sudoers::check_path_security(&bin_path);
-        if path_warnings.is_empty() {
-            checks.push(Check {
-                name: "binary path".into(),
-                status: CheckStatus::Ok,
-                detail: format!("{} (root-owned)", bin_path.display()),
-            });
+    {
+        let secure_bin = std::path::Path::new(silo::hosts::SECURE_SILO_BIN);
+        if secure_bin.exists() {
+            let path_warnings = crate::sudoers::check_path_security(secure_bin);
+            if path_warnings.is_empty() {
+                checks.push(Check {
+                    name: "binary path".into(),
+                    status: CheckStatus::Ok,
+                    detail: format!("{} (root-owned)", secure_bin.display()),
+                });
+            } else {
+                checks.push(Check {
+                    name: "binary path".into(),
+                    status: CheckStatus::Warn,
+                    detail: format!(
+                        "insecure path: {}",
+                        path_warnings.first().unwrap_or(&String::new())
+                    ),
+                });
+                warnings += 1;
+            }
         } else {
             checks.push(Check {
                 name: "binary path".into(),
                 status: CheckStatus::Warn,
                 detail: format!(
-                    "insecure path: {}",
-                    path_warnings.first().unwrap_or(&String::new())
+                    "{} not found (will be installed on first use)",
+                    secure_bin.display()
                 ),
             });
             warnings += 1;

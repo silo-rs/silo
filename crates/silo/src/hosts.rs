@@ -11,6 +11,7 @@ use crate::error::{Error, Result};
 
 pub const HOSTS_PATH: &str = "/etc/hosts";
 pub const HOSTS_TMP: &str = "/etc/.hosts.silo.tmp";
+pub const SECURE_SILO_BIN: &str = "/usr/local/bin/silo";
 const BEGIN_MARKER: &str = "# BEGIN silo managed block - do not edit";
 const END_MARKER: &str = "# END silo managed block";
 const HELPER_LOCK_PATH: &str = "/etc/.silo-hosts.lock";
@@ -70,12 +71,12 @@ pub fn validate_dir(dir: &str) -> Result<()> {
     Ok(())
 }
 
-fn silo_bin() -> Result<PathBuf> {
-    std::env::current_exe().map_err(|e| Error::io("failed to resolve silo binary path", e))
+fn silo_bin() -> PathBuf {
+    PathBuf::from(SECURE_SILO_BIN)
 }
 
 pub fn ensure_entry(ip: Ipv4Addr, hostname: &str, dir: &Path) -> Result<()> {
-    let bin = silo_bin()?;
+    let bin = silo_bin();
 
     let status = Command::new("sudo")
         .arg(&bin)
@@ -138,7 +139,7 @@ pub fn remove_entries(ips_to_remove: &HashSet<Ipv4Addr>) -> Result<Vec<(Ipv4Addr
         return Ok(Vec::new());
     }
 
-    let bin = silo_bin()?;
+    let bin = silo_bin();
     let ip_args: Vec<String> = ips_to_remove.iter().map(|ip| ip.to_string()).collect();
 
     let output = Command::new("sudo")
