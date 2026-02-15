@@ -1,6 +1,7 @@
 use std::env;
 use std::io;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, TcpListener, UdpSocket};
+use std::os::unix::net::UnixListener;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -32,6 +33,12 @@ fn main() {
         #[cfg(target_os = "macos")]
         "bind_v6_kqueue" => cmd_bind_v6_kqueue(),
         "passthrough" => cmd_bind(Ipv4Addr::UNSPECIFIED),
+        "bind_unix" => cmd_bind_unix(),
+        "errno_after_connect" => cmd_errno_after_connect(),
+        "bind_v6_any_linux" => cmd_bind_v6(Ipv6Addr::UNSPECIFIED),
+        "bind_v6_localhost_linux" => cmd_bind_v6(Ipv6Addr::LOCALHOST),
+        "connect_v6_localhost" => cmd_connect_v6_localhost(),
+        "concurrent_bind" => cmd_concurrent_bind(),
         other => {
             eprintln!("unknown command: {other}");
             std::process::exit(1);
@@ -613,5 +620,211 @@ fn cmd_sendto(addr: Ipv4Addr) -> io::Result<()> {
     let target = SocketAddrV4::new(Ipv4Addr::LOCALHOST, local.port());
     let _ = socket.send_to(b"test", target);
     println!("sendto=ok");
+    Ok(())
+}
+
+fn cmd_bind_unix() -> io::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let sock_path = dir.path().join("test.sock");
+    let listener = UnixListener::bind(&sock_path)?;
+    let addr = listener.local_addr()?;
+    println!(
+        "unix_bound={}",
+        addr.as_pathname()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default()
+    );
+    println!("unix=ok");
+    Ok(())
+}
+
+fn cmd_errno_after_connect() -> io::Result<()> {
+    unsafe {
+        #[cfg(target_os = "linux")]
+        let errno_ptr = libc::__errno_location();
+        #[cfg(target_os = "macos")]
+        let errno_ptr = libc::__error();
+
+        *errno_ptr = libc::EAGAIN;
+
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let port = listener.local_addr()?.port();
+        let _ = std::net::TcpStream::connect(format!("127.0.0.1:{port}"));
+
+        let errno_after = *errno_ptr;
+        println!("errno_before=EAGAIN");
+        println!("errno_after={errno_after}");
+        println!("errno_preserved={}", errno_after == libc::EAGAIN);
+    }
+    Ok(())
+}
+
+fn cmd_bind_v6(addr: Ipv6Addr) -> io::Result<()> {
+    unsafe {
+        let fd = libc::socket(libc::AF_INET6, libc::SOCK_STREAM, 0);
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let mut addr6: libc::sockaddr_in6 = std::mem::zeroed();
+        #[cfg(target_os = "macos")]
+        {
+            addr6.sin6_len = std::mem::size_of::<libc::sockaddr_in6>() as u8;
+        }
+        addr6.sin6_family = libc::AF_INET6 as _;
+        addr6.sin6_port = 0;
+        addr6.sin6_addr.s6_addr = addr.octets();
+
+        let ret = libc::bind(
+            fd,
+            &addr6 as *const _ as *const libc::sockaddr,
+            std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t,
+        );
+        if ret != 0 {
+            let err = io::Error::last_os_error();
+            libc::close(fd);
+            return Err(err);
+        }
+
+        let mut bound: libc::sockaddr_storage = std::mem::zeroed();
+        let mut bound_len = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+        libc::getsockname(
+            fd,
+            &mut bound as *mut _ as *mut libc::sockaddr,
+            &mut bound_len,
+        );
+
+        if bound.ss_family == libc::AF_INET6 as _ {
+            let sin6 = &*(&bound as *const _ as *const libc::sockaddr_in6);
+            let v6_bytes = sin6.sin6_addr.s6_addr;
+            if v6_bytes[..10] == [0; 10] && v6_bytes[10] == 0xff && v6_bytes[11] == 0xff {
+                let ip = Ipv4Addr::new(v6_bytes[12], v6_bytes[13], v6_bytes[14], v6_bytes[15]);
+                println!("family=v6");
+                println!("bound={ip}");
+                println!("mapped=true");
+            } else {
+                let ip = Ipv6Addr::from(v6_bytes);
+                println!("family=v6");
+                println!("bound={ip}");
+                println!("mapped=false");
+            }
+        } else if bound.ss_family == libc::AF_INET as _ {
+            let sin = &*(&bound as *const _ as *const libc::sockaddr_in);
+            let ip = Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr));
+            println!("family=v4");
+            println!("bound={ip}");
+        }
+
+        libc::close(fd);
+    }
+    Ok(())
+}
+
+fn cmd_connect_v6_localhost() -> io::Result<()> {
+    unsafe {
+        let listen_fd = libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0);
+        if listen_fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        let mut bind_addr: libc::sockaddr_in = std::mem::zeroed();
+        #[cfg(target_os = "macos")]
+        {
+            bind_addr.sin_len = std::mem::size_of::<libc::sockaddr_in>() as u8;
+        }
+        bind_addr.sin_family = libc::AF_INET as _;
+        bind_addr.sin_port = 0;
+        let silo_ip_str = env::var("SILO_IP").unwrap_or_else(|_| "127.0.0.1".to_string());
+        let silo_ip: Ipv4Addr = silo_ip_str.parse().unwrap_or(Ipv4Addr::LOCALHOST);
+        bind_addr.sin_addr.s_addr = u32::from(silo_ip).to_be();
+
+        libc::bind(
+            listen_fd,
+            &bind_addr as *const _ as *const libc::sockaddr,
+            std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+        );
+        libc::listen(listen_fd, 1);
+
+        let mut bound: libc::sockaddr_in = std::mem::zeroed();
+        let mut bound_len = std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t;
+        libc::getsockname(
+            listen_fd,
+            &mut bound as *mut _ as *mut libc::sockaddr,
+            &mut bound_len,
+        );
+        let port = u16::from_be(bound.sin_port);
+
+        let connect_fd = libc::socket(libc::AF_INET6, libc::SOCK_STREAM, 0);
+        let mut dest: libc::sockaddr_in6 = std::mem::zeroed();
+        #[cfg(target_os = "macos")]
+        {
+            dest.sin6_len = std::mem::size_of::<libc::sockaddr_in6>() as u8;
+        }
+        dest.sin6_family = libc::AF_INET6 as _;
+        dest.sin6_port = u16::to_be(port);
+        dest.sin6_addr.s6_addr = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+
+        let ret = libc::connect(
+            connect_fd,
+            &dest as *const _ as *const libc::sockaddr,
+            std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t,
+        );
+
+        if ret == 0 {
+            let mut peer: libc::sockaddr_storage = std::mem::zeroed();
+            let mut peer_len = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+            libc::getpeername(
+                connect_fd,
+                &mut peer as *mut _ as *mut libc::sockaddr,
+                &mut peer_len,
+            );
+
+            if peer.ss_family == libc::AF_INET6 as _ {
+                let sin6 = &*(&peer as *const _ as *const libc::sockaddr_in6);
+                let v6_bytes = sin6.sin6_addr.s6_addr;
+                if v6_bytes[..10] == [0; 10] && v6_bytes[10] == 0xff && v6_bytes[11] == 0xff {
+                    let ip = Ipv4Addr::new(v6_bytes[12], v6_bytes[13], v6_bytes[14], v6_bytes[15]);
+                    println!("connected={ip}");
+                } else {
+                    let ip = Ipv6Addr::from(v6_bytes);
+                    println!("connected={ip}");
+                }
+            } else if peer.ss_family == libc::AF_INET as _ {
+                let sin = &*(&peer as *const _ as *const libc::sockaddr_in);
+                let ip = Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr));
+                println!("connected={ip}");
+            }
+            println!("connect_v6=ok");
+        } else {
+            println!("connect_v6=failed");
+        }
+
+        libc::close(connect_fd);
+        libc::close(listen_fd);
+    }
+    Ok(())
+}
+
+fn cmd_concurrent_bind() -> io::Result<()> {
+    let threads: Vec<_> = (0..10)
+        .map(|_| {
+            std::thread::spawn(|| -> io::Result<String> {
+                let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))?;
+                let local = listener.local_addr()?;
+                Ok(local.ip().to_string())
+            })
+        })
+        .collect();
+
+    let mut all_ok = true;
+    for (i, handle) in threads.into_iter().enumerate() {
+        match handle.join().unwrap() {
+            Ok(ip) => println!("thread_{i}={ip}"),
+            Err(e) => {
+                println!("thread_{i}=error:{e}");
+                all_ok = false;
+            }
+        }
+    }
+    println!("concurrent={}", if all_ok { "ok" } else { "failed" });
     Ok(())
 }

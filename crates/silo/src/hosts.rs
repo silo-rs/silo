@@ -741,9 +741,82 @@ mod tests {
             e = END_MARKER
         );
         let (before, entries, after) = parse_block(&content);
-        // The second BEGIN_MARKER is treated as an entry inside the block
         assert_eq!(before, "127.0.0.1\tlocalhost\n");
         assert!(entries.contains(&"127.0.1.1\tapi.myapp.silo".to_string()));
         assert_eq!(after, "::1\tlocalhost\n");
+    }
+
+    #[test]
+    fn parse_block_crlf() {
+        let content = format!(
+            "127.0.0.1\tlocalhost\r\n{}\r\n127.0.1.1\tapi.myapp.silo\r\n{}\r\n::1\tlocalhost\r\n",
+            BEGIN_MARKER, END_MARKER
+        );
+        let (before, entries, _after) = parse_block(&content);
+        assert!(before.contains("localhost"));
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].contains("api.myapp.silo"));
+    }
+
+    #[test]
+    fn parse_block_empty_file() {
+        let (before, entries, after) = parse_block("");
+        assert_eq!(before, "");
+        assert!(entries.is_empty());
+        assert_eq!(after, "");
+    }
+
+    #[test]
+    fn parse_block_only_silo_block() {
+        let content = format!(
+            "{}\n127.0.1.1\tapi.myapp.silo\n{}\n",
+            BEGIN_MARKER, END_MARKER
+        );
+        let (before, entries, after) = parse_block(&content);
+        assert_eq!(before, "");
+        assert_eq!(entries, vec!["127.0.1.1\tapi.myapp.silo"]);
+        assert_eq!(after, "");
+    }
+
+    #[test]
+    fn rebuild_no_trailing_newline_in_before() {
+        let before = "127.0.0.1\tlocalhost".to_string();
+        let entries = vec!["127.0.1.1\tapi.myapp.silo".to_string()];
+        let after = String::new();
+
+        let result = rebuild(before, &entries, after);
+        assert!(result.contains(BEGIN_MARKER));
+        assert!(result.contains("127.0.1.1\tapi.myapp.silo"));
+        assert!(result.contains(END_MARKER));
+    }
+
+    #[test]
+    fn validate_hostname_boundary_253() {
+        let prefix_len = 253 - 5;
+        let prefix = "a".repeat(prefix_len);
+        let hostname = format!("{prefix}.silo");
+        assert_eq!(hostname.len(), 253);
+        assert!(validate_hostname(&hostname).is_ok());
+    }
+
+    #[test]
+    fn validate_hostname_boundary_254() {
+        let prefix_len = 254 - 5;
+        let prefix = "a".repeat(prefix_len);
+        let hostname = format!("{prefix}.silo");
+        assert_eq!(hostname.len(), 254);
+        assert!(validate_hostname(&hostname).is_err());
+    }
+
+    #[test]
+    fn find_ip_conflict_empty_entries() {
+        let entries: Vec<String> = vec![];
+        assert!(find_ip_conflict(&entries, Ipv4Addr::new(127, 1, 2, 3), "test.silo").is_none());
+    }
+
+    #[test]
+    fn find_ip_conflict_malformed_entry() {
+        let entries = vec!["not-a-valid-entry".to_string()];
+        assert!(find_ip_conflict(&entries, Ipv4Addr::new(127, 1, 2, 3), "test.silo").is_none());
     }
 }

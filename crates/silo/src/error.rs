@@ -21,6 +21,16 @@ pub enum Error {
     #[error("ip override {0} is not in 127.0.0.0/8")]
     InvalidIpOverride(std::net::Ipv4Addr),
 
+    #[error(
+        "IP collision: {ip} is already assigned to `{existing}` but this session \
+             needs it for `{new}`. Use `silo run --ip <addr>` to assign a different address."
+    )]
+    IpCollision {
+        ip: std::net::Ipv4Addr,
+        existing: String,
+        new: String,
+    },
+
     #[error("hosts validation: {0}")]
     HostsValidation(String),
 

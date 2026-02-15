@@ -487,3 +487,86 @@ fn find_non_sip_shell() -> Option<String> {
     }
     None
 }
+
+#[test]
+fn bind_unix_passes_through() {
+    let (stdout, _, success) = run_helper("bind_unix", Some(TEST_IP));
+    assert!(success, "helper failed");
+    assert!(
+        stdout.contains("unix=ok"),
+        "AF_UNIX bind should pass through without error, got: {stdout}"
+    );
+}
+
+#[test]
+fn errno_preserved_after_connect_probe() {
+    let (stdout, _, success) = run_helper("errno_after_connect", Some(TEST_IP));
+    assert!(success, "helper failed");
+    assert!(
+        stdout.contains("errno_preserved=true"),
+        "errno should be preserved after connect probe, got: {stdout}"
+    );
+}
+
+#[test]
+fn concurrent_binds_all_rewritten() {
+    let (stdout, _, success) = run_helper("concurrent_bind", Some(TEST_IP));
+    assert!(success, "helper failed");
+    assert!(
+        stdout.contains("concurrent=ok"),
+        "all concurrent binds should succeed, got: {stdout}"
+    );
+    for i in 0..10 {
+        let key = format!("thread_{i}=");
+        let line = stdout.lines().find(|l| l.starts_with(&key));
+        assert!(
+            line.is_some(),
+            "missing output for thread {i}, got: {stdout}"
+        );
+        let line = line.unwrap();
+        assert!(
+            line.contains(TEST_IP),
+            "thread {i} should bind to {TEST_IP}, got: {line}"
+        );
+    }
+}
+
+#[test]
+fn bind_v6_any_is_rewritten() {
+    let (stdout, _, success) = run_helper("bind_v6_any_linux", Some(TEST_IP));
+    assert!(success, "helper failed");
+    assert!(
+        stdout.contains(TEST_IP) || stdout.contains("mapped=true"),
+        "IPv6 any bind should be rewritten, got: {stdout}"
+    );
+}
+
+#[test]
+fn bind_v6_localhost_is_rewritten() {
+    let (stdout, _, success) = run_helper("bind_v6_localhost_linux", Some(TEST_IP));
+    assert!(success, "helper failed");
+    assert!(
+        stdout.contains(TEST_IP) || stdout.contains("mapped=true"),
+        "IPv6 localhost bind should be rewritten, got: {stdout}"
+    );
+}
+
+#[test]
+fn silo_ip_with_whitespace_passes_through() {
+    let (stdout, _, success) = run_helper("passthrough", Some(" 127.0.99.1"));
+    assert!(success, "helper failed");
+    assert!(
+        stdout.contains("0.0.0.0"),
+        "SILO_IP with leading whitespace should be treated as invalid, got: {stdout}"
+    );
+}
+
+#[test]
+fn silo_ip_ipv6_passes_through() {
+    let (stdout, _, success) = run_helper("passthrough", Some("::1"));
+    assert!(success, "helper failed");
+    assert!(
+        stdout.contains("0.0.0.0"),
+        "SILO_IP set to IPv6 should be treated as invalid, got: {stdout}"
+    );
+}

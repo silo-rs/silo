@@ -284,4 +284,63 @@ mod tests {
         let root = find_git_root(&sub).unwrap();
         assert_eq!(root, dir.path());
     }
+
+    #[test]
+    fn compute_ip_never_localhost() {
+        for i in 0..10_000 {
+            let path = format!("/test/project/{i}");
+            let ip = compute_ip(Path::new(&path), &format!("branch-{i}"));
+            assert_ne!(
+                ip,
+                Ipv4Addr::new(127, 0, 0, 1),
+                "generated localhost for {path}"
+            );
+        }
+    }
+
+    #[test]
+    fn compute_ip_never_zero_octets() {
+        for i in 0..10_000 {
+            let path = format!("/proj/{i}");
+            let ip = compute_ip(Path::new(&path), &format!("b{i}"));
+            let [_, o1, _, o3] = ip.octets();
+            assert_ne!(o1, 0, "second octet is 0 for {path}");
+            assert_ne!(o3, 0, "fourth octet is 0 for {path}");
+        }
+    }
+
+    #[test]
+    fn sanitize_name_empty() {
+        assert_eq!(sanitize_name(""), "");
+    }
+
+    #[test]
+    fn sanitize_name_all_special() {
+        assert_eq!(sanitize_name("///...///"), "");
+    }
+
+    #[test]
+    fn sanitize_name_unicode() {
+        let result = sanitize_name("기능/인증");
+        assert!(!result.contains('/'));
+        assert!(!result.contains("--"));
+    }
+
+    #[test]
+    fn compute_ip_collision_rate() {
+        use std::collections::HashSet;
+        let mut seen = HashSet::new();
+        let n = 10_000;
+        for i in 0..n {
+            let path = format!("/users/dev/project-{}", i / 100);
+            let ip = compute_ip(Path::new(&path), &format!("branch-{i}"));
+            seen.insert(ip);
+        }
+        let collisions = n - seen.len();
+        let expected_max = n * n / (2 * 16_516_096) + 50;
+        assert!(
+            collisions <= expected_max,
+            "too many collisions: {collisions} (expected at most ~{expected_max})"
+        );
+    }
 }

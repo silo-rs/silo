@@ -320,4 +320,45 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn parse_silo_ip_trailing_whitespace() {
+        assert_eq!(parse_silo_ip("127.0.99.1 "), None);
+    }
+
+    #[test]
+    fn parse_silo_ip_leading_zeros() {
+        assert_eq!(parse_silo_ip("127.000.099.001"), None);
+    }
+
+    #[test]
+    fn parse_silo_ip_with_port() {
+        assert_eq!(parse_silo_ip("127.0.99.1:8080"), None);
+    }
+
+    #[test]
+    fn parse_silo_ip_boundary_smallest() {
+        assert!(parse_silo_ip("127.0.0.2").is_some());
+    }
+
+    #[test]
+    fn parse_silo_ip_boundary_largest() {
+        assert!(parse_silo_ip("127.255.255.255").is_some());
+    }
+
+    #[test]
+    fn ipv4_silo_ip_itself_no_match_any_false() {
+        assert_eq!(rewrite_ipv4_addr(silo_ip(), silo_ip(), false), None);
+    }
+
+    #[test]
+    fn ipv6_mapped_localhost_no_match() {
+        let mapped_localhost = ipv4_mapped_v6(u32::from(Ipv4Addr::LOCALHOST).to_be());
+        assert_eq!(rewrite_ipv6_addr(mapped_localhost, silo_ip(), true), None);
+    }
+
+    #[test]
+    fn hide_alias_zero_addr() {
+        assert_eq!(hide_alias(0, silo_ip()), None);
+    }
 }

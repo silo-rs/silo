@@ -367,4 +367,22 @@ lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384
         };
         assert!(run_ip_direct(&req).is_err());
     }
+
+    #[test]
+    fn ip_no_false_positive_inetaddr() {
+        let output = "    inet_addr:127.0.1.1  Mask:255.0.0.0\n";
+        assert!(!is_ip_in_output(output, Ipv4Addr::new(127, 0, 1, 1)));
+    }
+
+    #[test]
+    fn ip_no_false_positive_inet6_with_embedded_ipv4() {
+        let output = "    inet6 ::ffff:127.0.1.1/128 scope global\n";
+        assert!(!is_ip_in_output(output, Ipv4Addr::new(127, 0, 1, 1)));
+    }
+
+    #[test]
+    fn ip_match_tab_separated() {
+        let output = "\tinet 127.0.1.1\tnetmask 0xff000000\n";
+        assert!(is_ip_in_output(output, Ipv4Addr::new(127, 0, 1, 1)));
+    }
 }

@@ -96,10 +96,11 @@ impl Session {
         if opts.ip_alias {
             ip::add_alias(ctx.ip())?;
         }
-        if opts.hosts_entry
-            && let Err(e) = hosts::ensure_entry(ctx.ip(), ctx.hostname(), ctx.dir())
-        {
-            warn!("failed to update /etc/hosts: {e} (run `silo doctor` to diagnose)");
+        if opts.hosts_entry {
+            hosts::check_collision(ctx.ip(), ctx.hostname())?;
+            if let Err(e) = hosts::ensure_entry(ctx.ip(), ctx.hostname(), ctx.dir()) {
+                warn!("failed to update /etc/hosts: {e} (run `silo doctor` to diagnose)");
+            }
         }
         Ok(Self { ctx, backend })
     }
@@ -133,5 +134,66 @@ impl Session {
 
     pub fn dir(&self) -> &Path {
         self.ctx.dir()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preload_backend_sets_env() {
+        let backend = PreloadBackend::new(PathBuf::from("/tmp/libsilo_bind.dylib"));
+        let mut cmd = Command::new("true");
+        backend.prepare(&mut cmd).unwrap();
+
+        let envs: Vec<_> = cmd.get_envs().collect();
+        #[cfg(target_os = "macos")]
+        let key = "DYLD_INSERT_LIBRARIES";
+        #[cfg(target_os = "linux")]
+        let key = "LD_PRELOAD";
+
+        let found = envs.iter().find(|(k, _)| k == &key);
+        assert!(found.is_some(), "expected {key} to be set");
+        let val = found.unwrap().1.unwrap().to_str().unwrap();
+        assert!(val.contains("libsilo_bind"));
+    }
+
+    #[test]
+    fn preload_backend_prepend_format() {
+        let backend = PreloadBackend::new(PathBuf::from("/tmp/libsilo_bind.so"));
+        let mut cmd = Command::new("true");
+        backend.prepare(&mut cmd).unwrap();
+
+        #[cfg(target_os = "macos")]
+        let key = "DYLD_INSERT_LIBRARIES";
+        #[cfg(target_os = "linux")]
+        let key = "LD_PRELOAD";
+
+        let envs: Vec<_> = cmd.get_envs().collect();
+        let found = envs.iter().find(|(k, _)| k == &key);
+        let val = found.unwrap().1.unwrap().to_str().unwrap();
+        assert!(
+            val.contains("/tmp/libsilo_bind.so"),
+            "expected lib path in env, got: {val}"
+        );
+    }
+
+    #[test]
+    fn noop_backend_name() {
+        assert_eq!(NoopBackend.name(), "none");
+    }
+
+    #[test]
+    fn preload_backend_name() {
+        let backend = PreloadBackend::new(PathBuf::from("/tmp/lib.so"));
+        assert_eq!(backend.name(), "preload");
+    }
+
+    #[test]
+    fn preload_backend_lib_path() {
+        let path = PathBuf::from("/usr/local/lib/libsilo_bind.dylib");
+        let backend = PreloadBackend::new(path.clone());
+        assert_eq!(backend.lib_path(), path);
     }
 }
