@@ -692,17 +692,14 @@ mod tests {
     #[test]
     fn find_ip_conflict_detects_collision() {
         let entries = vec!["127.1.2.3\tmain.project-a.silo\t# /home/user/a".to_string()];
-        // same IP, different hostname → collision
         assert!(
             find_ip_conflict(&entries, Ipv4Addr::new(127, 1, 2, 3), "feat.project-b.silo")
                 .is_some()
         );
-        // same IP, same hostname → no collision (update)
         assert!(
             find_ip_conflict(&entries, Ipv4Addr::new(127, 1, 2, 3), "main.project-a.silo")
                 .is_none()
         );
-        // different IP → no collision
         assert!(
             find_ip_conflict(&entries, Ipv4Addr::new(127, 4, 5, 6), "feat.project-b.silo")
                 .is_none()

@@ -153,16 +153,6 @@ fn verify_session(session: &Session) {
     }
 }
 
-#[cfg(target_os = "macos")]
-const LIB_NAME: &str = "libsilo_bind.dylib";
-#[cfg(target_os = "linux")]
-const LIB_NAME: &str = "libsilo_bind.so";
-
-#[cfg(target_os = "macos")]
-const EMBEDDED_BIND_LIB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/libsilo_bind.dylib"));
-#[cfg(target_os = "linux")]
-const EMBEDDED_BIND_LIB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/libsilo_bind.so"));
-
 pub fn find_bind_lib() -> eyre::Result<PathBuf> {
     #[cfg(debug_assertions)]
     if let Ok(path) = std::env::var("SILO_BIND_LIB") {
@@ -172,29 +162,12 @@ pub fn find_bind_lib() -> eyre::Result<PathBuf> {
         }
     }
 
-    let lib_dir = dirs::home_dir()
-        .ok_or_else(|| eyre::eyre!("cannot determine home directory"))?
-        .join(".silo")
-        .join("lib");
-
-    let lib_path = lib_dir.join(LIB_NAME);
-
-    let needs_extract = match std::fs::read(&lib_path) {
-        Ok(content) => content != EMBEDDED_BIND_LIB,
-        Err(_) => true,
-    };
-
-    if needs_extract {
-        use std::io::Write;
-        use std::os::unix::fs::PermissionsExt;
-
-        std::fs::create_dir_all(&lib_dir)?;
-        let mut tmp = tempfile::NamedTempFile::new_in(&lib_dir)?;
-        tmp.write_all(EMBEDDED_BIND_LIB)?;
-        tmp.as_file()
-            .set_permissions(std::fs::Permissions::from_mode(0o700))?;
-        tmp.as_file().sync_all()?;
-        tmp.persist(&lib_path)?;
+    let lib_path = PathBuf::from(crate::sudoers::SECURE_BIND_LIB);
+    if !lib_path.exists() {
+        eyre::bail!(
+            "silo bind library not found at {} — run `silo run` to trigger setup",
+            lib_path.display()
+        );
     }
 
     Ok(lib_path)

@@ -5,9 +5,14 @@ use eyre::{Context, bail};
 
 const SUDOERS_PATH: &str = "/etc/sudoers.d/silo";
 const STAMP_PATH: &str = "/usr/local/libexec/.silo-stamp";
-const SUDOERS_VERSION: u32 = 7;
+const SUDOERS_VERSION: u32 = 8;
 const SUDOERS_VERSION_PREFIX: &str = "# silo sudoers v";
 const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+#[cfg(target_os = "macos")]
+pub(crate) const SECURE_BIND_LIB: &str = "/usr/local/libexec/libsilo_bind.dylib";
+#[cfg(target_os = "linux")]
+pub(crate) const SECURE_BIND_LIB: &str = "/usr/local/libexec/libsilo_bind.so";
 
 pub(crate) fn ensure() -> eyre::Result<()> {
     if let Ok(stamp) = std::fs::read_to_string(STAMP_PATH)
@@ -15,6 +20,7 @@ pub(crate) fn ensure() -> eyre::Result<()> {
         && std::path::Path::new(SUDOERS_PATH).exists()
         && helper_matches_embedded(silo::hosts::SECURE_IP_HELPER, EMBEDDED_IP_HELPER)
         && helper_matches_embedded(silo::hosts::SECURE_HOSTS_HELPER, EMBEDDED_HOSTS_HELPER)
+        && helper_matches_embedded(SECURE_BIND_LIB, EMBEDDED_BIND_LIB)
     {
         return Ok(());
     }
@@ -51,6 +57,11 @@ fn stamp_is_current(stamp: &str) -> bool {
 
 const EMBEDDED_IP_HELPER: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/silo-ip-helper"));
 const EMBEDDED_HOSTS_HELPER: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/silo-hosts-helper"));
+
+#[cfg(target_os = "macos")]
+const EMBEDDED_BIND_LIB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/libsilo_bind.dylib"));
+#[cfg(target_os = "linux")]
+const EMBEDDED_BIND_LIB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/libsilo_bind.so"));
 
 const HELPER_DIR: &str = "/usr/local/libexec";
 
@@ -89,6 +100,7 @@ fn install() -> eyre::Result<()> {
 
     install_embedded_helper(EMBEDDED_IP_HELPER, ip_helper)?;
     install_embedded_helper(EMBEDDED_HOSTS_HELPER, hosts_helper)?;
+    install_embedded_helper(EMBEDDED_BIND_LIB, SECURE_BIND_LIB)?;
 
     let rules = sudoers_rules();
     validate_sudoers_syntax(&rules)?;
