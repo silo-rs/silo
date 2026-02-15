@@ -394,6 +394,27 @@ mod tests {
     }
 
     #[test]
+    fn install_sh_has_no_sudoers_rules() {
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let install_sh = std::path::Path::new(manifest_dir)
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("install.sh");
+        let content = std::fs::read_to_string(&install_sh).expect("install.sh must exist");
+        assert!(
+            !content.contains("/usr/bin/tee"),
+            "install.sh must not grant sudo access to tee"
+        );
+        assert!(
+            !content.contains("sudoers.d/silo"),
+            "install.sh must not write sudoers rules directly; \
+             sudoers setup is handled by the silo binary on first run"
+        );
+    }
+
+    #[test]
     fn visudo_validates_generated_rules() {
         use std::io::Write;
         let rules = sudoers_rules();
