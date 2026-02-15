@@ -90,6 +90,19 @@ pub fn validate_dir(dir: &str) -> Result<()> {
     Ok(())
 }
 
+fn find_ip_conflict(entries: &[String], ip: Ipv4Addr, hostname: &str) -> Option<String> {
+    let ip_str = ip.to_string();
+    for entry in entries {
+        let mut parts = entry.split('\t');
+        let entry_ip = parts.next()?;
+        let entry_host = parts.next()?;
+        if entry_ip == ip_str && entry_host != hostname {
+            return Some(entry_host.to_string());
+        }
+    }
+    None
+}
+
 pub fn run_hosts_direct(request: &HostsRequest) -> Result<Vec<RemovedEntry>> {
     match request {
         HostsRequest::Add { ip, hostname, dir } => {
@@ -115,6 +128,16 @@ fn run_direct_add(ip: Ipv4Addr, hostname: &str, dir: &str) -> Result<()> {
     let (before, mut entries, after) = parse_block(&content);
 
     let new_line = format!("{}\t{}\t# {}", ip, hostname, dir);
+
+    if let Some(conflict) = find_ip_conflict(&entries, ip, hostname) {
+        tracing::warn!(
+            ip = %ip,
+            existing = %conflict,
+            new = %hostname,
+            "IP collision detected — two sessions resolved to the same address. \
+             Use `silo run --ip <addr>` to override one of them.",
+        );
+    }
 
     if let Some(pos) = entries
         .iter()
@@ -650,6 +673,26 @@ mod tests {
             ips: vec![Ipv4Addr::new(10, 0, 0, 1)],
         };
         assert!(run_hosts_direct(&req).is_err());
+    }
+
+    #[test]
+    fn find_ip_conflict_detects_collision() {
+        let entries = vec!["127.1.2.3\tmain.project-a.silo\t# /home/user/a".to_string()];
+        // same IP, different hostname → collision
+        assert!(
+            find_ip_conflict(&entries, Ipv4Addr::new(127, 1, 2, 3), "feat.project-b.silo")
+                .is_some()
+        );
+        // same IP, same hostname → no collision (update)
+        assert!(
+            find_ip_conflict(&entries, Ipv4Addr::new(127, 1, 2, 3), "main.project-a.silo")
+                .is_none()
+        );
+        // different IP → no collision
+        assert!(
+            find_ip_conflict(&entries, Ipv4Addr::new(127, 4, 5, 6), "feat.project-b.silo")
+                .is_none()
+        );
     }
 
     #[test]
