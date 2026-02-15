@@ -63,6 +63,17 @@ fn install() -> eyre::Result<()> {
         bail!("sudo chmod 755 {secure_bin} failed");
     }
 
+    let path_warnings = check_path_security(std::path::Path::new(secure_bin));
+    if !path_warnings.is_empty() {
+        for warn in &path_warnings {
+            eprintln!("  {} {}", "WARNING:".yellow().bold(), warn);
+        }
+        bail!(
+            "{secure_bin} failed path security check — \
+             refusing to install sudoers rules for an insecure binary path"
+        );
+    }
+
     let rules = sudoers_rules();
     validate_sudoers_syntax(&rules)?;
 
