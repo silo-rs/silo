@@ -234,24 +234,23 @@ unsafe fn call_real_bind(fd: c_int, addr: *const sockaddr, len: socklen_t) -> c_
 
 #[cfg(target_os = "linux")]
 unsafe fn call_real_bind(fd: c_int, addr: *const sockaddr, len: socklen_t) -> c_int {
-    static REAL_BIND: OnceLock<
-        Option<unsafe extern "C" fn(c_int, *const sockaddr, socklen_t) -> c_int>,
-    > = OnceLock::new();
+    type BindFn = unsafe extern "C" fn(c_int, *const sockaddr, socklen_t) -> c_int;
+    static REAL_BIND: OnceLock<Option<BindFn>> = OnceLock::new();
     let f = *REAL_BIND.get_or_init(|| unsafe {
         let ptr = libc::dlsym(libc::RTLD_NEXT, c"bind".as_ptr());
         if ptr.is_null() {
             eprintln!("silo-bind: dlsym failed to resolve bind");
             return None;
         }
-        Some(std::mem::transmute(ptr))
+        Some(std::mem::transmute::<*mut libc::c_void, BindFn>(ptr))
     });
-    match f {
-        Some(f) => unsafe { f(fd, addr, len) },
-        None => {
+    f.map_or_else(
+        || {
             unsafe { *errno_ptr() = libc::ENOSYS };
             -1
-        }
-    }
+        },
+        |f| unsafe { f(fd, addr, len) },
+    )
 }
 
 unsafe fn probe_has_listener(fd: c_int, silo_ip: u32, port: u16) -> bool {
@@ -341,6 +340,84 @@ unsafe fn hide_other_silo_aliases(ifap: *mut libc::ifaddrs) {
         }
         cur = unsafe { (*cur).ifa_next };
     }
+}
+
+unsafe fn is_v6only(fd: c_int) -> bool {
+    let mut optval: c_int = 0;
+    let mut optlen: socklen_t = std::mem::size_of::<c_int>() as socklen_t;
+    let ret = unsafe {
+        libc::getsockopt(
+            fd,
+            libc::IPPROTO_IPV6,
+            libc::IPV6_V6ONLY,
+            &mut optval as *mut _ as *mut libc::c_void,
+            &mut optlen,
+        )
+    };
+    ret == 0 && optval != 0
+}
+
+unsafe fn bind_prepare_v6(
+    fd: c_int,
+    addr: *const sockaddr,
+    len: socklen_t,
+) -> Option<libc::sockaddr_in6> {
+    if addr.is_null() {
+        return None;
+    }
+    let family = unsafe { (*addr).sa_family } as c_int;
+    if family != libc::AF_INET6 as c_int
+        || (len as usize) < std::mem::size_of::<libc::sockaddr_in6>()
+    {
+        return None;
+    }
+    let sin6 = unsafe { &*(addr as *const libc::sockaddr_in6) };
+    let ip = get_silo_ip()?;
+    let new_v6 = rewrite::rewrite_ipv6_addr(sin6.sin6_addr.s6_addr, ip, true)?;
+    if unsafe { is_v6only(fd) } {
+        let optval: c_int = 0;
+        unsafe {
+            libc::setsockopt(
+                fd,
+                libc::IPPROTO_IPV6,
+                libc::IPV6_V6ONLY,
+                &optval as *const _ as *const libc::c_void,
+                std::mem::size_of::<c_int>() as socklen_t,
+            );
+        }
+    }
+    let mut sin6_copy = *sin6;
+    sin6_copy.sin6_addr.s6_addr = new_v6;
+    Some(sin6_copy)
+}
+
+unsafe fn prepare_sendmsg(
+    msg: *const libc::msghdr,
+    msg_buf: &mut libc::msghdr,
+    storage: &mut MaybeUninit<SockaddrStorage>,
+) -> *const libc::msghdr {
+    if msg.is_null() {
+        return msg;
+    }
+    let msg_ref = unsafe { &*msg };
+    if msg_ref.msg_name.is_null() || msg_ref.msg_namelen == 0 {
+        return msg;
+    }
+    let (new_addr, new_len) = unsafe {
+        maybe_rewrite_addr(
+            msg_ref.msg_name as *const sockaddr,
+            msg_ref.msg_namelen,
+            true,
+            storage,
+        )
+    };
+    if new_addr == msg_ref.msg_name as *const sockaddr {
+        return msg;
+    }
+    *msg_buf = *msg_ref;
+    msg_buf.msg_name = new_addr as *mut libc::c_void;
+    msg_buf.msg_namelen = new_len;
+    msg_buf as *const libc::msghdr
 }
 
 #[cfg(target_os = "macos")]
@@ -520,21 +597,6 @@ static INIT_FN: unsafe extern "C" fn() = {
 mod platform {
     use super::*;
 
-    unsafe fn is_v6only(fd: c_int) -> bool {
-        let mut optval: c_int = 0;
-        let mut optlen: socklen_t = std::mem::size_of::<c_int>() as socklen_t;
-        let ret = unsafe {
-            libc::getsockopt(
-                fd,
-                libc::IPPROTO_IPV6,
-                libc::IPV6_V6ONLY,
-                &mut optval as *mut _ as *mut libc::c_void,
-                &mut optlen,
-            )
-        };
-        ret == 0 && optval != 0
-    }
-
     #[repr(C)]
     struct Interpose {
         replacement: unsafe extern "C" fn(c_int, *const sockaddr, socklen_t) -> c_int,
@@ -575,70 +637,38 @@ mod platform {
         addr: *const sockaddr,
         len: socklen_t,
     ) -> c_int {
-        if !addr.is_null() {
+        if !addr.is_null() && debug_enabled() {
             let family = unsafe { (*addr).sa_family } as c_int;
+            let port = unsafe { debug_read_port(addr, family, len) };
+            let silo_ip = get_silo_ip()
+                .map(|ip| Ipv4Addr::from(u32::from_be(ip)).to_string())
+                .unwrap_or_default();
+            eprintln!(
+                "[silo-bind] pid={} bind fd={} family={} port={} SILO_IP={}",
+                std::process::id(),
+                fd,
+                family,
+                port,
+                silo_ip
+            );
+        }
 
-            if debug_enabled() {
-                let port = unsafe { debug_read_port(addr, family, len) };
-                let silo_ip = get_silo_ip()
-                    .map(|ip| Ipv4Addr::from(u32::from_be(ip)).to_string())
-                    .unwrap_or_default();
-                eprintln!(
-                    "[silo-bind] pid={} bind fd={} family={} port={} SILO_IP={}",
-                    std::process::id(),
+        if let Some(sin6_copy) = unsafe { bind_prepare_v6(fd, addr, len) } {
+            let ret = unsafe {
+                real_bind(
                     fd,
-                    family,
-                    port,
-                    silo_ip
+                    &sin6_copy as *const libc::sockaddr_in6 as *const sockaddr,
+                    len,
+                )
+            };
+            if debug_enabled() {
+                eprintln!(
+                    "[silo-bind] pid={} bind v6 → ::ffff:SILO_IP → {}",
+                    std::process::id(),
+                    ret
                 );
             }
-
-            if family == libc::AF_INET6 as c_int
-                && (len as usize) >= std::mem::size_of::<libc::sockaddr_in6>()
-            {
-                let sin6 = addr as *const libc::sockaddr_in6;
-                let v6_addr = unsafe { (*sin6).sin6_addr.s6_addr };
-                if let Some(ip) = get_silo_ip()
-                    && let Some(new_v6) = rewrite::rewrite_ipv6_addr(v6_addr, ip, true)
-                {
-                    if unsafe { is_v6only(fd) } {
-                        let optval: c_int = 0;
-                        unsafe {
-                            libc::setsockopt(
-                                fd,
-                                libc::IPPROTO_IPV6,
-                                libc::IPV6_V6ONLY,
-                                &optval as *const _ as *const libc::c_void,
-                                std::mem::size_of::<c_int>() as socklen_t,
-                            );
-                        }
-                    }
-                    let kind = if v6_addr == rewrite::V6_ANY {
-                        "::"
-                    } else {
-                        "::1"
-                    };
-
-                    let mut sin6_copy: libc::sockaddr_in6 = unsafe { *sin6 };
-                    sin6_copy.sin6_addr.s6_addr = new_v6;
-                    let ret = unsafe {
-                        real_bind(
-                            fd,
-                            &sin6_copy as *const libc::sockaddr_in6 as *const sockaddr,
-                            len,
-                        )
-                    };
-                    if debug_enabled() {
-                        eprintln!(
-                            "[silo-bind] pid={} bind {} → ::ffff:SILO_IP → {}",
-                            std::process::id(),
-                            kind,
-                            ret
-                        );
-                    }
-                    return ret;
-                }
-            }
+            return ret;
         }
 
         let mut storage = std::mem::MaybeUninit::<SockaddrStorage>::uninit();
@@ -950,26 +980,9 @@ mod platform {
         msg: *const libc::msghdr,
         flags: c_int,
     ) -> libc::ssize_t {
-        if !msg.is_null() {
-            let msg_ref = unsafe { &*msg };
-            if !msg_ref.msg_name.is_null() && msg_ref.msg_namelen > 0 {
-                let mut storage = std::mem::MaybeUninit::<SockaddrStorage>::uninit();
-                let (new_addr, new_len) = unsafe {
-                    maybe_rewrite_addr(
-                        msg_ref.msg_name as *const sockaddr,
-                        msg_ref.msg_namelen,
-                        true,
-                        &mut storage,
-                    )
-                };
-                if new_addr != msg_ref.msg_name as *const sockaddr {
-                    let mut msg_copy: libc::msghdr = *msg_ref;
-                    msg_copy.msg_name = new_addr as *mut libc::c_void;
-                    msg_copy.msg_namelen = new_len;
-                    return unsafe { real_sendmsg(fd, &msg_copy as *const libc::msghdr, flags) };
-                }
-            }
-        }
+        let mut msg_buf: libc::msghdr = unsafe { std::mem::zeroed() };
+        let mut storage = std::mem::MaybeUninit::<SockaddrStorage>::uninit();
+        let msg = unsafe { prepare_sendmsg(msg, &mut msg_buf, &mut storage) };
         unsafe { real_sendmsg(fd, msg, flags) }
     }
 }
@@ -987,7 +1000,7 @@ mod platform {
                     eprintln!(concat!("silo-bind: dlsym failed to resolve ", $sym));
                     return None;
                 }
-                Some(std::mem::transmute(ptr))
+                Some(std::mem::transmute::<*mut libc::c_void, $ty>(ptr))
             })
         }};
     }
@@ -1001,6 +1014,17 @@ mod platform {
             unsafe { *errno_ptr() = libc::ENOSYS };
             return -1;
         };
+
+        if let Some(sin6_copy) = unsafe { bind_prepare_v6(fd, addr, len) } {
+            return unsafe {
+                real_fn(
+                    fd,
+                    &sin6_copy as *const libc::sockaddr_in6 as *const sockaddr,
+                    len,
+                )
+            };
+        }
+
         let mut storage = std::mem::MaybeUninit::<SockaddrStorage>::uninit();
         let (addr, len) = unsafe { maybe_rewrite_addr(addr, len, true, &mut storage) };
         unsafe { real_fn(fd, addr, len) }
@@ -1088,26 +1112,9 @@ mod platform {
             unsafe { *errno_ptr() = libc::ENOSYS };
             return -1;
         };
-        if !msg.is_null() {
-            let msg_ref = unsafe { &*msg };
-            if !msg_ref.msg_name.is_null() && msg_ref.msg_namelen > 0 {
-                let mut storage = std::mem::MaybeUninit::<SockaddrStorage>::uninit();
-                let (new_addr, new_len) = unsafe {
-                    maybe_rewrite_addr(
-                        msg_ref.msg_name as *const sockaddr,
-                        msg_ref.msg_namelen,
-                        true,
-                        &mut storage,
-                    )
-                };
-                if new_addr != msg_ref.msg_name as *const sockaddr {
-                    let mut msg_copy: libc::msghdr = *msg_ref;
-                    msg_copy.msg_name = new_addr as *mut libc::c_void;
-                    msg_copy.msg_namelen = new_len;
-                    return unsafe { real_fn(fd, &msg_copy as *const libc::msghdr, flags) };
-                }
-            }
-        }
+        let mut msg_buf: libc::msghdr = unsafe { std::mem::zeroed() };
+        let mut storage = std::mem::MaybeUninit::<SockaddrStorage>::uninit();
+        let msg = unsafe { prepare_sendmsg(msg, &mut msg_buf, &mut storage) };
         unsafe { real_fn(fd, msg, flags) }
     }
 }
