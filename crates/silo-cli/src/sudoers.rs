@@ -30,7 +30,14 @@ pub(crate) fn ensure() -> eyre::Result<()> {
             }
         }
     } else if std::path::Path::new(SUDOERS_PATH).exists() {
-        return Ok(());
+        let status = Command::new("sudo")
+            .args(["visudo", "-cf", SUDOERS_PATH])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        if matches!(status, Ok(s) if s.success()) {
+            return Ok(());
+        }
     }
     install()
 }
