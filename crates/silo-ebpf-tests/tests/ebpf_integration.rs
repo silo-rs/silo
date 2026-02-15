@@ -122,6 +122,17 @@ fn getpeername_reverse_maps() {
 }
 
 #[test]
+fn connect_to_unbound_port_not_rewritten() {
+    skip_without_caps!();
+    let h = EbpfTestHarness::new("connect_no_listener", Some(test_ip()), helper_path()).unwrap();
+    let (stdout, _, _) = h.run_helper("connect_no_listener");
+    assert!(
+        stdout.contains("connect_result=refused"),
+        "expected ECONNREFUSED for unbound port (same as LD_PRELOAD backend), got: {stdout}"
+    );
+}
+
+#[test]
 fn passthrough_without_config() {
     skip_without_caps!();
     let h = EbpfTestHarness::new("passthrough", None, helper_path()).unwrap();

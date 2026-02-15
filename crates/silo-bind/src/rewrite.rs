@@ -239,6 +239,15 @@ mod tests {
         assert_eq!(hide_alias(addr, silo_ip()), Some(localhost_be()));
     }
 
+    #[test]
+    fn connect_semantic_does_not_match_any() {
+        assert_eq!(rewrite_ipv4_addr(0, silo_ip(), false), None);
+        assert_eq!(
+            rewrite_ipv4_addr(localhost_be(), silo_ip(), false),
+            Some(silo_ip())
+        );
+    }
+
     mod prop {
         use super::*;
         use proptest::prelude::*;

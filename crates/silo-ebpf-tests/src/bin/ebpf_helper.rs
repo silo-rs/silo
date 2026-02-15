@@ -17,6 +17,8 @@ fn main() {
         "connect_localhost" => cmd_connect_localhost(),
         "sendmsg_recvmsg" => cmd_sendmsg_recvmsg(),
         "connect_getpeername" => cmd_connect_getpeername(),
+        "connect_no_listener" => cmd_connect_no_listener(),
+        "connect_host_service" => cmd_connect_host_service(),
         other => {
             eprintln!("unknown command: {other}");
             std::process::exit(1);
@@ -133,6 +135,42 @@ fn cmd_sendmsg_recvmsg() -> io::Result<()> {
         }
 
         libc::close(fd);
+    }
+    Ok(())
+}
+
+fn cmd_connect_no_listener() -> io::Result<()> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let port = listener.local_addr()?.port();
+    drop(listener);
+
+    match std::net::TcpStream::connect(format!("127.0.0.1:{port}")) {
+        Err(e) if e.kind() == io::ErrorKind::ConnectionRefused => {
+            println!("connect_result=refused");
+        }
+        Ok(stream) => {
+            let peer = stream.peer_addr()?;
+            println!("connect_result=connected:{peer}");
+        }
+        Err(e) => {
+            println!("connect_result=error:{e}");
+        }
+    }
+    Ok(())
+}
+
+fn cmd_connect_host_service() -> io::Result<()> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let port = listener.local_addr()?.port();
+
+    match std::net::TcpStream::connect(format!("127.0.0.1:{port}")) {
+        Ok(stream) => {
+            let peer = stream.peer_addr()?;
+            println!("connect_result=connected:{peer}");
+        }
+        Err(e) => {
+            println!("connect_result=error:{e}");
+        }
     }
     Ok(())
 }
