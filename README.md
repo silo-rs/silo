@@ -60,10 +60,10 @@ All services share the same isolated IP, no extra config needed.
 
 Silo pairs with tools that run parallel agents in git worktrees:
 
-- [vibe-kanban](https://github.com/junhsss/vibe-kanban) — kanban board for coding agents
+- [vibe-kanban](https://github.com/BloopAI/vibe-kanban) — kanban board for coding agents
 - [claude-squad](https://github.com/smtg-ai/claude-squad) — parallel Claude Code sessions
-- [ccmanager](https://github.com/QuantGeekDev/ccmanager) — session manager for coding agents
-- [workmux](https://github.com/jleight/workmux) — worktrees + tmux
+- [ccmanager](https://github.com/kbwo/ccmanager) — session manager for coding agents
+- [workmux](https://github.com/raine/workmux) — worktrees + tmux
 
 ## Environment variables
 
