@@ -43,7 +43,6 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           trigger_phrase: ""
-          allowed_tools: "Bash(git *),Bash(gh *),Read,Glob,Grep"
           prompt: |
             Review this PR. Focus only on things that matter:
             - Correctness and potential bugs
@@ -53,3 +52,4 @@ jobs:
             CI has already passed. Do not check formatting or clippy — those are covered.
             Be concise. Skip praise. If everything looks good, say so in one line.
           use_sticky_comment: true
+          show_full_output: true
