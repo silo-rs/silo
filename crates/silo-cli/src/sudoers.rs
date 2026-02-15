@@ -49,27 +49,12 @@ fn install() -> eyre::Result<()> {
     eprintln!("this will copy the binary to {secure_bin} and create {SUDOERS_PATH}");
     eprintln!();
 
-    let current_bin = std::env::current_exe().context("failed to resolve current binary path")?;
+    let secure_path = std::path::Path::new(secure_bin);
+    let secure_dir = secure_path
+        .parent()
+        .expect("secure binary path must have a parent directory");
 
-    let status = Command::new("sudo")
-        .args(["cp", &current_bin.to_string_lossy(), secure_bin])
-        .status()
-        .context("failed to copy binary to secure path")?;
-
-    if !status.success() {
-        bail!("sudo cp to {secure_bin} failed");
-    }
-
-    let status = Command::new("sudo")
-        .args(["chmod", "755", secure_bin])
-        .status()
-        .context("failed to chmod secure binary")?;
-
-    if !status.success() {
-        bail!("sudo chmod 755 {secure_bin} failed");
-    }
-
-    let path_warnings = check_path_security(std::path::Path::new(secure_bin));
+    let path_warnings = check_path_security(secure_dir);
     if !path_warnings.is_empty() {
         for warn in &path_warnings {
             eprintln!("  {} {}", "WARNING:".yellow().bold(), warn);
@@ -78,6 +63,25 @@ fn install() -> eyre::Result<()> {
             "{secure_bin} failed path security check — \
              refusing to install sudoers rules for an insecure binary path"
         );
+    }
+
+    let current_bin = std::env::current_exe().context("failed to resolve current binary path")?;
+
+    let status = Command::new("sudo")
+        .args([
+            "install",
+            "-o",
+            "root",
+            "-m",
+            "755",
+            &current_bin.to_string_lossy(),
+            secure_bin,
+        ])
+        .status()
+        .context("failed to install binary to secure path")?;
+
+    if !status.success() {
+        bail!("sudo install to {secure_bin} failed");
     }
 
     let rules = sudoers_rules();
