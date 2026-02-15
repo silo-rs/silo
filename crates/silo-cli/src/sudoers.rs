@@ -13,12 +13,19 @@ pub(crate) fn ensure() -> eyre::Result<()> {
     if let Ok(stamp) = std::fs::read_to_string(STAMP_PATH)
         && stamp_is_current(&stamp)
         && std::path::Path::new(SUDOERS_PATH).exists()
-        && std::path::Path::new(silo::hosts::SECURE_IP_HELPER).exists()
-        && std::path::Path::new(silo::hosts::SECURE_HOSTS_HELPER).exists()
+        && helper_matches_embedded(silo::hosts::SECURE_IP_HELPER, EMBEDDED_IP_HELPER)
+        && helper_matches_embedded(silo::hosts::SECURE_HOSTS_HELPER, EMBEDDED_HOSTS_HELPER)
     {
         return Ok(());
     }
     install()
+}
+
+fn helper_matches_embedded(path: &str, embedded: &[u8]) -> bool {
+    match std::fs::read(path) {
+        Ok(content) => content == embedded,
+        Err(_) => false,
+    }
 }
 
 fn stamp_is_current(stamp: &str) -> bool {
