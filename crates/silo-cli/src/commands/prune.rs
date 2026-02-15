@@ -72,44 +72,12 @@ pub fn run(all: bool, yes: bool, json: bool) -> eyre::Result<()> {
     }
 
     if !json {
-        if !aliases_to_remove.is_empty() {
-            eprintln!(
-                "  {} {} alias(es) to remove:",
-                "●".yellow(),
-                aliases_to_remove.len().to_string().bold()
-            );
-            for ip in &aliases_to_remove {
-                let hostname = host_entries
-                    .iter()
-                    .find(|e| e.ip == *ip)
-                    .map(|e| e.hostname.as_str());
-                if let Some(h) = hostname {
-                    eprintln!("    {} {} {}", ip, "·".dimmed(), h.dimmed());
-                } else {
-                    eprintln!("    {}", ip);
-                }
-            }
-        }
-
-        let orphan_only: Vec<_> = hosts_to_remove
-            .iter()
-            .filter(|e| !remove_set.contains(&e.ip))
-            .collect();
-        if !orphan_only.is_empty() {
-            eprintln!(
-                "  {} {} orphaned host(s) to remove:",
-                "●".yellow(),
-                orphan_only.len().to_string().bold()
-            );
-            for entry in &orphan_only {
-                eprintln!(
-                    "    {} {} {}",
-                    entry.ip,
-                    "·".dimmed(),
-                    entry.hostname.dimmed()
-                );
-            }
-        }
+        print_preview(
+            &aliases_to_remove,
+            &hosts_to_remove,
+            &host_entries,
+            &remove_set,
+        );
     }
 
     crate::sudoers::ensure()?;
@@ -131,45 +99,8 @@ pub fn run(all: bool, yes: bool, json: bool) -> eyre::Result<()> {
         eprintln!();
     }
 
-    let mut alias_errors = 0usize;
-    let mut aliases_removed = Vec::new();
-    for ip in &aliases_to_remove {
-        if let Err(e) = silo::ip::remove_alias(*ip) {
-            if !json {
-                eprintln!("  {} failed to remove alias {}: {}", "✗".red(), ip, e);
-            }
-            alias_errors += 1;
-        } else {
-            aliases_removed.push(ip.to_string());
-        }
-    }
-
-    let mut hosts_removed = Vec::new();
-    if !hosts_ips_to_remove.is_empty() {
-        match silo::hosts::remove_entries(&hosts_ips_to_remove) {
-            Ok(removed) if !removed.is_empty() => {
-                if !json {
-                    eprintln!(
-                        "  {} removed {} host(s) from /etc/hosts",
-                        "✓".green(),
-                        removed.len()
-                    );
-                }
-                for (ip, hostname) in removed {
-                    hosts_removed.push(HostRemoved {
-                        ip: ip.to_string(),
-                        hostname,
-                    });
-                }
-            }
-            Err(e) => {
-                if !json {
-                    eprintln!("  {} failed to update /etc/hosts: {}", "✗".red(), e);
-                }
-            }
-            _ => {}
-        }
-    }
+    let (aliases_removed, alias_errors) = execute_alias_removal(&aliases_to_remove, json);
+    let hosts_removed = execute_hosts_removal(&hosts_ips_to_remove, json);
 
     if json {
         let report = PruneReport {
@@ -195,25 +126,120 @@ pub fn run(all: bool, yes: bool, json: bool) -> eyre::Result<()> {
     }
 
     #[cfg(target_os = "linux")]
-    {
-        let cgroups_removed = crate::ebpf::prune_stale_cgroups();
-        if !json && cgroups_removed > 0 {
-            eprintln!(
-                "  {} pruned {} stale cgroup(s)",
-                "✓".green(),
-                cgroups_removed
-            );
-        }
+    prune_linux_resources(json);
 
-        let map_removed = crate::ebpf::prune_config_map();
-        if !json && map_removed > 0 {
-            eprintln!(
-                "  {} pruned {} stale config map entry(ies)",
-                "✓".green(),
-                map_removed
-            );
+    Ok(())
+}
+
+fn print_preview(
+    aliases_to_remove: &[Ipv4Addr],
+    hosts_to_remove: &[&silo::hosts::HostEntry],
+    host_entries: &[silo::hosts::HostEntry],
+    remove_set: &HashSet<Ipv4Addr>,
+) {
+    if !aliases_to_remove.is_empty() {
+        eprintln!(
+            "  {} {} alias(es) to remove:",
+            "●".yellow(),
+            aliases_to_remove.len().to_string().bold()
+        );
+        for ip in aliases_to_remove {
+            let hostname = host_entries
+                .iter()
+                .find(|e| e.ip == *ip)
+                .map(|e| e.hostname.as_str());
+            if let Some(h) = hostname {
+                eprintln!("    {} {} {}", ip, "·".dimmed(), h.dimmed());
+            } else {
+                eprintln!("    {}", ip);
+            }
         }
     }
 
-    Ok(())
+    let orphan_only: Vec<_> = hosts_to_remove
+        .iter()
+        .filter(|e| !remove_set.contains(&e.ip))
+        .collect();
+    if !orphan_only.is_empty() {
+        eprintln!(
+            "  {} {} orphaned host(s) to remove:",
+            "●".yellow(),
+            orphan_only.len().to_string().bold()
+        );
+        for entry in &orphan_only {
+            eprintln!(
+                "    {} {} {}",
+                entry.ip,
+                "·".dimmed(),
+                entry.hostname.dimmed()
+            );
+        }
+    }
+}
+
+fn execute_alias_removal(aliases_to_remove: &[Ipv4Addr], json: bool) -> (Vec<String>, usize) {
+    let mut alias_errors = 0usize;
+    let mut aliases_removed = Vec::new();
+    for ip in aliases_to_remove {
+        if let Err(e) = silo::ip::remove_alias(*ip) {
+            if !json {
+                eprintln!("  {} failed to remove alias {}: {}", "✗".red(), ip, e);
+            }
+            alias_errors += 1;
+        } else {
+            aliases_removed.push(ip.to_string());
+        }
+    }
+    (aliases_removed, alias_errors)
+}
+
+fn execute_hosts_removal(hosts_ips_to_remove: &HashSet<Ipv4Addr>, json: bool) -> Vec<HostRemoved> {
+    let mut hosts_removed = Vec::new();
+    if !hosts_ips_to_remove.is_empty() {
+        match silo::hosts::remove_entries(hosts_ips_to_remove) {
+            Ok(removed) if !removed.is_empty() => {
+                if !json {
+                    eprintln!(
+                        "  {} removed {} host(s) from /etc/hosts",
+                        "✓".green(),
+                        removed.len()
+                    );
+                }
+                for (ip, hostname) in removed {
+                    hosts_removed.push(HostRemoved {
+                        ip: ip.to_string(),
+                        hostname,
+                    });
+                }
+            }
+            Err(e) => {
+                if !json {
+                    eprintln!("  {} failed to update /etc/hosts: {}", "✗".red(), e);
+                }
+            }
+            _ => {}
+        }
+    }
+    hosts_removed
+}
+
+#[cfg(target_os = "linux")]
+fn prune_linux_resources(json: bool) {
+    let cgroups_removed = crate::ebpf::prune_stale_cgroups();
+    if !json && cgroups_removed > 0 {
+        eprintln!(
+            "  {} pruned {} stale cgroup(s)",
+            "✓".green(),
+            cgroups_removed
+        );
+    }
+
+    let map_removed = crate::ebpf::prune_config_map();
+    if !json && map_removed > 0 {
+        eprintln!(
+            "  {} pruned {} stale config map entry(ies)",
+            "✓".green(),
+            map_removed
+        );
+    }
 }

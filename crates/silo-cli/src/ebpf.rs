@@ -230,10 +230,8 @@ pub fn select_backend() -> SelectedBackend {
                 );
             }
             "preload" => {
-                return match super::commands::run::find_bind_lib() {
-                    Ok(lib_path) => SelectedBackend::Preload(lib_path),
-                    Err(_) => SelectedBackend::None,
-                };
+                return super::commands::run::find_bind_lib()
+                    .map_or(SelectedBackend::None, SelectedBackend::Preload);
             }
             other => {
                 tracing::warn!("unknown SILO_BACKEND={other:?}, falling back to auto-detect");
@@ -244,10 +242,8 @@ pub fn select_backend() -> SelectedBackend {
     if ebpf_available() {
         SelectedBackend::Ebpf
     } else {
-        match super::commands::run::find_bind_lib() {
-            Ok(lib_path) => SelectedBackend::Preload(lib_path),
-            Err(_) => SelectedBackend::None,
-        }
+        super::commands::run::find_bind_lib()
+            .map_or(SelectedBackend::None, SelectedBackend::Preload)
     }
 }
 
