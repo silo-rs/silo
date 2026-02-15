@@ -489,6 +489,139 @@ fn find_non_sip_shell() -> Option<String> {
 }
 
 #[test]
+#[cfg(target_os = "macos")]
+fn parity_sip_path_detection() {
+    let sip_paths = [
+        "/usr/bin/env",
+        "/usr/bin/bash",
+        "/bin/sh",
+        "/bin/bash",
+        "/sbin/mount",
+        "/usr/sbin/something",
+    ];
+    let non_sip_paths = [
+        "/opt/homebrew/bin/bash",
+        "/usr/local/bin/node",
+        "/nix/store/xyz/bin/bash",
+        "/home/user/.local/bin/script",
+    ];
+    for path in &sip_paths {
+        assert!(
+            silo::shebang::is_sip_protected(std::path::Path::new(path)),
+            "silo::shebang should consider {path} as SIP-protected"
+        );
+    }
+    for path in &non_sip_paths {
+        assert!(
+            !silo::shebang::is_sip_protected(std::path::Path::new(path)),
+            "silo::shebang should NOT consider {path} as SIP-protected"
+        );
+    }
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn parity_shell_fallbacks_coverage() {
+    let shells = ["sh", "bash", "zsh", "dash", "ksh"];
+    for name in &shells {
+        let result = silo::shebang::find_non_sip_binary(name);
+        if let Some(ref path) = result {
+            assert!(
+                !silo::shebang::is_sip_protected(std::path::Path::new(path)),
+                "silo find_non_sip_binary({name}) returned SIP path: {path}"
+            );
+        }
+    }
+    if let Some(ref path) = silo::shebang::find_non_sip_binary("make") {
+        assert!(
+            !silo::shebang::is_sip_protected(std::path::Path::new(path)),
+            "silo find_non_sip_binary(\"make\") returned SIP path: {path}"
+        );
+    }
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn parity_shebang_script_through_injection() {
+    ensure_loopback_alias();
+    let shell = find_non_sip_shell();
+    let Some(shell) = shell else {
+        eprintln!("SKIP: no non-SIP shell available");
+        return;
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let script = dir.path().join("test_shebang.sh");
+    std::fs::write(&script, "#!/bin/bash\necho shebang_ok\n").unwrap();
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let output = Command::new(&shell)
+        .args(["-c", &format!("{}", script.display())])
+        .env(INJECT_KEY, dylib_path().to_str().unwrap())
+        .env("SILO_IP", TEST_IP)
+        .output()
+        .expect("failed to run shebang script");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("shebang_ok"),
+        "shebang script should execute successfully through silo-bind, got stdout: {stdout}, \
+         stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn parity_resolve_program_sip_shell() {
+    let shells = ["sh", "bash", "zsh"];
+    for name in &shells {
+        let sip_path = format!("/bin/{name}");
+        let args = vec!["-c".to_string(), "true".to_string()];
+        let (resolved, _) = silo::shebang::resolve_program(&sip_path, &args);
+        if resolved != sip_path {
+            assert!(
+                !silo::shebang::is_sip_protected(std::path::Path::new(&resolved)),
+                "silo resolve_program({sip_path}) returned SIP path: {resolved}"
+            );
+        }
+    }
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn parity_env_shebang_resolution() {
+    if which::which("node").is_err() {
+        eprintln!("SKIP: node not found");
+        return;
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let script = dir.path().join("test_env.sh");
+    std::fs::write(&script, "#!/usr/bin/env node\nconsole.log('env_ok')\n").unwrap();
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let args = vec![];
+    let (resolved, _) = silo::shebang::resolve_program(script.to_str().unwrap(), &args);
+    if resolved != script.to_str().unwrap() {
+        assert!(
+            !silo::shebang::is_sip_protected(std::path::Path::new(&resolved)),
+            "silo resolved env shebang to SIP path: {resolved}"
+        );
+    }
+}
+
+#[test]
 fn bind_unix_passes_through() {
     let (stdout, _, success) = run_helper("bind_unix", Some(TEST_IP));
     assert!(success, "helper failed");

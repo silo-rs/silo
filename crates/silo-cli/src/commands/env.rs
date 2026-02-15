@@ -10,7 +10,12 @@ pub fn run(name: Option<&str>, ip: Option<std::net::Ipv4Addr>, json: bool) -> ey
 
     let session = Session::activate(ctx, silo::ActivateOptions::default(), backend)?;
 
-    let mut vars: BTreeMap<String, String> = session.context().env_vars().into_iter().collect();
+    let mut vars: BTreeMap<String, String> = session
+        .context()
+        .env_vars()
+        .into_iter()
+        .map(|(k, v)| (k.into(), v))
+        .collect();
 
     if session.backend_name() == "preload" {
         let lib_path = super::run::find_bind_lib()?;

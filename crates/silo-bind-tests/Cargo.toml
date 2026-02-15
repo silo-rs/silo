@@ -13,6 +13,7 @@ tempfile = { workspace = true }
 
 [dev-dependencies]
 which = { workspace = true }
+silo = { path = "../silo" }
 
 [[bin]]
 name = "bind-helper"

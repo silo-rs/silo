@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 
@@ -43,13 +42,13 @@ impl Context {
         &self.dir
     }
 
-    pub fn env_vars(&self) -> HashMap<String, String> {
-        HashMap::from([
-            ("SILO_IP".into(), self.ip.to_string()),
-            ("SILO_NAME".into(), self.name.clone()),
-            ("SILO_DIR".into(), self.dir.display().to_string()),
-            ("SILO_HOST".into(), self.hostname.clone()),
-        ])
+    pub fn env_vars(&self) -> [(&'static str, String); 4] {
+        [
+            ("SILO_IP", self.ip.to_string()),
+            ("SILO_NAME", self.name.clone()),
+            ("SILO_DIR", self.dir.display().to_string()),
+            ("SILO_HOST", self.hostname.clone()),
+        ]
     }
 }
 
@@ -92,11 +91,13 @@ mod tests {
         let ctx = Context::for_dir(dir.path(), Some("feat"), None).unwrap();
         let vars = ctx.env_vars();
         assert_eq!(vars.len(), 4);
-        assert!(vars.contains_key("SILO_IP"));
-        assert!(vars.contains_key("SILO_NAME"));
-        assert!(vars.contains_key("SILO_DIR"));
-        assert!(vars.contains_key("SILO_HOST"));
-        assert_eq!(vars["SILO_NAME"], "feat");
+        let keys: Vec<&str> = vars.iter().map(|(k, _)| *k).collect();
+        assert!(keys.contains(&"SILO_IP"));
+        assert!(keys.contains(&"SILO_NAME"));
+        assert!(keys.contains(&"SILO_DIR"));
+        assert!(keys.contains(&"SILO_HOST"));
+        let name_val = vars.iter().find(|(k, _)| *k == "SILO_NAME").unwrap();
+        assert_eq!(name_val.1, "feat");
     }
 
     #[test]

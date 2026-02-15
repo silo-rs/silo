@@ -16,3 +16,4 @@ libc = { workspace = true }
 
 [dev-dependencies]
 proptest = "1"
+tempfile = "3"

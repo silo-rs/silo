@@ -730,6 +730,7 @@ version = "0.3.0"
 dependencies = [
  "libc",
  "proptest",
+ "tempfile",
 ]
 
 [[package]]
@@ -737,6 +738,7 @@ name = "silo-bind-tests"
 version = "0.3.0"
 dependencies = [
  "libc",
+ "silo",
  "tempfile",
  "which",
 ]

@@ -234,14 +234,24 @@ unsafe fn call_real_bind(fd: c_int, addr: *const sockaddr, len: socklen_t) -> c_
 
 #[cfg(target_os = "linux")]
 unsafe fn call_real_bind(fd: c_int, addr: *const sockaddr, len: socklen_t) -> c_int {
-    static REAL_BIND: OnceLock<unsafe extern "C" fn(c_int, *const sockaddr, socklen_t) -> c_int> =
-        OnceLock::new();
+    static REAL_BIND: OnceLock<
+        Option<unsafe extern "C" fn(c_int, *const sockaddr, socklen_t) -> c_int>,
+    > = OnceLock::new();
     let f = *REAL_BIND.get_or_init(|| unsafe {
         let ptr = libc::dlsym(libc::RTLD_NEXT, c"bind".as_ptr());
-        assert!(!ptr.is_null(), "silo-bind: dlsym failed to resolve bind");
-        std::mem::transmute(ptr)
+        if ptr.is_null() {
+            eprintln!("silo-bind: dlsym failed to resolve bind");
+            return None;
+        }
+        Some(std::mem::transmute(ptr))
     });
-    unsafe { f(fd, addr, len) }
+    match f {
+        Some(f) => unsafe { f(fd, addr, len) },
+        None => {
+            unsafe { *errno_ptr() = libc::ENOSYS };
+            -1
+        }
+    }
 }
 
 unsafe fn probe_has_listener(fd: c_int, silo_ip: u32, port: u16) -> bool {
@@ -349,7 +359,7 @@ fn is_sip_path(path: &str) -> bool {
 #[cfg(target_os = "macos")]
 fn find_non_sip_in_path(name: &str) -> Option<CString> {
     let fallbacks: &[&str] = match name {
-        "sh" | "bash" => &["bash", "zsh"],
+        "sh" | "bash" | "zsh" | "dash" | "ksh" => &["bash", "zsh", "sh"],
         "make" => &["make", "gmake"],
         _ => &[],
     };
@@ -970,24 +980,27 @@ mod platform {
 
     macro_rules! real {
         ($sym:literal, $ty:ty) => {{
-            static REAL: OnceLock<$ty> = OnceLock::new();
+            static REAL: OnceLock<Option<$ty>> = OnceLock::new();
             *REAL.get_or_init(|| unsafe {
                 let ptr = libc::dlsym(libc::RTLD_NEXT, concat!($sym, "\0").as_ptr().cast());
-                assert!(
-                    !ptr.is_null(),
-                    concat!("silo-bind: dlsym failed to resolve ", $sym)
-                );
-                std::mem::transmute(ptr)
+                if ptr.is_null() {
+                    eprintln!(concat!("silo-bind: dlsym failed to resolve ", $sym));
+                    return None;
+                }
+                Some(std::mem::transmute(ptr))
             })
         }};
     }
 
     #[unsafe(no_mangle)]
     pub unsafe extern "C" fn bind(fd: c_int, addr: *const sockaddr, len: socklen_t) -> c_int {
-        let real_fn = real!(
+        let Some(real_fn) = real!(
             "bind",
             unsafe extern "C" fn(c_int, *const sockaddr, socklen_t) -> c_int
-        );
+        ) else {
+            unsafe { *errno_ptr() = libc::ENOSYS };
+            return -1;
+        };
         let mut storage = std::mem::MaybeUninit::<SockaddrStorage>::uninit();
         let (addr, len) = unsafe { maybe_rewrite_addr(addr, len, true, &mut storage) };
         unsafe { real_fn(fd, addr, len) }
@@ -995,10 +1008,13 @@ mod platform {
 
     #[unsafe(no_mangle)]
     pub unsafe extern "C" fn connect(fd: c_int, addr: *const sockaddr, len: socklen_t) -> c_int {
-        let real_fn = real!(
+        let Some(real_fn) = real!(
             "connect",
             unsafe extern "C" fn(c_int, *const sockaddr, socklen_t) -> c_int
-        );
+        ) else {
+            unsafe { *errno_ptr() = libc::ENOSYS };
+            return -1;
+        };
         let mut storage = std::mem::MaybeUninit::<SockaddrStorage>::uninit();
         let (new_addr, new_len) =
             unsafe { maybe_rewrite_connect_addr(fd, addr, len, &mut storage) };
@@ -1015,10 +1031,13 @@ mod platform {
 
     #[unsafe(no_mangle)]
     pub unsafe extern "C" fn getifaddrs(ifap: *mut *mut libc::ifaddrs) -> c_int {
-        let real_fn = real!(
+        let Some(real_fn) = real!(
             "getifaddrs",
             unsafe extern "C" fn(*mut *mut libc::ifaddrs) -> c_int
-        );
+        ) else {
+            unsafe { *errno_ptr() = libc::ENOSYS };
+            return -1;
+        };
         let ret = unsafe { real_fn(ifap) };
         if ret == 0 && !ifap.is_null() && !(unsafe { *ifap }).is_null() {
             unsafe { hide_other_silo_aliases(*ifap) };
@@ -1035,7 +1054,7 @@ mod platform {
         dest_addr: *const sockaddr,
         addrlen: socklen_t,
     ) -> libc::ssize_t {
-        let real_fn = real!(
+        let Some(real_fn) = real!(
             "sendto",
             unsafe extern "C" fn(
                 c_int,
@@ -1045,7 +1064,10 @@ mod platform {
                 *const sockaddr,
                 socklen_t,
             ) -> libc::ssize_t
-        );
+        ) else {
+            unsafe { *errno_ptr() = libc::ENOSYS };
+            return -1;
+        };
 
         let mut storage = std::mem::MaybeUninit::<SockaddrStorage>::uninit();
         let (dest_addr, addrlen) =
@@ -1059,10 +1081,13 @@ mod platform {
         msg: *const libc::msghdr,
         flags: c_int,
     ) -> libc::ssize_t {
-        let real_fn = real!(
+        let Some(real_fn) = real!(
             "sendmsg",
             unsafe extern "C" fn(c_int, *const libc::msghdr, c_int) -> libc::ssize_t
-        );
+        ) else {
+            unsafe { *errno_ptr() = libc::ENOSYS };
+            return -1;
+        };
         if !msg.is_null() {
             let msg_ref = unsafe { &*msg };
             if !msg_ref.msg_name.is_null() && msg_ref.msg_namelen > 0 {
@@ -1084,5 +1109,146 @@ mod platform {
             }
         }
         unsafe { real_fn(fd, msg, flags) }
+    }
+}
+
+#[cfg(test)]
+#[cfg(target_os = "macos")]
+mod shebang_tests {
+    use super::*;
+
+    #[test]
+    fn read_shebang_of_normal() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("test.sh");
+        std::fs::write(&script, "#!/bin/bash\necho hello\n").unwrap();
+        let cpath = CString::new(script.to_str().unwrap()).unwrap();
+        let result = unsafe { read_shebang_of(cpath.as_ptr()) };
+        let (interp, arg) = result.unwrap();
+        assert_eq!(interp, "/bin/bash");
+        assert!(arg.is_none());
+    }
+
+    #[test]
+    fn read_shebang_of_with_arg() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("test.sh");
+        std::fs::write(&script, "#!/usr/bin/env bash\necho hello\n").unwrap();
+        let cpath = CString::new(script.to_str().unwrap()).unwrap();
+        let result = unsafe { read_shebang_of(cpath.as_ptr()) };
+        let (interp, arg) = result.unwrap();
+        assert_eq!(interp, "/usr/bin/env");
+        assert_eq!(arg.as_deref(), Some("bash"));
+    }
+
+    #[test]
+    fn read_shebang_of_with_env_s_flag() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("test.py");
+        std::fs::write(&script, "#!/usr/bin/env -S python3 -u\nimport sys\n").unwrap();
+        let cpath = CString::new(script.to_str().unwrap()).unwrap();
+        let result = unsafe { read_shebang_of(cpath.as_ptr()) };
+        let (interp, arg) = result.unwrap();
+        assert_eq!(interp, "/usr/bin/env");
+        assert_eq!(arg.as_deref(), Some("-S python3 -u"));
+    }
+
+    #[test]
+    fn read_shebang_of_binary_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("binary");
+        std::fs::write(&bin, [0x7f, 0x45, 0x4c, 0x46, 0x00, 0x00]).unwrap();
+        let cpath = CString::new(bin.to_str().unwrap()).unwrap();
+        let result = unsafe { read_shebang_of(cpath.as_ptr()) };
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn read_shebang_of_empty_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let empty = dir.path().join("empty");
+        std::fs::write(&empty, "").unwrap();
+        let cpath = CString::new(empty.to_str().unwrap()).unwrap();
+        let result = unsafe { read_shebang_of(cpath.as_ptr()) };
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn read_shebang_of_empty_shebang() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("test.sh");
+        std::fs::write(&script, "#!\n").unwrap();
+        let cpath = CString::new(script.to_str().unwrap()).unwrap();
+        let result = unsafe { read_shebang_of(cpath.as_ptr()) };
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn read_shebang_of_nonexistent() {
+        let cpath = CString::new("/tmp/nonexistent-silo-test-file-12345").unwrap();
+        let result = unsafe { read_shebang_of(cpath.as_ptr()) };
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn is_sip_path_known_dirs() {
+        assert!(is_sip_path("/usr/bin/env"));
+        assert!(is_sip_path("/usr/bin/bash"));
+        assert!(is_sip_path("/bin/sh"));
+        assert!(is_sip_path("/bin/bash"));
+        assert!(is_sip_path("/sbin/mount"));
+        assert!(is_sip_path("/usr/sbin/something"));
+    }
+
+    #[test]
+    fn is_sip_path_non_sip() {
+        assert!(!is_sip_path("/opt/homebrew/bin/bash"));
+        assert!(!is_sip_path("/usr/local/bin/node"));
+        assert!(!is_sip_path("/nix/store/xyz/bin/bash"));
+        assert!(!is_sip_path("/home/user/bin/script"));
+    }
+
+    #[test]
+    fn find_non_sip_in_path_shell_coverage() {
+        for name in &["sh", "bash", "zsh", "dash", "ksh"] {
+            let result = find_non_sip_in_path(name);
+            if let Some(ref path) = result {
+                let path_str = path.to_str().unwrap();
+                assert!(
+                    !is_sip_path(path_str),
+                    "find_non_sip_in_path({name}) returned SIP path: {path_str}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn find_non_sip_in_path_make() {
+        let result = find_non_sip_in_path("make");
+        if let Some(ref path) = result {
+            let path_str = path.to_str().unwrap();
+            assert!(
+                !is_sip_path(path_str),
+                "find_non_sip_in_path(\"make\") returned SIP path: {path_str}"
+            );
+        }
+    }
+
+    #[test]
+    fn find_non_sip_in_path_nonexistent() {
+        assert!(find_non_sip_in_path("nonexistent-binary-xyz-12345").is_none());
+    }
+
+    #[test]
+    fn find_non_sip_in_path_never_returns_sip() {
+        for name in &["sh", "bash", "zsh", "make", "python3"] {
+            if let Some(ref path) = find_non_sip_in_path(name) {
+                let path_str = path.to_str().unwrap();
+                assert!(
+                    !is_sip_path(path_str),
+                    "find_non_sip_in_path({name}) returned SIP path: {path_str}"
+                );
+            }
+        }
     }
 }

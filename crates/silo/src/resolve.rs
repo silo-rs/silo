@@ -254,10 +254,12 @@ mod tests {
         };
         let vars = ctx.env_vars();
         assert_eq!(vars.len(), 4);
-        assert_eq!(vars["SILO_IP"], "127.42.0.7");
-        assert_eq!(vars["SILO_NAME"], "feature-auth");
-        assert_eq!(vars["SILO_DIR"], "/home/user/project");
-        assert_eq!(vars["SILO_HOST"], "feature-auth.project.silo");
+        let map: std::collections::HashMap<&str, &str> =
+            vars.iter().map(|(k, v)| (*k, v.as_str())).collect();
+        assert_eq!(map["SILO_IP"], "127.42.0.7");
+        assert_eq!(map["SILO_NAME"], "feature-auth");
+        assert_eq!(map["SILO_DIR"], "/home/user/project");
+        assert_eq!(map["SILO_HOST"], "feature-auth.project.silo");
     }
 
     #[test]
