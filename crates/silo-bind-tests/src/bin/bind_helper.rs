@@ -348,8 +348,29 @@ fn cmd_bind_v6_v6only() -> io::Result<()> {
             let ip = Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr));
             println!("family=v4");
             println!("bound={ip}");
-        } else {
+        } else if family == libc::AF_INET6 as u8 {
+            let sin6 = &*(&bound as *const _ as *const libc::sockaddr_in6);
+            let v6_bytes = sin6.sin6_addr.s6_addr;
+            let mut v6only: libc::c_int = 0;
+            let mut optlen = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+            libc::getsockopt(
+                fd,
+                libc::IPPROTO_IPV6,
+                libc::IPV6_V6ONLY,
+                &mut v6only as *mut _ as *mut libc::c_void,
+                &mut optlen,
+            );
             println!("family=v6");
+            println!("v6only_after={v6only}");
+            if v6_bytes[..10] == [0; 10] && v6_bytes[10] == 0xff && v6_bytes[11] == 0xff {
+                let ip = Ipv4Addr::new(v6_bytes[12], v6_bytes[13], v6_bytes[14], v6_bytes[15]);
+                println!("bound={ip}");
+            } else {
+                let addr = std::net::Ipv6Addr::from(v6_bytes);
+                println!("bound={addr}");
+            }
+        } else {
+            println!("family=unknown");
         }
         libc::close(fd);
     }

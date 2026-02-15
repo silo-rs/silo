@@ -263,12 +263,16 @@ fn bind_v6_v6only_falls_back_to_ipv4() {
     let (stdout, _, success) = run_helper("bind_v6_v6only", Some(TEST_IP));
     assert!(success, "helper failed");
     assert!(
-        stdout.contains("family=v4"),
-        "v6-only socket should fall back to IPv4 replacement, got: {stdout}"
+        stdout.contains("family=v6"),
+        "v6-only socket should stay AF_INET6 with V6ONLY cleared, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("v6only_after=0"),
+        "V6ONLY should be cleared after rewrite, got: {stdout}"
     );
     assert!(
         stdout.contains(&format!("bound={TEST_IP}")),
-        "expected bind to {TEST_IP} after fallback, got: {stdout}"
+        "expected bind to {TEST_IP} via IPv4-mapped IPv6, got: {stdout}"
     );
 }
 

@@ -535,32 +535,30 @@ mod platform {
                         "::1"
                     };
 
-                    if !unsafe { is_v6only(fd) } {
-                        let mut sin6_copy: libc::sockaddr_in6 = unsafe { *sin6 };
-                        sin6_copy.sin6_addr.s6_addr = new_v6;
-                        let ret = unsafe {
-                            real_bind(
+                    if unsafe { is_v6only(fd) } {
+                        unsafe {
+                            libc::setsockopt(
                                 fd,
-                                &sin6_copy as *const libc::sockaddr_in6 as *const sockaddr,
-                                len,
-                            )
-                        };
-                        if debug_enabled() {
-                            eprintln!(
-                                "[silo-bind] pid={} bind {} → ::ffff:SILO_IP (copy) → {}",
-                                std::process::id(),
-                                kind,
-                                ret
+                                libc::IPPROTO_IPV6,
+                                libc::IPV6_V6ONLY,
+                                &0i32 as *const _ as *const libc::c_void,
+                                std::mem::size_of::<c_int>() as socklen_t,
                             );
                         }
-                        return ret;
                     }
 
-                    let port = unsafe { (*sin6).sin6_port };
-                    let ret = unsafe { rebind_as_ipv4(fd, port, ip) };
+                    let mut sin6_copy: libc::sockaddr_in6 = unsafe { *sin6 };
+                    sin6_copy.sin6_addr.s6_addr = new_v6;
+                    let ret = unsafe {
+                        real_bind(
+                            fd,
+                            &sin6_copy as *const libc::sockaddr_in6 as *const sockaddr,
+                            len,
+                        )
+                    };
                     if debug_enabled() {
                         eprintln!(
-                            "[silo-bind] pid={} bind {} → rebind_as_ipv4 (v6only) → {}",
+                            "[silo-bind] pid={} bind {} → ::ffff:SILO_IP → {}",
                             std::process::id(),
                             kind,
                             ret
@@ -592,18 +590,26 @@ mod platform {
                     if let Some(ip) = get_silo_ip() {
                         let port = unsafe { (*sin6).sin6_port };
                         if unsafe { probe_has_listener(fd, ip, port) } {
-                            if !unsafe { is_v6only(fd) } {
-                                let mut sin6_copy: libc::sockaddr_in6 = unsafe { *sin6 };
-                                sin6_copy.sin6_addr.s6_addr = rewrite::ipv4_mapped_v6(ip);
-                                return unsafe {
-                                    real_connect(
+                            if unsafe { is_v6only(fd) } {
+                                unsafe {
+                                    libc::setsockopt(
                                         fd,
-                                        &sin6_copy as *const libc::sockaddr_in6 as *const sockaddr,
-                                        len,
-                                    )
-                                };
+                                        libc::IPPROTO_IPV6,
+                                        libc::IPV6_V6ONLY,
+                                        &0i32 as *const _ as *const libc::c_void,
+                                        std::mem::size_of::<c_int>() as socklen_t,
+                                    );
+                                }
                             }
-                            return unsafe { reconnect_as_ipv4(fd, port, ip) };
+                            let mut sin6_copy: libc::sockaddr_in6 = unsafe { *sin6 };
+                            sin6_copy.sin6_addr.s6_addr = rewrite::ipv4_mapped_v6(ip);
+                            return unsafe {
+                                real_connect(
+                                    fd,
+                                    &sin6_copy as *const libc::sockaddr_in6 as *const sockaddr,
+                                    len,
+                                )
+                            };
                         }
                     }
                     return unsafe { real_connect(fd, addr, len) };
@@ -614,46 +620,6 @@ mod platform {
         let mut storage = std::mem::MaybeUninit::<SockaddrStorage>::uninit();
         let (addr, len) = unsafe { maybe_rewrite_connect_addr(fd, addr, len, &mut storage) };
         unsafe { real_connect(fd, addr, len) }
-    }
-
-    unsafe fn rebind_as_ipv4(fd: c_int, port: u16, ip: u32) -> c_int {
-        if unsafe { replace_with_ipv4(fd) }.is_err() {
-            return -1;
-        }
-
-        let mut sin: sockaddr_in = unsafe { std::mem::zeroed() };
-        sin.sin_len = std::mem::size_of::<sockaddr_in>() as u8;
-        sin.sin_family = AF_INET as u8;
-        sin.sin_port = port;
-        sin.sin_addr.s_addr = ip;
-
-        unsafe {
-            real_bind(
-                fd,
-                &sin as *const sockaddr_in as *const sockaddr,
-                std::mem::size_of::<sockaddr_in>() as socklen_t,
-            )
-        }
-    }
-
-    unsafe fn reconnect_as_ipv4(fd: c_int, port: u16, ip: u32) -> c_int {
-        if unsafe { replace_with_ipv4(fd) }.is_err() {
-            return -1;
-        }
-
-        let mut sin: sockaddr_in = unsafe { std::mem::zeroed() };
-        sin.sin_len = std::mem::size_of::<sockaddr_in>() as u8;
-        sin.sin_family = AF_INET as u8;
-        sin.sin_port = port;
-        sin.sin_addr.s_addr = ip;
-
-        unsafe {
-            real_connect(
-                fd,
-                &sin as *const sockaddr_in as *const sockaddr,
-                std::mem::size_of::<sockaddr_in>() as socklen_t,
-            )
-        }
     }
 
     type PosixSpawnFn = unsafe extern "C" fn(
@@ -929,147 +895,6 @@ mod platform {
             }
         }
         unsafe { real_sendmsg(fd, msg, flags) }
-    }
-
-    unsafe fn get_int_sockopt(fd: c_int, level: c_int, optname: c_int) -> Option<c_int> {
-        let mut optval: c_int = 0;
-        let mut optlen: socklen_t = std::mem::size_of::<c_int>() as socklen_t;
-        let ret = unsafe {
-            libc::getsockopt(
-                fd,
-                level,
-                optname,
-                &mut optval as *mut _ as *mut libc::c_void,
-                &mut optlen,
-            )
-        };
-        if ret == 0 { Some(optval) } else { None }
-    }
-
-    unsafe fn set_int_sockopt(fd: c_int, level: c_int, optname: c_int, val: c_int) {
-        unsafe {
-            libc::setsockopt(
-                fd,
-                level,
-                optname,
-                &val as *const _ as *const libc::c_void,
-                std::mem::size_of::<c_int>() as socklen_t,
-            );
-        }
-    }
-
-    unsafe fn copy_bool_sockopt(old_fd: c_int, new_fd: c_int, optname: c_int) {
-        if let Some(val) = unsafe { get_int_sockopt(old_fd, libc::SOL_SOCKET, optname) }
-            && val != 0
-        {
-            unsafe { set_int_sockopt(new_fd, libc::SOL_SOCKET, optname, val) };
-        }
-    }
-
-    unsafe fn copy_int_sockopt(old_fd: c_int, new_fd: c_int, optname: c_int) {
-        if let Some(val) = unsafe { get_int_sockopt(old_fd, libc::SOL_SOCKET, optname) } {
-            unsafe { set_int_sockopt(new_fd, libc::SOL_SOCKET, optname, val) };
-        }
-    }
-
-    unsafe fn replace_with_ipv4(fd: c_int) -> Result<c_int, c_int> {
-        let sock_type = unsafe { get_int_sockopt(fd, libc::SOL_SOCKET, libc::SO_TYPE) }
-            .unwrap_or(libc::SOCK_STREAM);
-
-        let fd_flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
-
-        let new_fd = unsafe { libc::socket(AF_INET, sock_type, 0) };
-        if new_fd < 0 {
-            return Err(-1);
-        }
-
-        for opt in [
-            libc::SO_REUSEADDR,
-            libc::SO_REUSEPORT,
-            libc::SO_KEEPALIVE,
-            libc::SO_NOSIGPIPE,
-            libc::SO_OOBINLINE,
-        ] {
-            unsafe { copy_bool_sockopt(fd, new_fd, opt) };
-        }
-
-        for opt in [
-            libc::SO_RCVBUF,
-            libc::SO_SNDBUF,
-            libc::SO_RCVLOWAT,
-            libc::SO_SNDLOWAT,
-        ] {
-            unsafe { copy_int_sockopt(fd, new_fd, opt) };
-        }
-
-        {
-            let mut linger_val: libc::linger = unsafe { std::mem::zeroed() };
-            let mut optlen = std::mem::size_of::<libc::linger>() as socklen_t;
-            unsafe {
-                if libc::getsockopt(
-                    fd,
-                    libc::SOL_SOCKET,
-                    libc::SO_LINGER,
-                    &mut linger_val as *mut _ as *mut libc::c_void,
-                    &mut optlen,
-                ) == 0
-                    && linger_val.l_onoff != 0
-                {
-                    libc::setsockopt(
-                        new_fd,
-                        libc::SOL_SOCKET,
-                        libc::SO_LINGER,
-                        &linger_val as *const _ as *const libc::c_void,
-                        std::mem::size_of::<libc::linger>() as socklen_t,
-                    );
-                }
-            }
-        }
-
-        for opt in [libc::SO_RCVTIMEO, libc::SO_SNDTIMEO] {
-            let mut tv: libc::timeval = unsafe { std::mem::zeroed() };
-            let mut optlen = std::mem::size_of::<libc::timeval>() as socklen_t;
-            unsafe {
-                if libc::getsockopt(
-                    fd,
-                    libc::SOL_SOCKET,
-                    opt,
-                    &mut tv as *mut _ as *mut libc::c_void,
-                    &mut optlen,
-                ) == 0
-                    && (tv.tv_sec != 0 || tv.tv_usec != 0)
-                {
-                    libc::setsockopt(
-                        new_fd,
-                        libc::SOL_SOCKET,
-                        opt,
-                        &tv as *const _ as *const libc::c_void,
-                        std::mem::size_of::<libc::timeval>() as socklen_t,
-                    );
-                }
-            }
-        }
-
-        if sock_type == libc::SOCK_STREAM {
-            for opt in [libc::TCP_NODELAY, libc::TCP_KEEPALIVE] {
-                if let Some(val) = unsafe { get_int_sockopt(fd, libc::IPPROTO_TCP, opt) }
-                    && val != 0
-                {
-                    unsafe { set_int_sockopt(new_fd, libc::IPPROTO_TCP, opt, val) };
-                }
-            }
-        }
-
-        unsafe {
-            libc::dup2(new_fd, fd);
-            libc::close(new_fd);
-        }
-
-        if fd_flags >= 0 {
-            unsafe { libc::fcntl(fd, libc::F_SETFL, fd_flags) };
-        }
-
-        Ok(fd)
     }
 }
 
