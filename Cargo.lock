@@ -712,7 +712,7 @@ dependencies = [
 
 [[package]]
 name = "silo"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "fd-lock",
  "serde",
@@ -725,7 +725,7 @@ dependencies = [
 
 [[package]]
 name = "silo-bind"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "libc",
  "proptest",
@@ -734,7 +734,7 @@ dependencies = [
 
 [[package]]
 name = "silo-bind-tests"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "libc",
  "silo",
@@ -744,7 +744,7 @@ dependencies = [
 
 [[package]]
 name = "silo-cli"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "aya",
  "clap",
@@ -763,7 +763,7 @@ dependencies = [
 
 [[package]]
 name = "silo-ebpf-tests"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "aya",
  "eyre",
@@ -772,7 +772,7 @@ dependencies = [
 
 [[package]]
 name = "silo-helpers"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "eyre",
  "serde_json",

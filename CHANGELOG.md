@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [unreleased]
+## [0.3.1] - 2026-02-15
 
 ### Bug Fixes
 
@@ -14,12 +14,37 @@ All notable changes to this project will be documented in this file.
 
 - Clippy
 
+- Install rustfmt and clippy for pinned toolchain
+
+- Clippy
+
+- Harden edge cases
+
+- Clippy
+
+- Align SIP shebang shell fallbacks and add parity tests
+
+- Dedup bind/sendmsg logic
+
+- Atomic create-or-open for hosts lock file
+
+- Clippy
+
+
+### Documentation
+
+- Update README
+
 
 ### Features
 
 - Opt out of connect rewriting with SILO_CONNECT
 
 - Install bind library to root-owned path
+
+- Smarter doctor
+
+- Stop asking git about git
 
 
 ### Miscellaneous
@@ -28,15 +53,44 @@ All notable changes to this project will be documented in this file.
 
 - Add tooling
 
+- Add tooling
+
+- Add tooling
+
+- Remove colored from silo
+
 
 ### Performance
 
 - Per-process listener cache for connect interception
 
 
+### Refactor
+
+- Decompose silo-bind ([#20](https://github.com/silo-rs/silo/issues/20))
+
+- Use git rev-parse in find_git_root
+
+- Hosts module visibility
+
+- Decompose doctor
+
+- Decompose resolve
+
+- Split Error into ResolverError and SessionError
+
+- Structured error types and surface hosts warnings
+
+- Decompose hosts
+
+
 ### Testing
 
 - Assert connect passthrough when no listener exists
+
+- More tests
+
+- More tests
 
 
 ## [0.3.0] - 2026-02-15

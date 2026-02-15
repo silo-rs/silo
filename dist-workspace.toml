@@ -19,6 +19,8 @@ pr-run-mode = "plan"
 unix-archive = ".tar.gz"
 # Whether to enable GitHub Attestations
 github-attestations = true
+# Allow CI files to differ from what dist would generate (e.g. dependabot bumps)
+allow-dirty = ["ci"]
 
 [dist.github-custom-runners]
 aarch64-apple-darwin = "macos-14"

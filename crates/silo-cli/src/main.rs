@@ -7,29 +7,25 @@ pub(crate) mod ebpf;
 pub(crate) mod sudoers;
 pub(crate) mod ui;
 
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use cli::{Cli, Commands};
 use colored::Colorize;
 
-const KNOWN_SUBCOMMANDS: &[&str] = &[
-    "run",
-    "env",
-    "ip",
-    "ls",
-    "doctor",
-    "prune",
-    "setup-ebpf",
-    "teardown-ebpf",
-    "help",
-];
-
-fn auto_run_args() -> Vec<String> {
-    maybe_inject_run(std::env::args().collect())
+fn known_subcommands() -> Vec<String> {
+    let mut names: Vec<String> = Cli::command()
+        .get_subcommands()
+        .map(|c| c.get_name().to_string())
+        .collect();
+    names.push("help".to_string());
+    names
 }
 
-fn maybe_inject_run(args: Vec<String>) -> Vec<String> {
-    if args.len() > 1 && !args[1].starts_with('-') && !KNOWN_SUBCOMMANDS.contains(&args[1].as_str())
-    {
+fn auto_run_args() -> Vec<String> {
+    maybe_inject_run(std::env::args().collect(), &known_subcommands())
+}
+
+fn maybe_inject_run(args: Vec<String>, known: &[String]) -> Vec<String> {
+    if args.len() > 1 && !args[1].starts_with('-') && !known.iter().any(|k| k == &args[1]) {
         let mut new_args = vec![args[0].clone(), "run".into()];
         new_args.extend_from_slice(&args[1..]);
         new_args
@@ -98,16 +94,21 @@ mod tests {
         input.iter().map(|s| s.to_string()).collect()
     }
 
+    fn known() -> Vec<String> {
+        known_subcommands()
+    }
+
     #[test]
     fn injects_run_for_unknown_command() {
-        let result = maybe_inject_run(args(&["silo", "npm", "dev"]));
+        let result = maybe_inject_run(args(&["silo", "npm", "dev"]), &known());
         assert_eq!(result, args(&["silo", "run", "npm", "dev"]));
     }
 
     #[test]
     fn preserves_known_subcommand() {
-        for sub in KNOWN_SUBCOMMANDS {
-            let result = maybe_inject_run(args(&["silo", sub]));
+        let known = known();
+        for sub in &known {
+            let result = maybe_inject_run(args(&["silo", sub]), &known);
             assert_eq!(
                 result,
                 args(&["silo", sub]),
@@ -118,19 +119,22 @@ mod tests {
 
     #[test]
     fn preserves_flags() {
-        let result = maybe_inject_run(args(&["silo", "--help"]));
+        let result = maybe_inject_run(args(&["silo", "--help"]), &known());
         assert_eq!(result, args(&["silo", "--help"]));
     }
 
     #[test]
     fn no_args_passthrough() {
-        let result = maybe_inject_run(args(&["silo"]));
+        let result = maybe_inject_run(args(&["silo"]), &known());
         assert_eq!(result, args(&["silo"]));
     }
 
     #[test]
     fn injects_run_preserves_all_trailing_args() {
-        let result = maybe_inject_run(args(&["silo", "node", "server.js", "--port", "3000"]));
+        let result = maybe_inject_run(
+            args(&["silo", "node", "server.js", "--port", "3000"]),
+            &known(),
+        );
         assert_eq!(
             result,
             args(&["silo", "run", "node", "server.js", "--port", "3000"])
@@ -139,7 +143,13 @@ mod tests {
 
     #[test]
     fn unknown_subcommand_like_typo_gets_run_injected() {
-        let result = maybe_inject_run(args(&["silo", "doctorx"]));
+        let result = maybe_inject_run(args(&["silo", "doctorx"]), &known());
         assert_eq!(result, args(&["silo", "run", "doctorx"]));
+    }
+
+    #[test]
+    fn known_subcommands_includes_help() {
+        let known = known();
+        assert!(known.contains(&"help".to_string()));
     }
 }

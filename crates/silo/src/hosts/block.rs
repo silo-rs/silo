@@ -7,8 +7,12 @@ pub(super) fn find_ip_conflict(entries: &[String], ip: Ipv4Addr, hostname: &str)
     let ip_str = ip.to_string();
     for entry in entries {
         let mut parts = entry.split('\t');
-        let entry_ip = parts.next()?;
-        let entry_host = parts.next()?;
+        let Some(entry_ip) = parts.next() else {
+            continue;
+        };
+        let Some(entry_host) = parts.next() else {
+            continue;
+        };
         if entry_ip == ip_str && entry_host != hostname {
             return Some(entry_host.to_string());
         }

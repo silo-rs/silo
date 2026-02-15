@@ -27,9 +27,13 @@ pub fn run(
     let ctx = silo::Context::current(name, ip)?;
     let backend = make_backend(&ctx)?;
 
+    if backend.name() == "none" {
+        ui::check_warn("backend", "no interception method available");
+    }
+
     let session = Session::activate(ctx, silo::ActivateOptions::default(), backend)?;
 
-    verify_session(&session);
+    verify_activation(&session);
 
     if emit_json {
         let json = serde_json::to_string(session.context()).unwrap_or_else(|_| "{}".into());
@@ -117,43 +121,26 @@ pub fn make_backend(
     Ok(Box::new(silo::PreloadBackend::new(lib_path)))
 }
 
-fn verify_session(session: &Session) {
+fn verify_activation(session: &Session) {
     if matches!(silo::ip::alias_exists(session.ip()), Ok(false)) {
         ui::check_warn("ip alias", "not found on loopback interface");
     }
 
-    if let Ok(entries) = silo::hosts::list_entries() {
+    if let Some(warning) = session.hosts_warning() {
+        ui::check_warn(
+            "hosts",
+            format!("{warning} (run `silo doctor` to diagnose)"),
+        );
+    } else if let Ok(entries) = silo::hosts::list_entries() {
         let has_entry = entries
             .iter()
             .any(|e| e.ip == session.ip() && e.hostname == session.hostname());
         if !has_entry {
-            if let Some(reason) = session.hosts_warning() {
-                ui::check_warn("hosts", format!("{reason} (run `silo doctor` to diagnose)"));
-            } else {
-                ui::check_warn(
-                    "hosts",
-                    format!("{} not found in /etc/hosts", session.hostname()),
-                );
-            }
+            ui::check_warn(
+                "hosts",
+                format!("{} not found in /etc/hosts", session.hostname()),
+            );
         }
-
-        for e in &entries {
-            if e.ip == session.ip() && e.hostname != session.hostname() {
-                ui::check_warn(
-                    "hosts",
-                    format!(
-                        "ip collision — {} is also mapped to {}. fix: silo run --ip 127.x.y.z <cmd>",
-                        session.ip(),
-                        e.hostname
-                    ),
-                );
-                break;
-            }
-        }
-    }
-
-    if session.backend_name() == "none" {
-        ui::check_warn("backend", "no interception method available");
     }
 }
 
