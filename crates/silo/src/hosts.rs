@@ -9,7 +9,7 @@ use tracing::debug;
 
 use crate::error::{Error, Result};
 
-pub const HOSTS_PATH: &str = "/etc/hosts";
+pub(crate) const HOSTS_PATH: &str = "/etc/hosts";
 pub const SECURE_IP_HELPER: &str = "/usr/local/libexec/silo-ip-helper";
 pub const SECURE_HOSTS_HELPER: &str = "/usr/local/libexec/silo-hosts-helper";
 const BEGIN_MARKER: &str = "# BEGIN silo managed block - do not edit";
@@ -35,7 +35,7 @@ pub struct RemovedEntry {
     pub hostname: String,
 }
 
-pub fn validate_ip(ip: Ipv4Addr) -> Result<()> {
+pub(crate) fn validate_ip(ip: Ipv4Addr) -> Result<()> {
     if ip.octets()[0] != 127 {
         return Err(Error::HostsValidation(format!(
             "IP {} is not in 127.0.0.0/8",
@@ -50,7 +50,7 @@ pub fn validate_ip(ip: Ipv4Addr) -> Result<()> {
     Ok(())
 }
 
-pub fn validate_hostname(hostname: &str) -> Result<()> {
+pub(crate) fn validate_hostname(hostname: &str) -> Result<()> {
     if !hostname.ends_with(".silo") {
         return Err(Error::HostsValidation(format!(
             "hostname '{}' does not end with .silo",
@@ -78,7 +78,7 @@ pub fn validate_hostname(hostname: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn validate_dir(dir: &str) -> Result<()> {
+pub(crate) fn validate_dir(dir: &str) -> Result<()> {
     if dir.is_empty() {
         return Err(Error::HostsValidation("directory path is empty".into()));
     }
@@ -103,7 +103,7 @@ fn find_ip_conflict(entries: &[String], ip: Ipv4Addr, hostname: &str) -> Option<
     None
 }
 
-pub fn check_collision(ip: Ipv4Addr, hostname: &str) -> Result<()> {
+pub(crate) fn check_collision(ip: Ipv4Addr, hostname: &str) -> Result<()> {
     let content = match std::fs::read_to_string(HOSTS_PATH) {
         Ok(c) => c,
         Err(_) => return Ok(()),
@@ -214,7 +214,7 @@ fn hosts_helper_bin() -> PathBuf {
     PathBuf::from(SECURE_HOSTS_HELPER)
 }
 
-pub fn ensure_entry(ip: Ipv4Addr, hostname: &str, dir: &Path) -> Result<()> {
+pub(crate) fn ensure_entry(ip: Ipv4Addr, hostname: &str, dir: &Path) -> Result<()> {
     let bin = hosts_helper_bin();
 
     let request = HostsRequest::Add {
@@ -326,7 +326,7 @@ pub fn remove_entries(ips_to_remove: &HashSet<Ipv4Addr>) -> Result<Vec<(Ipv4Addr
     Ok(result)
 }
 
-pub fn open_helper_lock() -> Result<RwLock<std::fs::File>> {
+pub(crate) fn open_helper_lock() -> Result<RwLock<std::fs::File>> {
     let file = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -337,7 +337,7 @@ pub fn open_helper_lock() -> Result<RwLock<std::fs::File>> {
     Ok(RwLock::new(file))
 }
 
-pub fn write_hosts_direct(content: &str) -> Result<()> {
+pub(crate) fn write_hosts_direct(content: &str) -> Result<()> {
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
 
@@ -367,7 +367,7 @@ pub fn write_hosts_direct(content: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn parse_block(content: &str) -> (String, Vec<String>, String) {
+fn parse_block(content: &str) -> (String, Vec<String>, String) {
     enum State {
         Before,
         Inside,
@@ -409,7 +409,7 @@ pub fn parse_block(content: &str) -> (String, Vec<String>, String) {
     (before, entries, after)
 }
 
-pub fn rebuild(before: String, entries: &[String], after: String) -> String {
+fn rebuild(before: String, entries: &[String], after: String) -> String {
     let mut out = before;
 
     if !out.ends_with('\n') && !out.is_empty() {
