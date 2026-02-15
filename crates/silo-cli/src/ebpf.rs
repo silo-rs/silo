@@ -540,6 +540,9 @@ static EBPF_BYTES: &[u8] = aya::include_bytes_aligned!(concat!(env!("OUT_DIR"), 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn bpf_program_all_is_exhaustive() {
@@ -562,6 +565,7 @@ mod tests {
 
     #[test]
     fn sudo_caller_ids_no_sudo_non_root() {
+        let _lock = ENV_LOCK.lock().unwrap();
         // When not running as root and SUDO_UID is not set, should error
         if unsafe { libc::geteuid() } != 0 {
             unsafe {
@@ -578,6 +582,7 @@ mod tests {
 
     #[test]
     fn sudo_caller_ids_with_valid_env() {
+        let _lock = ENV_LOCK.lock().unwrap();
         unsafe {
             std::env::set_var("SUDO_UID", "1000");
             std::env::set_var("SUDO_GID", "1000");
@@ -592,12 +597,13 @@ mod tests {
 
     #[test]
     fn sudo_caller_ids_with_invalid_env() {
+        let _lock = ENV_LOCK.lock().unwrap();
         unsafe {
             std::env::set_var("SUDO_UID", "notanumber");
             std::env::set_var("SUDO_GID", "1000");
         }
         let result = sudo_caller_ids();
-        assert!(result.is_err(), "should error on unparseable SUDO_UID");
+        assert!(result.is_err(), "should error on unparsable SUDO_UID");
         unsafe {
             std::env::remove_var("SUDO_UID");
             std::env::remove_var("SUDO_GID");
