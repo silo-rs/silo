@@ -4,42 +4,41 @@ use colored::Colorize;
 use eyre::{Context, bail};
 
 const SUDOERS_PATH: &str = "/etc/sudoers.d/silo";
+const STAMP_PATH: &str = "/usr/local/bin/.silo-stamp";
 const SUDOERS_VERSION: u32 = 5;
 const SUDOERS_VERSION_PREFIX: &str = "# silo sudoers v";
 const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub(crate) fn ensure() -> eyre::Result<()> {
-    if let Ok(content) = std::fs::read_to_string(SUDOERS_PATH) {
-        if let Some(first_line) = content.lines().next()
-            && let Some(rest) = first_line.strip_prefix(SUDOERS_VERSION_PREFIX)
-        {
-            let parts: Vec<&str> = rest.splitn(2, ' ').collect();
-            let ver_ok = parts
-                .first()
-                .and_then(|v| v.parse::<u32>().ok())
-                .map(|v| v >= SUDOERS_VERSION)
-                .unwrap_or(false);
-            let pkg_ok = parts
-                .get(1)
-                .and_then(|s| s.strip_prefix("pkg="))
-                .map(|v| v == PKG_VERSION)
-                .unwrap_or(false);
-
-            if ver_ok && pkg_ok && content.contains(silo::hosts::SECURE_SILO_BIN) {
-                return Ok(());
-            }
-        }
-    } else if std::path::Path::new(SUDOERS_PATH).exists() {
-        let status = Command::new("sudo")
-            .args(["visudo", "-cf", SUDOERS_PATH])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-        if matches!(status, Ok(s) if s.success()) {
-            return Ok(());
-        }
+    if let Ok(stamp) = std::fs::read_to_string(STAMP_PATH)
+        && stamp_is_current(&stamp)
+        && std::path::Path::new(SUDOERS_PATH).exists()
+        && std::path::Path::new(silo::hosts::SECURE_SILO_BIN).exists()
+    {
+        return Ok(());
     }
     install()
+}
+
+fn stamp_is_current(stamp: &str) -> bool {
+    let Some(line) = stamp.lines().next() else {
+        return false;
+    };
+    let Some(rest) = line.strip_prefix(SUDOERS_VERSION_PREFIX) else {
+        return false;
+    };
+    let parts: Vec<&str> = rest.splitn(2, ' ').collect();
+    let ver_ok = parts
+        .first()
+        .and_then(|v| v.parse::<u32>().ok())
+        .map(|v| v >= SUDOERS_VERSION)
+        .unwrap_or(false);
+    let pkg_ok = parts
+        .get(1)
+        .and_then(|s| s.strip_prefix("pkg="))
+        .map(|v| v == PKG_VERSION)
+        .unwrap_or(false);
+    ver_ok && pkg_ok
 }
 
 fn install() -> eyre::Result<()> {
@@ -110,6 +109,35 @@ fn install() -> eyre::Result<()> {
 
     if !status.success() {
         bail!("sudo chmod 0440 {SUDOERS_PATH} failed");
+    }
+
+    let stamp_content = format!("{SUDOERS_VERSION_PREFIX}{SUDOERS_VERSION} pkg={PKG_VERSION}\n");
+    let status = Command::new("sudo")
+        .args(["tee", STAMP_PATH])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .and_then(|mut child| {
+            use std::io::Write;
+            if let Some(ref mut stdin) = child.stdin {
+                stdin.write_all(stamp_content.as_bytes())?;
+            }
+            child.wait()
+        })
+        .context("failed to write stamp file")?;
+
+    if !status.success() {
+        bail!("sudo tee {STAMP_PATH} failed");
+    }
+
+    let status = Command::new("sudo")
+        .args(["chmod", "0644", STAMP_PATH])
+        .status()
+        .context("failed to chmod stamp file")?;
+
+    if !status.success() {
+        bail!("sudo chmod 0644 {STAMP_PATH} failed");
     }
 
     eprintln!("  configured. future commands won't ask for a password");
@@ -429,6 +457,59 @@ mod tests {
             !content.contains("sudoers.d/silo"),
             "install.sh must not write sudoers rules directly; \
              sudoers setup is handled by the silo binary on first run"
+        );
+    }
+
+    #[test]
+    fn stamp_current_valid() {
+        let stamp = format!("{SUDOERS_VERSION_PREFIX}{SUDOERS_VERSION} pkg={PKG_VERSION}\n");
+        assert!(stamp_is_current(&stamp));
+    }
+
+    #[test]
+    fn stamp_current_old_version() {
+        assert!(!stamp_is_current(&format!(
+            "{SUDOERS_VERSION_PREFIX}1 pkg={PKG_VERSION}\n"
+        )));
+    }
+
+    #[test]
+    fn stamp_current_wrong_pkg() {
+        assert!(!stamp_is_current(&format!(
+            "{SUDOERS_VERSION_PREFIX}{SUDOERS_VERSION} pkg=0.0.0\n"
+        )));
+    }
+
+    #[test]
+    fn stamp_current_empty() {
+        assert!(!stamp_is_current(""));
+    }
+
+    #[test]
+    fn stamp_current_garbage() {
+        assert!(!stamp_is_current("not a stamp"));
+    }
+
+    #[test]
+    fn stamp_current_future_version() {
+        let stamp = format!(
+            "{SUDOERS_VERSION_PREFIX}{} pkg={PKG_VERSION}\n",
+            SUDOERS_VERSION + 1
+        );
+        assert!(
+            stamp_is_current(&stamp),
+            "should accept newer sudoers versions"
+        );
+    }
+
+    #[test]
+    fn stamp_matches_sudoers_header() {
+        let rules = sudoers_rules();
+        let first_line = rules.lines().next().unwrap();
+        let stamp = format!("{first_line}\n");
+        assert!(
+            stamp_is_current(&stamp),
+            "stamp format must match sudoers header"
         );
     }
 
