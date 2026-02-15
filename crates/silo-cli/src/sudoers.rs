@@ -197,11 +197,10 @@ fn validate_sudoers_syntax(rules: &str) -> eyre::Result<()> {
             );
         }
         Err(_) => {
-            eprintln!(
-                "  {} visudo not found; skipping syntax validation",
-                "WARNING:".yellow().bold()
+            bail!(
+                "visudo not found — refusing to install sudoers rules without syntax validation. \
+                 Please install visudo (usually part of the sudo package) and try again."
             );
-            Ok(())
         }
     }
 }
