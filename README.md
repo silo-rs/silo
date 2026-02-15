@@ -54,7 +54,7 @@ silo overmind start       # Procfile
 silo turbo run dev        # Turborepo
 ```
 
-All services share the same isolated IP — no extra config needed.
+All services share the same isolated IP, no extra config needed.
 
 ## Works with worktree managers
 
