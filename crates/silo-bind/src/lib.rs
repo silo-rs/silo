@@ -528,24 +528,13 @@ mod platform {
                 let v6_addr = unsafe { (*sin6).sin6_addr.s6_addr };
                 if let Some(ip) = get_silo_ip()
                     && let Some(new_v6) = rewrite::rewrite_ipv6_addr(v6_addr, ip, true)
+                    && !unsafe { is_v6only(fd) }
                 {
                     let kind = if v6_addr == rewrite::V6_ANY {
                         "::"
                     } else {
                         "::1"
                     };
-
-                    if unsafe { is_v6only(fd) } {
-                        unsafe {
-                            libc::setsockopt(
-                                fd,
-                                libc::IPPROTO_IPV6,
-                                libc::IPV6_V6ONLY,
-                                &0i32 as *const _ as *const libc::c_void,
-                                std::mem::size_of::<c_int>() as socklen_t,
-                            );
-                        }
-                    }
 
                     let mut sin6_copy: libc::sockaddr_in6 = unsafe { *sin6 };
                     sin6_copy.sin6_addr.s6_addr = new_v6;
@@ -586,21 +575,10 @@ mod platform {
             if family == libc::AF_INET6 as c_int {
                 let sin6 = addr as *const libc::sockaddr_in6;
                 let v6_addr = unsafe { (*sin6).sin6_addr.s6_addr };
-                if v6_addr == rewrite::V6_LOOPBACK {
+                if v6_addr == rewrite::V6_LOOPBACK && !unsafe { is_v6only(fd) } {
                     if let Some(ip) = get_silo_ip() {
                         let port = unsafe { (*sin6).sin6_port };
                         if unsafe { probe_has_listener(fd, ip, port) } {
-                            if unsafe { is_v6only(fd) } {
-                                unsafe {
-                                    libc::setsockopt(
-                                        fd,
-                                        libc::IPPROTO_IPV6,
-                                        libc::IPV6_V6ONLY,
-                                        &0i32 as *const _ as *const libc::c_void,
-                                        std::mem::size_of::<c_int>() as socklen_t,
-                                    );
-                                }
-                            }
                             let mut sin6_copy: libc::sockaddr_in6 = unsafe { *sin6 };
                             sin6_copy.sin6_addr.s6_addr = rewrite::ipv4_mapped_v6(ip);
                             return unsafe {
