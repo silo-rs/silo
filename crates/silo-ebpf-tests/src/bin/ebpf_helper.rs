@@ -1,3 +1,5 @@
+#![allow(unsafe_code)]
+
 use std::env;
 use std::io;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6, TcpListener};

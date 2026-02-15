@@ -12,6 +12,34 @@ pub union SockaddrStorage {
     pub v6: libc::sockaddr_in6,
 }
 
+impl SockaddrStorage {
+    unsafe fn store_v4(
+        storage: &mut MaybeUninit<Self>,
+        src: &sockaddr_in,
+        new_s_addr: u32,
+    ) -> *const sockaddr {
+        let ptr = storage.as_mut_ptr();
+        unsafe {
+            (*ptr).v4 = *src;
+            (*ptr).v4.sin_addr.s_addr = new_s_addr;
+            &(*ptr).sa
+        }
+    }
+
+    unsafe fn store_v6(
+        storage: &mut MaybeUninit<Self>,
+        src: &libc::sockaddr_in6,
+        new_s6_addr: [u8; 16],
+    ) -> *const sockaddr {
+        let ptr = storage.as_mut_ptr();
+        unsafe {
+            (*ptr).v6 = *src;
+            (*ptr).v6.sin6_addr.s6_addr = new_s6_addr;
+            &(*ptr).sa
+        }
+    }
+}
+
 pub const unsafe fn read_sa_family(addr: *const sockaddr) -> Option<c_int> {
     if addr.is_null() {
         return None;
@@ -62,14 +90,13 @@ pub unsafe fn maybe_rewrite_addr(
 
     if family == AF_INET && (len as usize) >= std::mem::size_of::<sockaddr_in>() {
         let sin = unsafe { &*(addr as *const sockaddr_in) };
-        if let Some(new_addr) = rewrite::rewrite_ipv4_addr(sin.sin_addr.s_addr, silo_ip, match_any)
+        if let Some(new_s_addr) =
+            rewrite::rewrite_ipv4_addr(sin.sin_addr.s_addr, silo_ip, match_any)
         {
-            let ptr = storage.as_mut_ptr();
-            unsafe {
-                (*ptr).v4 = *sin;
-                (*ptr).v4.sin_addr.s_addr = new_addr;
-            }
-            return (unsafe { &(*ptr).sa as *const sockaddr }, len);
+            return (
+                unsafe { SockaddrStorage::store_v4(storage, sin, new_s_addr) },
+                len,
+            );
         }
     }
 
@@ -77,15 +104,13 @@ pub unsafe fn maybe_rewrite_addr(
         && (len as usize) >= std::mem::size_of::<libc::sockaddr_in6>()
     {
         let sin6 = unsafe { &*(addr as *const libc::sockaddr_in6) };
-        if let Some(new_addr) =
+        if let Some(new_s6_addr) =
             rewrite::rewrite_ipv6_addr(sin6.sin6_addr.s6_addr, silo_ip, match_any)
         {
-            let ptr = storage.as_mut_ptr();
-            unsafe {
-                (*ptr).v6 = *sin6;
-                (*ptr).v6.sin6_addr.s6_addr = new_addr;
-            }
-            return (unsafe { &(*ptr).sa as *const sockaddr }, len);
+            return (
+                unsafe { SockaddrStorage::store_v6(storage, sin6, new_s6_addr) },
+                len,
+            );
         }
     }
 
@@ -113,12 +138,10 @@ pub unsafe fn maybe_rewrite_connect_addr(
         if sin.sin_addr.s_addr == rewrite::LOCALHOST_NBO
             && unsafe { crate::probe::probe_has_listener(fd, silo_ip, sin.sin_port) }
         {
-            let ptr = storage.as_mut_ptr();
-            unsafe {
-                (*ptr).v4 = *sin;
-                (*ptr).v4.sin_addr.s_addr = silo_ip;
-            }
-            return (unsafe { &(*ptr).sa as *const sockaddr }, len);
+            return (
+                unsafe { SockaddrStorage::store_v4(storage, sin, silo_ip) },
+                len,
+            );
         }
     }
 
@@ -130,12 +153,11 @@ pub unsafe fn maybe_rewrite_connect_addr(
         if sin6.sin6_addr.s6_addr == rewrite::V6_LOOPBACK
             && unsafe { crate::probe::probe_has_listener(fd, silo_ip, sin6.sin6_port) }
         {
-            let ptr = storage.as_mut_ptr();
-            unsafe {
-                (*ptr).v6 = *sin6;
-                (*ptr).v6.sin6_addr.s6_addr = rewrite::ipv4_mapped_v6(silo_ip);
-            }
-            return (unsafe { &(*ptr).sa as *const sockaddr }, len);
+            let mapped = rewrite::ipv4_mapped_v6(silo_ip);
+            return (
+                unsafe { SockaddrStorage::store_v6(storage, sin6, mapped) },
+                len,
+            );
         }
     }
 

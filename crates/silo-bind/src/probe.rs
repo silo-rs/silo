@@ -1,9 +1,13 @@
 use std::os::raw::c_int;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use libc::{AF_INET, sockaddr, sockaddr_in, socklen_t};
 
 static LISTENER_CACHE: [AtomicU64; 1024] = [const { AtomicU64::new(0) }; 1024];
+static CACHE_EPOCH: AtomicU64 = AtomicU64::new(0);
+
+const CACHE_TTL_SECS: u64 = 30;
 
 pub fn cache_has_listener(port: u16) -> bool {
     let idx = (port as usize) / 64;
@@ -21,6 +25,30 @@ pub fn cache_clear_listener(port: u16) {
     let idx = (port as usize) / 64;
     let bit = (port as usize) % 64;
     LISTENER_CACHE[idx].fetch_and(!(1u64 << bit), Ordering::Release);
+}
+
+fn cache_clear_all() {
+    for slot in &LISTENER_CACHE {
+        slot.store(0, Ordering::Release);
+    }
+}
+
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+fn maybe_expire_cache() {
+    let last = CACHE_EPOCH.load(Ordering::Relaxed);
+    let now = now_secs();
+    if now.saturating_sub(last) >= CACHE_TTL_SECS
+        && CACHE_EPOCH
+            .compare_exchange(last, now, Ordering::AcqRel, Ordering::Relaxed)
+            .is_ok()
+    {
+        cache_clear_all();
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -52,6 +80,8 @@ unsafe fn call_real_bind(fd: c_int, addr: *const sockaddr, len: socklen_t) -> c_
 }
 
 pub unsafe fn probe_has_listener(fd: c_int, silo_ip: u32, port: u16) -> bool {
+    maybe_expire_cache();
+
     if cache_has_listener(port) {
         return true;
     }
@@ -411,5 +441,30 @@ mod tests {
         let _ = has;
 
         cache_clear_listener(port_nbo);
+    }
+
+    #[test]
+    fn cache_clear_all_clears_everything() {
+        let ports = [40_200, 40_201, 40_202];
+        for &p in &ports {
+            cache_set_listener(p);
+        }
+        cache_clear_all();
+        for &p in &ports {
+            assert!(!cache_has_listener(p), "port {p} should be cleared");
+        }
+    }
+
+    #[test]
+    fn maybe_expire_resets_epoch() {
+        let ports = [40_300, 40_301];
+        for &p in &ports {
+            cache_set_listener(p);
+        }
+        CACHE_EPOCH.store(0, Ordering::Release);
+        maybe_expire_cache();
+        for &p in &ports {
+            assert!(!cache_has_listener(p), "port {p} should be expired");
+        }
     }
 }

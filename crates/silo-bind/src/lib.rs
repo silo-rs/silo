@@ -1,3 +1,5 @@
+#![allow(unsafe_code)]
+
 pub mod rewrite;
 
 pub(crate) mod addr;
@@ -70,13 +72,16 @@ unsafe extern "C" {
 static SILO_IP: OnceLock<Option<u32>> = OnceLock::new();
 static CONNECT_ENABLED: OnceLock<bool> = OnceLock::new();
 
-#[cfg(target_os = "macos")]
 static DEBUG: OnceLock<bool> = OnceLock::new();
 
 pub(crate) fn get_silo_ip() -> Option<u32> {
     *SILO_IP.get_or_init(|| {
         let val = env::var("SILO_IP").ok()?;
-        rewrite::parse_silo_ip(&val)
+        let ip = rewrite::parse_silo_ip(&val);
+        if ip.is_none() && debug_enabled() {
+            eprintln!("[silo-bind] WARNING: SILO_IP={val:?} is not a valid silo IP (expected 127.x.y.z, not 127.0.0.1)");
+        }
+        ip
     })
 }
 
@@ -84,7 +89,6 @@ pub(crate) fn connect_enabled() -> bool {
     *CONNECT_ENABLED.get_or_init(|| env::var("SILO_CONNECT").map(|v| v != "0").unwrap_or(true))
 }
 
-#[cfg(target_os = "macos")]
 pub(crate) fn debug_enabled() -> bool {
     *DEBUG.get_or_init(|| env::var("SILO_BIND_DEBUG").is_ok())
 }

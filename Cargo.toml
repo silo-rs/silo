@@ -39,7 +39,7 @@ aya = "0.13"
 tempfile = "3"
 
 [workspace.lints.rust]
-unsafe_code = "allow"
+unsafe_code = "deny"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
