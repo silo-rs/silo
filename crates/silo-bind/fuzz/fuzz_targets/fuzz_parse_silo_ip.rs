@@ -13,12 +13,20 @@ fuzz_target!(|data: &str| {
     }
 
     if let Ok(std_ip) = data.parse::<Ipv4Addr>() {
-        assert!(
-            result.is_some(),
-            "std parsed '{}' as {} but parse_silo_ip returned None",
-            data,
-            std_ip
-        );
+        if std_ip.octets()[0] == 127 {
+            assert!(
+                result.is_some(),
+                "std parsed '{}' as loopback {} but parse_silo_ip returned None",
+                data,
+                std_ip
+            );
+        } else {
+            assert!(
+                result.is_none(),
+                "non-loopback '{}' ({}) should be rejected but parse_silo_ip returned Some",
+                data,
+                std_ip
+            );
+        }
     }
-
 });

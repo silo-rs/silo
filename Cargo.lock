@@ -830,6 +830,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "silo-helpers"
+version = "0.2.6"
+dependencies = [
+ "eyre",
+ "serde_json",
+ "silo",
+]
+
+[[package]]
 name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

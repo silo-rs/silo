@@ -10,7 +10,8 @@ use tracing::debug;
 use crate::error::{Error, Result};
 
 pub const HOSTS_PATH: &str = "/etc/hosts";
-pub const SECURE_SILO_BIN: &str = "/usr/local/bin/silo";
+pub const SECURE_IP_HELPER: &str = "/usr/local/libexec/silo-ip-helper";
+pub const SECURE_HOSTS_HELPER: &str = "/usr/local/libexec/silo-hosts-helper";
 const BEGIN_MARKER: &str = "# BEGIN silo managed block - do not edit";
 const END_MARKER: &str = "# END silo managed block";
 const HELPER_LOCK_PATH: &str = "/etc/.silo-hosts.lock";
@@ -89,12 +90,95 @@ pub fn validate_dir(dir: &str) -> Result<()> {
     Ok(())
 }
 
-fn silo_bin() -> PathBuf {
-    PathBuf::from(SECURE_SILO_BIN)
+pub fn run_hosts_direct(request: &HostsRequest) -> Result<Vec<RemovedEntry>> {
+    match request {
+        HostsRequest::Add { ip, hostname, dir } => {
+            run_direct_add(*ip, hostname, dir)?;
+            Ok(Vec::new())
+        }
+        HostsRequest::Remove { ips } => run_direct_remove(ips),
+    }
+}
+
+fn run_direct_add(ip: Ipv4Addr, hostname: &str, dir: &str) -> Result<()> {
+    validate_ip(ip)?;
+    validate_hostname(hostname)?;
+    validate_dir(dir)?;
+
+    let mut lock = open_helper_lock()?;
+    let _guard = lock
+        .write()
+        .map_err(|e| Error::io("failed to acquire hosts lock", e))?;
+
+    let content = std::fs::read_to_string(HOSTS_PATH)
+        .map_err(|e| Error::io("failed to read /etc/hosts", e))?;
+    let (before, mut entries, after) = parse_block(&content);
+
+    let new_line = format!("{}\t{}\t# {}", ip, hostname, dir);
+
+    if let Some(pos) = entries
+        .iter()
+        .position(|e| e.split('\t').nth(1).map(|h| h == hostname).unwrap_or(false))
+    {
+        if entries[pos] == new_line {
+            return Ok(());
+        }
+        entries[pos] = new_line;
+    } else {
+        entries.push(new_line);
+    }
+
+    let output = rebuild(before, &entries, after);
+    write_hosts_direct(&output)?;
+
+    Ok(())
+}
+
+fn run_direct_remove(ips: &[Ipv4Addr]) -> Result<Vec<RemovedEntry>> {
+    for ip in ips {
+        validate_ip(*ip)?;
+    }
+    let ip_set: HashSet<Ipv4Addr> = ips.iter().copied().collect();
+
+    let mut lock = open_helper_lock()?;
+    let _guard = lock
+        .write()
+        .map_err(|e| Error::io("failed to acquire hosts lock", e))?;
+
+    let content = std::fs::read_to_string(HOSTS_PATH)
+        .map_err(|e| Error::io("failed to read /etc/hosts", e))?;
+    let (before, entries, after) = parse_block(&content);
+
+    let mut removed = Vec::new();
+    let mut kept = Vec::new();
+
+    for entry in &entries {
+        let entry_ip: Option<Ipv4Addr> = entry.split('\t').next().and_then(|s| s.parse().ok());
+        if let Some(ip) = entry_ip
+            && ip_set.contains(&ip)
+        {
+            let main = entry.split_once("\t# ").map_or(entry.as_str(), |(m, _)| m);
+            let hostname = main.split('\t').nth(1).unwrap_or("").to_string();
+            removed.push(RemovedEntry { ip, hostname });
+            continue;
+        }
+        kept.push(entry.clone());
+    }
+
+    if !removed.is_empty() {
+        let output = rebuild(before, &kept, after);
+        write_hosts_direct(&output)?;
+    }
+
+    Ok(removed)
+}
+
+fn hosts_helper_bin() -> PathBuf {
+    PathBuf::from(SECURE_HOSTS_HELPER)
 }
 
 pub fn ensure_entry(ip: Ipv4Addr, hostname: &str, dir: &Path) -> Result<()> {
-    let bin = silo_bin();
+    let bin = hosts_helper_bin();
 
     let request = HostsRequest::Add {
         ip,
@@ -104,26 +188,25 @@ pub fn ensure_entry(ip: Ipv4Addr, hostname: &str, dir: &Path) -> Result<()> {
 
     let mut child = Command::new("sudo")
         .arg(&bin)
-        .arg("_hosts")
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())
         .spawn()
-        .map_err(|e| Error::io("failed to run silo _hosts", e))?;
+        .map_err(|e| Error::io("failed to run silo-hosts-helper", e))?;
 
     {
         let stdin = child.stdin.take().expect("stdin was piped");
         serde_json::to_writer(stdin, &request)
-            .map_err(|e| Error::io("failed to write to silo _hosts stdin", e.into()))?;
+            .map_err(|e| Error::io("failed to write to silo-hosts-helper stdin", e.into()))?;
     }
 
     let status = child
         .wait()
-        .map_err(|e| Error::io("failed to wait for silo _hosts", e))?;
+        .map_err(|e| Error::io("failed to wait for silo-hosts-helper", e))?;
 
     if !status.success() {
         return Err(Error::CommandFailed {
-            command: format!("sudo {} _hosts (add {} {})", bin.display(), ip, hostname),
+            command: format!("sudo {} (add {} {})", bin.display(), ip, hostname),
         });
     }
 
@@ -167,7 +250,7 @@ pub fn remove_entries(ips_to_remove: &HashSet<Ipv4Addr>) -> Result<Vec<(Ipv4Addr
         return Ok(Vec::new());
     }
 
-    let bin = silo_bin();
+    let bin = hosts_helper_bin();
 
     let request = HostsRequest::Remove {
         ips: ips_to_remove.iter().copied().collect(),
@@ -175,31 +258,30 @@ pub fn remove_entries(ips_to_remove: &HashSet<Ipv4Addr>) -> Result<Vec<(Ipv4Addr
 
     let mut child = Command::new("sudo")
         .arg(&bin)
-        .arg("_hosts")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()
-        .map_err(|e| Error::io("failed to run silo _hosts", e))?;
+        .map_err(|e| Error::io("failed to run silo-hosts-helper", e))?;
 
     {
         let stdin = child.stdin.take().expect("stdin was piped");
         serde_json::to_writer(stdin, &request)
-            .map_err(|e| Error::io("failed to write to silo _hosts stdin", e.into()))?;
+            .map_err(|e| Error::io("failed to write to silo-hosts-helper stdin", e.into()))?;
     }
 
     let output = child
         .wait_with_output()
-        .map_err(|e| Error::io("failed to wait for silo _hosts", e))?;
+        .map_err(|e| Error::io("failed to wait for silo-hosts-helper", e))?;
 
     if !output.status.success() {
         return Err(Error::CommandFailed {
-            command: "sudo silo _hosts (remove)".to_string(),
+            command: format!("sudo {} (remove)", bin.display()),
         });
     }
 
     let removed: Vec<RemovedEntry> = serde_json::from_slice(&output.stdout)
-        .map_err(|e| Error::io("failed to parse _hosts response", e.into()))?;
+        .map_err(|e| Error::io("failed to parse silo-hosts-helper response", e.into()))?;
 
     let result: Vec<(Ipv4Addr, String)> = removed.into_iter().map(|e| (e.ip, e.hostname)).collect();
 
@@ -504,5 +586,101 @@ mod tests {
     #[test]
     fn validate_dir_rejects_null() {
         assert!(validate_dir("/home/user\0evil").is_err());
+    }
+
+    #[test]
+    fn run_hosts_direct_add_rejects_non_loopback() {
+        let req = HostsRequest::Add {
+            ip: Ipv4Addr::new(10, 0, 0, 1),
+            hostname: "test.silo".into(),
+            dir: "/tmp/test".into(),
+        };
+        assert!(run_hosts_direct(&req).is_err());
+    }
+
+    #[test]
+    fn run_hosts_direct_add_rejects_localhost() {
+        let req = HostsRequest::Add {
+            ip: Ipv4Addr::new(127, 0, 0, 1),
+            hostname: "test.silo".into(),
+            dir: "/tmp/test".into(),
+        };
+        assert!(run_hosts_direct(&req).is_err());
+    }
+
+    #[test]
+    fn run_hosts_direct_add_rejects_bad_hostname() {
+        let req = HostsRequest::Add {
+            ip: Ipv4Addr::new(127, 0, 1, 1),
+            hostname: "evil.com".into(),
+            dir: "/tmp/test".into(),
+        };
+        assert!(run_hosts_direct(&req).is_err());
+    }
+
+    #[test]
+    fn run_hosts_direct_add_rejects_hostname_injection() {
+        let req = HostsRequest::Add {
+            ip: Ipv4Addr::new(127, 0, 1, 1),
+            hostname: "foo.silo\n127.0.0.1 evil".into(),
+            dir: "/tmp/test".into(),
+        };
+        assert!(run_hosts_direct(&req).is_err());
+    }
+
+    #[test]
+    fn run_hosts_direct_add_rejects_bad_dir() {
+        let req = HostsRequest::Add {
+            ip: Ipv4Addr::new(127, 0, 1, 1),
+            hostname: "test.silo".into(),
+            dir: "/tmp\n/evil".into(),
+        };
+        assert!(run_hosts_direct(&req).is_err());
+    }
+
+    #[test]
+    fn run_hosts_direct_remove_rejects_non_loopback() {
+        let req = HostsRequest::Remove {
+            ips: vec![Ipv4Addr::new(10, 0, 0, 1)],
+        };
+        assert!(run_hosts_direct(&req).is_err());
+    }
+
+    #[test]
+    fn parse_block_missing_end_marker() {
+        let content = format!(
+            "127.0.0.1\tlocalhost\n{}\n127.0.1.1\tapi.myapp.silo\n::1\tlocalhost\n",
+            BEGIN_MARKER
+        );
+        let (before, entries, after) = parse_block(&content);
+        assert_eq!(before, "127.0.0.1\tlocalhost\n");
+        assert_eq!(entries, vec!["127.0.1.1\tapi.myapp.silo", "::1\tlocalhost"]);
+        assert_eq!(after, "");
+    }
+
+    #[test]
+    fn parse_block_end_without_begin() {
+        let content = format!("127.0.0.1\tlocalhost\n{}\n::1\tlocalhost\n", END_MARKER);
+        let (before, entries, after) = parse_block(&content);
+        assert_eq!(
+            before,
+            format!("127.0.0.1\tlocalhost\n{}\n::1\tlocalhost\n", END_MARKER)
+        );
+        assert!(entries.is_empty());
+        assert_eq!(after, "");
+    }
+
+    #[test]
+    fn parse_block_duplicate_begin_marker() {
+        let content = format!(
+            "127.0.0.1\tlocalhost\n{b}\n127.0.1.1\tapi.myapp.silo\n{b}\n127.0.1.2\tweb.myapp.silo\n{e}\n::1\tlocalhost\n",
+            b = BEGIN_MARKER,
+            e = END_MARKER
+        );
+        let (before, entries, after) = parse_block(&content);
+        // The second BEGIN_MARKER is treated as an entry inside the block
+        assert_eq!(before, "127.0.0.1\tlocalhost\n");
+        assert!(entries.contains(&"127.0.1.1\tapi.myapp.silo".to_string()));
+        assert_eq!(after, "::1\tlocalhost\n");
     }
 }

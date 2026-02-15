@@ -4,8 +4,8 @@ use colored::Colorize;
 use eyre::{Context, bail};
 
 const SUDOERS_PATH: &str = "/etc/sudoers.d/silo";
-const STAMP_PATH: &str = "/usr/local/bin/.silo-stamp";
-const SUDOERS_VERSION: u32 = 5;
+const STAMP_PATH: &str = "/usr/local/libexec/.silo-stamp";
+const SUDOERS_VERSION: u32 = 6;
 const SUDOERS_VERSION_PREFIX: &str = "# silo sudoers v";
 const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -13,7 +13,8 @@ pub(crate) fn ensure() -> eyre::Result<()> {
     if let Ok(stamp) = std::fs::read_to_string(STAMP_PATH)
         && stamp_is_current(&stamp)
         && std::path::Path::new(SUDOERS_PATH).exists()
-        && std::path::Path::new(silo::hosts::SECURE_SILO_BIN).exists()
+        && std::path::Path::new(silo::hosts::SECURE_IP_HELPER).exists()
+        && std::path::Path::new(silo::hosts::SECURE_HOSTS_HELPER).exists()
     {
         return Ok(());
     }
@@ -41,48 +42,46 @@ fn stamp_is_current(stamp: &str) -> bool {
     ver_ok && pkg_ok
 }
 
+const EMBEDDED_IP_HELPER: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/silo-ip-helper"));
+const EMBEDDED_HOSTS_HELPER: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/silo-hosts-helper"));
+
+const HELPER_DIR: &str = "/usr/local/libexec";
+
 fn install() -> eyre::Result<()> {
-    let secure_bin = silo::hosts::SECURE_SILO_BIN;
+    let ip_helper = silo::hosts::SECURE_IP_HELPER;
+    let hosts_helper = silo::hosts::SECURE_HOSTS_HELPER;
 
     eprintln!();
     eprintln!("silo needs passwordless sudo for loopback IP aliases (one-time setup)");
-    eprintln!("this will copy the binary to {secure_bin} and create {SUDOERS_PATH}");
+    eprintln!("this will install helper binaries to {HELPER_DIR} and create {SUDOERS_PATH}");
     eprintln!();
 
-    let secure_path = std::path::Path::new(secure_bin);
-    let secure_dir = secure_path
-        .parent()
-        .expect("secure binary path must have a parent directory");
+    let helper_dir = std::path::Path::new(HELPER_DIR);
 
-    let path_warnings = check_path_security(secure_dir);
+    if !helper_dir.exists() {
+        let status = Command::new("sudo")
+            .args(["mkdir", "-p", HELPER_DIR])
+            .status()
+            .context("failed to create helper directory")?;
+
+        if !status.success() {
+            bail!("sudo mkdir -p {HELPER_DIR} failed");
+        }
+    }
+
+    let path_warnings = check_path_security(helper_dir);
     if !path_warnings.is_empty() {
         for warn in &path_warnings {
             eprintln!("  {} {}", "WARNING:".yellow().bold(), warn);
         }
         bail!(
-            "{secure_bin} failed path security check — \
-             refusing to install sudoers rules for an insecure binary path"
+            "{HELPER_DIR} failed path security check — \
+             refusing to install sudoers rules for an insecure path"
         );
     }
 
-    let current_bin = std::env::current_exe().context("failed to resolve current binary path")?;
-
-    let status = Command::new("sudo")
-        .args([
-            "install",
-            "-o",
-            "root",
-            "-m",
-            "755",
-            &current_bin.to_string_lossy(),
-            secure_bin,
-        ])
-        .status()
-        .context("failed to install binary to secure path")?;
-
-    if !status.success() {
-        bail!("sudo install to {secure_bin} failed");
-    }
+    install_embedded_helper(EMBEDDED_IP_HELPER, ip_helper)?;
+    install_embedded_helper(EMBEDDED_HOSTS_HELPER, hosts_helper)?;
 
     let rules = sudoers_rules();
     validate_sudoers_syntax(&rules)?;
@@ -144,8 +143,43 @@ fn install() -> eyre::Result<()> {
         bail!("sudo chmod 0644 {STAMP_PATH} failed");
     }
 
+    cleanup_legacy_paths();
+
     eprintln!("  configured. future commands won't ask for a password");
     eprintln!();
+
+    Ok(())
+}
+
+fn cleanup_legacy_paths() {
+    const LEGACY_BIN: &str = "/usr/local/bin/silo";
+    const LEGACY_STAMP: &str = "/usr/local/bin/.silo-stamp";
+
+    for path in [LEGACY_BIN, LEGACY_STAMP] {
+        if std::path::Path::new(path).exists() {
+            let _ = Command::new("sudo").args(["rm", "-f", path]).status();
+        }
+    }
+}
+
+fn install_embedded_helper(bytes: &[u8], dest: &str) -> eyre::Result<()> {
+    use std::io::Write;
+
+    let mut tmp =
+        tempfile::NamedTempFile::new().context("failed to create temp file for helper")?;
+    tmp.write_all(bytes)
+        .context("failed to write helper binary to temp file")?;
+    tmp.flush().context("failed to flush helper temp file")?;
+
+    let tmp_path = tmp.path().to_string_lossy().to_string();
+    let status = Command::new("sudo")
+        .args(["install", "-o", "root", "-m", "755", &tmp_path, dest])
+        .status()
+        .with_context(|| format!("failed to install helper to {dest}"))?;
+
+    if !status.success() {
+        bail!("sudo install to {dest} failed");
+    }
 
     Ok(())
 }
@@ -234,14 +268,15 @@ pub(crate) fn check_path_security(bin_path: &std::path::Path) -> Vec<String> {
 }
 
 fn sudoers_rules() -> String {
-    let silo_bin = silo::hosts::SECURE_SILO_BIN;
+    let ip_helper = silo::hosts::SECURE_IP_HELPER;
+    let hosts_helper = silo::hosts::SECURE_HOSTS_HELPER;
 
     #[cfg(target_os = "macos")]
     {
         format!(
             "{SUDOERS_VERSION_PREFIX}{SUDOERS_VERSION} pkg={PKG_VERSION}\n\
-             %admin ALL=(root) NOPASSWD: {silo_bin} _ip\n\
-             %admin ALL=(root) NOPASSWD: {silo_bin} _hosts\n"
+             %admin ALL=(root) NOPASSWD: {ip_helper}\n\
+             %admin ALL=(root) NOPASSWD: {hosts_helper}\n"
         )
     }
 
@@ -250,8 +285,8 @@ fn sudoers_rules() -> String {
         let group = detect_admin_group();
         format!(
             "{SUDOERS_VERSION_PREFIX}{SUDOERS_VERSION} pkg={PKG_VERSION}\n\
-             {group} ALL=(root) NOPASSWD: {silo_bin} _ip\n\
-             {group} ALL=(root) NOPASSWD: {silo_bin} _hosts\n"
+             {group} ALL=(root) NOPASSWD: {ip_helper}\n\
+             {group} ALL=(root) NOPASSWD: {hosts_helper}\n"
         )
     }
 }
@@ -286,20 +321,12 @@ mod tests {
     fn sudoers_rules_use_helpers() {
         let rules = sudoers_rules();
         assert!(
-            rules.contains("_hosts"),
-            "sudoers rules must use silo _hosts, got:\n{rules}"
+            rules.contains(silo::hosts::SECURE_IP_HELPER),
+            "sudoers rules must reference ip helper path, got:\n{rules}"
         );
         assert!(
-            rules.contains("_ip"),
-            "sudoers rules must use silo _ip, got:\n{rules}"
-        );
-        assert!(
-            !rules.contains("_hosts add"),
-            "sudoers rules must not pass args to _hosts (stdin protocol), got:\n{rules}"
-        );
-        assert!(
-            !rules.contains("_hosts remove"),
-            "sudoers rules must not pass args to _hosts (stdin protocol), got:\n{rules}"
+            rules.contains(silo::hosts::SECURE_HOSTS_HELPER),
+            "sudoers rules must reference hosts helper path, got:\n{rules}"
         );
         assert!(
             !rules.contains("/usr/bin/tee"),
@@ -323,12 +350,38 @@ mod tests {
     }
 
     #[test]
-    fn sudoers_rules_reference_secure_path() {
+    fn sudoers_rules_reference_helper_paths() {
         let rules = sudoers_rules();
         assert!(
-            rules.contains(silo::hosts::SECURE_SILO_BIN),
-            "sudoers rules must reference secure binary path, got:\n{rules}"
+            rules.contains(silo::hosts::SECURE_IP_HELPER),
+            "sudoers rules must reference ip helper path, got:\n{rules}"
         );
+        assert!(
+            rules.contains(silo::hosts::SECURE_HOSTS_HELPER),
+            "sudoers rules must reference hosts helper path, got:\n{rules}"
+        );
+    }
+
+    #[test]
+    fn sudoers_rules_helpers_have_no_trailing_args() {
+        let rules = sudoers_rules();
+        for line in rules.lines() {
+            if line.starts_with('#') {
+                continue;
+            }
+            if line.contains("silo-ip-helper") {
+                assert!(
+                    line.ends_with("silo-ip-helper"),
+                    "ip helper rule must not have trailing args, got:\n{line}"
+                );
+            }
+            if line.contains("silo-hosts-helper") {
+                assert!(
+                    line.ends_with("silo-hosts-helper"),
+                    "hosts helper rule must not have trailing args, got:\n{line}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -343,6 +396,15 @@ mod tests {
                 "sudoers rules must not contain wildcards, got:\n{line}"
             );
         }
+    }
+
+    #[test]
+    fn sudoers_rules_no_main_binary_reference() {
+        let rules = sudoers_rules();
+        assert!(
+            !rules.contains("/usr/local/bin/silo"),
+            "sudoers rules must not reference the main silo binary, got:\n{rules}"
+        );
     }
 
     #[test]

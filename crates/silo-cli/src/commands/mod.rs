@@ -1,8 +1,6 @@
 pub mod doctor;
 pub mod env;
-pub mod hosts_helper;
 pub mod ip;
-pub mod ip_helper;
 pub mod ls;
 pub mod prune;
 pub(crate) mod query;

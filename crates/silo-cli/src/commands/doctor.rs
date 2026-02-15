@@ -89,19 +89,22 @@ pub fn run(json: bool) -> eyre::Result<()> {
         warnings += 1;
     }
 
-    {
-        let secure_bin = std::path::Path::new(silo::hosts::SECURE_SILO_BIN);
-        if secure_bin.exists() {
-            let path_warnings = crate::sudoers::check_path_security(secure_bin);
+    for (name, path) in [
+        ("ip helper", silo::hosts::SECURE_IP_HELPER),
+        ("hosts helper", silo::hosts::SECURE_HOSTS_HELPER),
+    ] {
+        let helper_path = std::path::Path::new(path);
+        if helper_path.exists() {
+            let path_warnings = crate::sudoers::check_path_security(helper_path);
             if path_warnings.is_empty() {
                 checks.push(Check {
-                    name: "binary path".into(),
+                    name: name.into(),
                     status: CheckStatus::Ok,
-                    detail: format!("{} (root-owned)", secure_bin.display()),
+                    detail: format!("{} (root-owned)", helper_path.display()),
                 });
             } else {
                 checks.push(Check {
-                    name: "binary path".into(),
+                    name: name.into(),
                     status: CheckStatus::Warn,
                     detail: format!(
                         "insecure path: {}",
@@ -112,11 +115,11 @@ pub fn run(json: bool) -> eyre::Result<()> {
             }
         } else {
             checks.push(Check {
-                name: "binary path".into(),
+                name: name.into(),
                 status: CheckStatus::Warn,
                 detail: format!(
                     "{} not found (will be installed on first use)",
-                    secure_bin.display()
+                    helper_path.display()
                 ),
             });
             warnings += 1;

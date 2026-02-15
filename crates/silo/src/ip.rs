@@ -29,35 +29,34 @@ fn find_ip_command() -> String {
     "ip".to_string()
 }
 
-fn silo_bin() -> PathBuf {
-    PathBuf::from(hosts::SECURE_SILO_BIN)
+fn ip_helper_bin() -> PathBuf {
+    PathBuf::from(hosts::SECURE_IP_HELPER)
 }
 
 fn run_ip_helper(request: &IpRequest) -> Result<()> {
-    let bin = silo_bin();
+    let bin = ip_helper_bin();
 
     let mut child = Command::new("sudo")
         .arg(&bin)
-        .arg("_ip")
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())
         .spawn()
-        .map_err(|e| Error::io("failed to run silo _ip", e))?;
+        .map_err(|e| Error::io("failed to run silo-ip-helper", e))?;
 
     {
         let stdin = child.stdin.take().expect("stdin was piped");
         serde_json::to_writer(stdin, request)
-            .map_err(|e| Error::io("failed to write to silo _ip stdin", e.into()))?;
+            .map_err(|e| Error::io("failed to write to silo-ip-helper stdin", e.into()))?;
     }
 
     let status = child
         .wait()
-        .map_err(|e| Error::io("failed to wait for silo _ip", e))?;
+        .map_err(|e| Error::io("failed to wait for silo-ip-helper", e))?;
 
     if !status.success() {
         return Err(Error::CommandFailed {
-            command: format!("sudo {} _ip", bin.display()),
+            command: format!("sudo {}", bin.display()),
         });
     }
 
