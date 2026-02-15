@@ -18,8 +18,6 @@ const KNOWN_SUBCOMMANDS: &[&str] = &[
     "ls",
     "doctor",
     "prune",
-    "_hosts",
-    "_ip",
     "setup-ebpf",
     "teardown-ebpf",
     "help",
@@ -87,7 +85,5 @@ fn run() -> eyre::Result<()> {
         Commands::SetupEbpf => commands::setup_ebpf::run(),
         #[cfg(target_os = "linux")]
         Commands::TeardownEbpf => commands::teardown_ebpf::run(),
-        Commands::Hosts => commands::hosts_helper::run_from_stdin(),
-        Commands::IpAlias => commands::ip_helper::run_from_stdin(),
     }
 }

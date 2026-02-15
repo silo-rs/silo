@@ -1,0 +1,22 @@
+[package]
+name = "silo-helpers"
+version = { workspace = true }
+edition = { workspace = true }
+authors = { workspace = true }
+description = "Minimal privileged helper binaries for silo"
+license = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+
+[[bin]]
+name = "silo-ip-helper"
+path = "src/ip_main.rs"
+
+[[bin]]
+name = "silo-hosts-helper"
+path = "src/hosts_main.rs"
+
+[dependencies]
+silo = { path = "../silo" }
+eyre = { workspace = true }
+serde_json = { workspace = true }

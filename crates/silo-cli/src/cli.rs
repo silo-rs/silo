@@ -73,10 +73,4 @@ pub enum Commands {
 
     #[cfg(target_os = "linux")]
     TeardownEbpf,
-
-    #[command(name = "_hosts", hide = true)]
-    Hosts,
-
-    #[command(name = "_ip", hide = true)]
-    IpAlias,
 }

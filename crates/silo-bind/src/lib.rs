@@ -1,6 +1,7 @@
 pub mod rewrite;
 
 use std::env;
+use std::mem::MaybeUninit;
 use std::net::Ipv4Addr;
 use std::os::raw::c_int;
 use std::sync::OnceLock;
@@ -88,7 +89,7 @@ unsafe fn maybe_rewrite_addr(
     addr: *const sockaddr,
     len: socklen_t,
     match_any: bool,
-    storage: &mut SockaddrStorage,
+    storage: &mut MaybeUninit<SockaddrStorage>,
 ) -> (*const sockaddr, socklen_t) {
     let Some(family) = (unsafe { read_sa_family(addr) }) else {
         return (addr, len);
@@ -101,9 +102,12 @@ unsafe fn maybe_rewrite_addr(
         let sin = unsafe { &*(addr as *const sockaddr_in) };
         if let Some(new_addr) = rewrite::rewrite_ipv4_addr(sin.sin_addr.s_addr, silo_ip, match_any)
         {
-            storage.v4 = *sin;
-            storage.v4.sin_addr.s_addr = new_addr;
-            return (unsafe { &storage.sa as *const sockaddr }, len);
+            let ptr = storage.as_mut_ptr();
+            unsafe {
+                (*ptr).v4 = *sin;
+                (*ptr).v4.sin_addr.s_addr = new_addr;
+            }
+            return (unsafe { &(*ptr).sa as *const sockaddr }, len);
         }
     }
 
@@ -112,9 +116,12 @@ unsafe fn maybe_rewrite_addr(
         if let Some(new_addr) =
             rewrite::rewrite_ipv6_addr(sin6.sin6_addr.s6_addr, silo_ip, match_any)
         {
-            storage.v6 = *sin6;
-            storage.v6.sin6_addr.s6_addr = new_addr;
-            return (unsafe { &storage.sa as *const sockaddr }, len);
+            let ptr = storage.as_mut_ptr();
+            unsafe {
+                (*ptr).v6 = *sin6;
+                (*ptr).v6.sin6_addr.s6_addr = new_addr;
+            }
+            return (unsafe { &(*ptr).sa as *const sockaddr }, len);
         }
     }
 
@@ -125,7 +132,7 @@ unsafe fn maybe_rewrite_connect_addr(
     fd: c_int,
     addr: *const sockaddr,
     len: socklen_t,
-    storage: &mut SockaddrStorage,
+    storage: &mut MaybeUninit<SockaddrStorage>,
 ) -> (*const sockaddr, socklen_t) {
     let Some(family) = (unsafe { read_sa_family(addr) }) else {
         return (addr, len);
@@ -140,9 +147,12 @@ unsafe fn maybe_rewrite_connect_addr(
         if sin.sin_addr.s_addr == localhost_be
             && unsafe { probe_has_listener(fd, silo_ip, sin.sin_port) }
         {
-            storage.v4 = *sin;
-            storage.v4.sin_addr.s_addr = silo_ip;
-            return (unsafe { &storage.sa as *const sockaddr }, len);
+            let ptr = storage.as_mut_ptr();
+            unsafe {
+                (*ptr).v4 = *sin;
+                (*ptr).v4.sin_addr.s_addr = silo_ip;
+            }
+            return (unsafe { &(*ptr).sa as *const sockaddr }, len);
         }
     }
 
@@ -152,9 +162,12 @@ unsafe fn maybe_rewrite_connect_addr(
         if sin6.sin6_addr.s6_addr == rewrite::V6_LOOPBACK
             && unsafe { probe_has_listener(fd, silo_ip, sin6.sin6_port) }
         {
-            storage.v6 = *sin6;
-            storage.v6.sin6_addr.s6_addr = rewrite::ipv4_mapped_v6(silo_ip);
-            return (unsafe { &storage.sa as *const sockaddr }, len);
+            let ptr = storage.as_mut_ptr();
+            unsafe {
+                (*ptr).v6 = *sin6;
+                (*ptr).v6.sin6_addr.s6_addr = rewrite::ipv4_mapped_v6(silo_ip);
+            }
+            return (unsafe { &(*ptr).sa as *const sockaddr }, len);
         }
     }
 
@@ -559,7 +572,7 @@ mod platform {
         }
 
         let mut storage = std::mem::MaybeUninit::<SockaddrStorage>::uninit();
-        let (addr, len) = unsafe { maybe_rewrite_addr(addr, len, true, storage.assume_init_mut()) };
+        let (addr, len) = unsafe { maybe_rewrite_addr(addr, len, true, &mut storage) };
         unsafe { real_bind(fd, addr, len) }
     }
 
@@ -599,8 +612,7 @@ mod platform {
         }
 
         let mut storage = std::mem::MaybeUninit::<SockaddrStorage>::uninit();
-        let (addr, len) =
-            unsafe { maybe_rewrite_connect_addr(fd, addr, len, storage.assume_init_mut()) };
+        let (addr, len) = unsafe { maybe_rewrite_connect_addr(fd, addr, len, &mut storage) };
         unsafe { real_connect(fd, addr, len) }
     }
 
@@ -842,7 +854,7 @@ mod platform {
     ) -> libc::ssize_t {
         let mut storage = std::mem::MaybeUninit::<SockaddrStorage>::uninit();
         let (dest_addr, addrlen) =
-            unsafe { maybe_rewrite_addr(dest_addr, addrlen, true, storage.assume_init_mut()) };
+            unsafe { maybe_rewrite_addr(dest_addr, addrlen, true, &mut storage) };
         unsafe { real_sendto(fd, buf, len, flags, dest_addr, addrlen) }
     }
 
@@ -905,7 +917,7 @@ mod platform {
                         msg_ref.msg_name as *const sockaddr,
                         msg_ref.msg_namelen,
                         true,
-                        storage.assume_init_mut(),
+                        &mut storage,
                     )
                 };
                 if new_addr != msg_ref.msg_name as *const sockaddr {
@@ -1086,7 +1098,7 @@ mod platform {
             unsafe extern "C" fn(c_int, *const sockaddr, socklen_t) -> c_int
         );
         let mut storage = std::mem::MaybeUninit::<SockaddrStorage>::uninit();
-        let (addr, len) = unsafe { maybe_rewrite_addr(addr, len, true, storage.assume_init_mut()) };
+        let (addr, len) = unsafe { maybe_rewrite_addr(addr, len, true, &mut storage) };
         unsafe { real_fn(fd, addr, len) }
     }
 
@@ -1097,8 +1109,7 @@ mod platform {
             unsafe extern "C" fn(c_int, *const sockaddr, socklen_t) -> c_int
         );
         let mut storage = std::mem::MaybeUninit::<SockaddrStorage>::uninit();
-        let (addr, len) =
-            unsafe { maybe_rewrite_connect_addr(fd, addr, len, storage.assume_init_mut()) };
+        let (addr, len) = unsafe { maybe_rewrite_connect_addr(fd, addr, len, &mut storage) };
         unsafe { real_fn(fd, addr, len) }
     }
 
@@ -1138,7 +1149,7 @@ mod platform {
 
         let mut storage = std::mem::MaybeUninit::<SockaddrStorage>::uninit();
         let (dest_addr, addrlen) =
-            unsafe { maybe_rewrite_addr(dest_addr, addrlen, true, storage.assume_init_mut()) };
+            unsafe { maybe_rewrite_addr(dest_addr, addrlen, true, &mut storage) };
         unsafe { real_fn(fd, buf, len, flags, dest_addr, addrlen) }
     }
 
@@ -1161,7 +1172,7 @@ mod platform {
                         msg_ref.msg_name as *const sockaddr,
                         msg_ref.msg_namelen,
                         true,
-                        storage.assume_init_mut(),
+                        &mut storage,
                     )
                 };
                 if new_addr != msg_ref.msg_name as *const sockaddr {

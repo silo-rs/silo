@@ -8,6 +8,7 @@ fn main() {
     let profile = env::var("PROFILE").unwrap();
 
     build_bind_lib(&out_dir, workspace_dir, &profile);
+    build_helpers(&out_dir, workspace_dir, &profile);
 
     #[cfg(target_os = "linux")]
     build_ebpf(workspace_dir, &out_dir);
@@ -44,6 +45,55 @@ fn build_bind_lib(out_dir: &std::path::Path, workspace_dir: &std::path::Path, pr
     println!("cargo:rerun-if-changed=../silo-bind/src");
     println!("cargo:rerun-if-changed=../silo-bind/Cargo.toml");
     println!("cargo:rerun-if-changed={}", lib_path.display());
+}
+
+fn build_helpers(out_dir: &std::path::Path, workspace_dir: &std::path::Path, profile: &str) {
+    let helpers = ["silo-ip-helper", "silo-hosts-helper"];
+
+    let all_exist = helpers.iter().all(|name| {
+        workspace_dir
+            .join("target")
+            .join(profile)
+            .join(name)
+            .exists()
+    });
+
+    if all_exist {
+        for name in &helpers {
+            let src = workspace_dir.join("target").join(profile).join(name);
+            fs::copy(&src, out_dir.join(name)).unwrap_or_else(|_| panic!("failed to copy {name}"));
+        }
+    } else {
+        let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+        let tmp_target = out_dir.join("silo-helpers-build");
+
+        let mut cmd = std::process::Command::new(&cargo);
+        cmd.args(["build", "-p", "silo-helpers", "--bins"])
+            .arg("--manifest-path")
+            .arg(workspace_dir.join("Cargo.toml"))
+            .arg("--target-dir")
+            .arg(&tmp_target);
+
+        if profile == "release" {
+            cmd.arg("--release");
+        }
+
+        let status = cmd.status().expect("failed to build silo-helpers");
+        assert!(status.success(), "silo-helpers build failed");
+
+        for name in &helpers {
+            let built = tmp_target.join(profile).join(name);
+            fs::copy(&built, out_dir.join(name))
+                .unwrap_or_else(|_| panic!("failed to copy {name}"));
+        }
+    }
+
+    println!("cargo:rerun-if-changed=../silo-helpers/src");
+    println!("cargo:rerun-if-changed=../silo-helpers/Cargo.toml");
+    for name in &helpers {
+        let path = workspace_dir.join("target").join(profile).join(name);
+        println!("cargo:rerun-if-changed={}", path.display());
+    }
 }
 
 #[cfg(target_os = "linux")]
