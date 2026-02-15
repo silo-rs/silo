@@ -5,6 +5,9 @@ edition = { workspace = true }
 description = "Shared library that intercepts bind() for silo IP isolation"
 publish = false
 
+[lints]
+workspace = true
+
 [lib]
 crate-type = ["cdylib", "lib"]
 

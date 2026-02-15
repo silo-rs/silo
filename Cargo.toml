@@ -38,8 +38,21 @@ aya = "0.13"
 # dev deps
 tempfile = "3"
 
+[workspace.lints.rust]
+unsafe_code = "allow"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+redundant_clone = "deny"
+uninlined_format_args = "allow"
+
+[profile.release.package.silo-bind]
+opt-level = 3
+codegen-units = 1
+
 [profile.dist]
 inherits = "release"
-lto = "thin"
+lto = "fat"
 strip = true
 codegen-units = 1

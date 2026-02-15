@@ -7,6 +7,9 @@ edition = "2021"
 [package.metadata]
 cargo-fuzz = true
 
+[package.metadata.cargo-machete]
+ignored = ["arbitrary"]
+
 [dependencies]
 libfuzzer-sys = "0.4"
 arbitrary = { version = "1", features = ["derive"] }
