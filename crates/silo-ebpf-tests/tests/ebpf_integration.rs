@@ -133,6 +133,23 @@ fn connect_to_unbound_port_not_rewritten() {
 }
 
 #[test]
+fn connect_passthrough_to_host_listener() {
+    skip_without_caps!();
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+
+    let h = EbpfTestHarness::new("connect_passthrough", Some(test_ip()), helper_path()).unwrap();
+    let (stdout, _, success) =
+        h.run_helper_with_env("connect_external", &[("SILO_TEST_PORT", &port.to_string())]);
+    assert!(success, "helper failed");
+    assert!(
+        stdout.contains("connect_result=connected:127.0.0.1:"),
+        "expected passthrough to host listener on 127.0.0.1, got: {stdout}"
+    );
+}
+
+#[test]
 fn passthrough_without_config() {
     skip_without_caps!();
     let h = EbpfTestHarness::new("passthrough", None, helper_path()).unwrap();

@@ -6,7 +6,7 @@ pub const V6_LOOPBACK: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
 pub const V6_ANY: [u8; 16] = [0u8; 16];
 
 pub fn parse_silo_ip(val: &str) -> Option<u32> {
-    let ip: Ipv4Addr = val.parse().ok()?;
+    let ip: Ipv4Addr = val.trim().parse().ok()?;
     if ip.octets()[0] != 127 || ip == Ipv4Addr::LOCALHOST {
         return None;
     }
@@ -332,7 +332,14 @@ mod tests {
 
     #[test]
     fn parse_silo_ip_trailing_whitespace() {
-        assert_eq!(parse_silo_ip("127.0.99.1 "), None);
+        assert_eq!(
+            parse_silo_ip("127.0.99.1 "),
+            Some(u32::from(Ipv4Addr::new(127, 0, 99, 1)).to_be())
+        );
+        assert_eq!(
+            parse_silo_ip(" 127.0.99.1\n"),
+            Some(u32::from(Ipv4Addr::new(127, 0, 99, 1)).to_be())
+        );
     }
 
     #[test]

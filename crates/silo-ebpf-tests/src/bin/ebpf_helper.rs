@@ -19,6 +19,7 @@ fn main() {
         "connect_getpeername" => cmd_connect_getpeername(),
         "connect_no_listener" => cmd_connect_no_listener(),
         "connect_host_service" => cmd_connect_host_service(),
+        "connect_external" => cmd_connect_external(),
         other => {
             eprintln!("unknown command: {other}");
             std::process::exit(1);
@@ -167,6 +168,27 @@ fn cmd_connect_host_service() -> io::Result<()> {
         Ok(stream) => {
             let peer = stream.peer_addr()?;
             println!("connect_result=connected:{peer}");
+        }
+        Err(e) => {
+            println!("connect_result=error:{e}");
+        }
+    }
+    Ok(())
+}
+
+fn cmd_connect_external() -> io::Result<()> {
+    let port: u16 = env::var("SILO_TEST_PORT")
+        .expect("SILO_TEST_PORT not set")
+        .parse()
+        .expect("invalid SILO_TEST_PORT");
+
+    match std::net::TcpStream::connect(format!("127.0.0.1:{port}")) {
+        Ok(stream) => {
+            let peer = stream.peer_addr()?;
+            println!("connect_result=connected:{peer}");
+        }
+        Err(e) if e.kind() == io::ErrorKind::ConnectionRefused => {
+            println!("connect_result=refused");
         }
         Err(e) => {
             println!("connect_result=error:{e}");

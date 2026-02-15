@@ -192,7 +192,7 @@ pub fn find_bind_lib() -> eyre::Result<PathBuf> {
         let mut tmp = tempfile::NamedTempFile::new_in(&lib_dir)?;
         tmp.write_all(EMBEDDED_BIND_LIB)?;
         tmp.as_file()
-            .set_permissions(std::fs::Permissions::from_mode(0o755))?;
+            .set_permissions(std::fs::Permissions::from_mode(0o700))?;
         tmp.as_file().sync_all()?;
         tmp.persist(&lib_path)?;
     }

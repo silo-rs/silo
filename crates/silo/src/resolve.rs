@@ -16,7 +16,7 @@ pub fn resolve(
     let canonical = git_root.canonicalize().unwrap_or_else(|_| git_root.clone());
 
     let name = match name_override {
-        Some(n) => n.to_string(),
+        Some(n) => sanitize_name(n),
         None => {
             let branch = get_branch_name(&git_root)?;
             sanitize_name(&branch)

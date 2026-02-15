@@ -299,7 +299,7 @@ fn is_sip_path(path: &str) -> bool {
 #[cfg(target_os = "macos")]
 fn find_non_sip_in_path(name: &str) -> Option<CString> {
     let fallbacks: &[&str] = match name {
-        "sh" => &["sh", "bash", "zsh"],
+        "sh" | "bash" => &["bash", "zsh"],
         "make" => &["make", "gmake"],
         _ => &[],
     };
@@ -315,10 +315,14 @@ fn find_non_sip_in_path(name: &str) -> Option<CString> {
             if dir.is_empty() {
                 continue;
             }
-            if dir.starts_with("/usr/bin")
-                || dir.starts_with("/bin")
-                || dir.starts_with("/sbin")
-                || dir.starts_with("/usr/sbin")
+            if dir.starts_with("/usr/bin/")
+                || dir == "/usr/bin"
+                || dir.starts_with("/bin/")
+                || dir == "/bin"
+                || dir.starts_with("/sbin/")
+                || dir == "/sbin"
+                || dir.starts_with("/usr/sbin/")
+                || dir == "/usr/sbin"
             {
                 continue;
             }

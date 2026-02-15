@@ -70,10 +70,21 @@ impl EbpfTestHarness {
     }
 
     pub fn run_helper(&self, command: &str) -> (String, String, bool) {
+        self.run_helper_with_env(command, &[])
+    }
+
+    pub fn run_helper_with_env(
+        &self,
+        command: &str,
+        envs: &[(&str, &str)],
+    ) -> (String, String, bool) {
         let procs_path = self.cgroup_path.join("cgroup.procs");
 
         let mut cmd = Command::new(&self.helper_binary);
         cmd.arg(command);
+        for &(key, val) in envs {
+            cmd.env(key, val);
+        }
 
         unsafe {
             cmd.pre_exec(move || {
