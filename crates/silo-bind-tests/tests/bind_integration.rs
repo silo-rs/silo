@@ -1,10 +1,42 @@
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::Once;
 
-#[cfg(target_os = "macos")]
-const TEST_IP: &str = "127.0.0.1";
-#[cfg(target_os = "linux")]
 const TEST_IP: &str = "127.0.99.1";
+
+static SETUP: Once = Once::new();
+
+fn ensure_loopback_alias() {
+    SETUP.call_once(|| {
+        #[cfg(target_os = "macos")]
+        {
+            let output = Command::new("ifconfig")
+                .arg("lo0")
+                .output()
+                .expect("ifconfig failed");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if !stdout.contains(TEST_IP) {
+                let status = Command::new("sudo")
+                    .args([
+                        "-n",
+                        "ifconfig",
+                        "lo0",
+                        "alias",
+                        TEST_IP,
+                        "netmask",
+                        "255.0.0.0",
+                    ])
+                    .status()
+                    .expect("failed to run sudo ifconfig");
+                assert!(
+                    status.success(),
+                    "cannot add loopback alias for {TEST_IP}. \
+                     Run: sudo ifconfig lo0 alias {TEST_IP} netmask 255.0.0.0"
+                );
+            }
+        }
+    });
+}
 
 fn helper_path() -> PathBuf {
     let path = PathBuf::from(env!("CARGO_BIN_EXE_bind-helper"));
@@ -42,6 +74,9 @@ const INJECT_KEY: &str = "DYLD_INSERT_LIBRARIES";
 const INJECT_KEY: &str = "LD_PRELOAD";
 
 fn run_helper(command: &str, silo_ip: Option<&str>) -> (String, String, bool) {
+    if silo_ip.is_some() {
+        ensure_loopback_alias();
+    }
     let mut cmd = Command::new(helper_path());
     cmd.arg(command);
     cmd.env(INJECT_KEY, dylib_path().to_str().unwrap());
@@ -251,6 +286,7 @@ fn bind_v6_kqueue_survives_rewrite() {
 #[test]
 #[cfg(target_os = "macos")]
 fn bind_through_non_sip_shell() {
+    ensure_loopback_alias();
     let shell = find_non_sip_shell();
     let Some(shell) = shell else {
         eprintln!("SKIP: no non-SIP shell available (install Homebrew bash/zsh)");
@@ -285,6 +321,7 @@ fn bind_through_non_sip_shell() {
 }
 
 fn run_injected(program: &str, args: &[&str], silo_ip: &str) -> (String, String, bool) {
+    ensure_loopback_alias();
     let mut cmd = Command::new(program);
     cmd.args(args);
     cmd.env(INJECT_KEY, dylib_path().to_str().unwrap());
