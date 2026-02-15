@@ -2,6 +2,7 @@ pub mod rewrite;
 
 use std::env;
 use std::mem::MaybeUninit;
+#[cfg(target_os = "macos")]
 use std::net::Ipv4Addr;
 use std::os::raw::c_int;
 use std::sync::OnceLock;
@@ -677,10 +678,12 @@ mod platform {
         let (new_addr, new_len) =
             unsafe { maybe_rewrite_connect_addr(fd, addr, len, &mut storage) };
         let ret = unsafe { real_connect(fd, new_addr, new_len) };
-        if new_addr != addr && ret == -1 && unsafe { *errno_ptr() } == libc::ECONNREFUSED {
-            if let Some(port) = unsafe { read_port(addr, len) } {
-                cache_clear_listener(port);
-            }
+        if new_addr != addr
+            && ret == -1
+            && unsafe { *errno_ptr() } == libc::ECONNREFUSED
+            && let Some(port) = unsafe { read_port(addr, len) }
+        {
+            cache_clear_listener(port);
         }
         ret
     }
@@ -1000,10 +1003,12 @@ mod platform {
         let (new_addr, new_len) =
             unsafe { maybe_rewrite_connect_addr(fd, addr, len, &mut storage) };
         let ret = unsafe { real_fn(fd, new_addr, new_len) };
-        if new_addr != addr && ret == -1 && unsafe { *errno_ptr() } == libc::ECONNREFUSED {
-            if let Some(port) = unsafe { read_port(addr, len) } {
-                cache_clear_listener(port);
-            }
+        if new_addr != addr
+            && ret == -1
+            && unsafe { *errno_ptr() } == libc::ECONNREFUSED
+            && let Some(port) = unsafe { read_port(addr, len) }
+        {
+            cache_clear_listener(port);
         }
         ret
     }
