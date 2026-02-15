@@ -1,5 +1,4 @@
 use std::net::Ipv4Addr;
-use std::process::Command;
 
 use serde::Serialize;
 
@@ -43,7 +42,7 @@ pub fn check_loopback(ck: &mut Checker) -> NetworkInfo {
 fn is_loopback_up() -> bool {
     #[cfg(target_os = "macos")]
     {
-        Command::new("ifconfig")
+        std::process::Command::new("ifconfig")
             .arg("lo0")
             .output()
             .ok()
