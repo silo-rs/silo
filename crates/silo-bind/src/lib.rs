@@ -98,7 +98,7 @@ unsafe fn maybe_rewrite_addr(
         return (addr, len);
     };
 
-    if family == AF_INET {
+    if family == AF_INET && (len as usize) >= std::mem::size_of::<sockaddr_in>() {
         let sin = unsafe { &*(addr as *const sockaddr_in) };
         if let Some(new_addr) = rewrite::rewrite_ipv4_addr(sin.sin_addr.s_addr, silo_ip, match_any)
         {
@@ -111,7 +111,9 @@ unsafe fn maybe_rewrite_addr(
         }
     }
 
-    if family == libc::AF_INET6 as c_int {
+    if family == libc::AF_INET6 as c_int
+        && (len as usize) >= std::mem::size_of::<libc::sockaddr_in6>()
+    {
         let sin6 = unsafe { &*(addr as *const libc::sockaddr_in6) };
         if let Some(new_addr) =
             rewrite::rewrite_ipv6_addr(sin6.sin6_addr.s6_addr, silo_ip, match_any)
@@ -141,7 +143,7 @@ unsafe fn maybe_rewrite_connect_addr(
         return (addr, len);
     };
 
-    if family == AF_INET {
+    if family == AF_INET && (len as usize) >= std::mem::size_of::<sockaddr_in>() {
         let sin = unsafe { &*(addr as *const sockaddr_in) };
         let localhost_be = u32::from(Ipv4Addr::LOCALHOST).to_be();
         if sin.sin_addr.s_addr == localhost_be
@@ -157,7 +159,9 @@ unsafe fn maybe_rewrite_connect_addr(
     }
 
     #[cfg(target_os = "linux")]
-    if family == libc::AF_INET6 as c_int {
+    if family == libc::AF_INET6 as c_int
+        && (len as usize) >= std::mem::size_of::<libc::sockaddr_in6>()
+    {
         let sin6 = unsafe { &*(addr as *const libc::sockaddr_in6) };
         if sin6.sin6_addr.s6_addr == rewrite::V6_LOOPBACK
             && unsafe { probe_has_listener(fd, silo_ip, sin6.sin6_port) }
@@ -489,10 +493,12 @@ mod platform {
         original: real_connect,
     };
 
-    unsafe fn debug_read_port(addr: *const sockaddr, family: c_int) -> u16 {
-        if family == AF_INET {
+    unsafe fn debug_read_port(addr: *const sockaddr, family: c_int, len: socklen_t) -> u16 {
+        if family == AF_INET && (len as usize) >= std::mem::size_of::<sockaddr_in>() {
             unsafe { u16::from_be((*(addr as *const sockaddr_in)).sin_port) }
-        } else if family == libc::AF_INET6 as c_int {
+        } else if family == libc::AF_INET6 as c_int
+            && (len as usize) >= std::mem::size_of::<libc::sockaddr_in6>()
+        {
             unsafe { u16::from_be((*(addr as *const libc::sockaddr_in6)).sin6_port) }
         } else {
             0
@@ -509,7 +515,7 @@ mod platform {
             let family = unsafe { (*addr).sa_family } as c_int;
 
             if debug_enabled() {
-                let port = unsafe { debug_read_port(addr, family) };
+                let port = unsafe { debug_read_port(addr, family, len) };
                 let silo_ip = get_silo_ip()
                     .map(|ip| Ipv4Addr::from(u32::from_be(ip)).to_string())
                     .unwrap_or_default();
@@ -523,13 +529,26 @@ mod platform {
                 );
             }
 
-            if family == libc::AF_INET6 as c_int {
+            if family == libc::AF_INET6 as c_int
+                && (len as usize) >= std::mem::size_of::<libc::sockaddr_in6>()
+            {
                 let sin6 = addr as *const libc::sockaddr_in6;
                 let v6_addr = unsafe { (*sin6).sin6_addr.s6_addr };
                 if let Some(ip) = get_silo_ip()
                     && let Some(new_v6) = rewrite::rewrite_ipv6_addr(v6_addr, ip, true)
-                    && !unsafe { is_v6only(fd) }
                 {
+                    if unsafe { is_v6only(fd) } {
+                        let optval: c_int = 0;
+                        unsafe {
+                            libc::setsockopt(
+                                fd,
+                                libc::IPPROTO_IPV6,
+                                libc::IPV6_V6ONLY,
+                                &optval as *const _ as *const libc::c_void,
+                                std::mem::size_of::<c_int>() as socklen_t,
+                            );
+                        }
+                    }
                     let kind = if v6_addr == rewrite::V6_ANY {
                         "::"
                     } else {
@@ -572,7 +591,9 @@ mod platform {
         if !addr.is_null() {
             let family = unsafe { (*addr).sa_family } as c_int;
 
-            if family == libc::AF_INET6 as c_int {
+            if family == libc::AF_INET6 as c_int
+                && (len as usize) >= std::mem::size_of::<libc::sockaddr_in6>()
+            {
                 let sin6 = addr as *const libc::sockaddr_in6;
                 let v6_addr = unsafe { (*sin6).sin6_addr.s6_addr };
                 if v6_addr == rewrite::V6_LOOPBACK && !unsafe { is_v6only(fd) } {
