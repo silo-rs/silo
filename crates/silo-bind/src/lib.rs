@@ -5,6 +5,7 @@ use std::mem::MaybeUninit;
 use std::net::Ipv4Addr;
 use std::os::raw::c_int;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(target_os = "macos")]
 use std::ffi::{CStr, CString};
@@ -13,6 +14,39 @@ use libc::{AF_INET, sockaddr, sockaddr_in, socklen_t};
 
 static SILO_IP: OnceLock<Option<u32>> = OnceLock::new();
 static CONNECT_ENABLED: OnceLock<bool> = OnceLock::new();
+
+static LISTENER_CACHE: [AtomicU64; 1024] = [const { AtomicU64::new(0) }; 1024];
+
+fn cache_has_listener(port: u16) -> bool {
+    let idx = (port as usize) / 64;
+    let bit = (port as usize) % 64;
+    LISTENER_CACHE[idx].load(Ordering::Relaxed) & (1u64 << bit) != 0
+}
+
+fn cache_set_listener(port: u16) {
+    let idx = (port as usize) / 64;
+    let bit = (port as usize) % 64;
+    LISTENER_CACHE[idx].fetch_or(1u64 << bit, Ordering::Relaxed);
+}
+
+fn cache_clear_listener(port: u16) {
+    let idx = (port as usize) / 64;
+    let bit = (port as usize) % 64;
+    LISTENER_CACHE[idx].fetch_and(!(1u64 << bit), Ordering::Relaxed);
+}
+
+unsafe fn read_port(addr: *const sockaddr, len: socklen_t) -> Option<u16> {
+    let family = unsafe { read_sa_family(addr) }?;
+    if family == AF_INET && (len as usize) >= std::mem::size_of::<sockaddr_in>() {
+        Some(unsafe { (*(addr as *const sockaddr_in)).sin_port })
+    } else if family == libc::AF_INET6 as c_int
+        && (len as usize) >= std::mem::size_of::<libc::sockaddr_in6>()
+    {
+        Some(unsafe { (*(addr as *const libc::sockaddr_in6)).sin6_port })
+    } else {
+        None
+    }
+}
 
 #[cfg(target_os = "macos")]
 static DEBUG: OnceLock<bool> = OnceLock::new();
@@ -72,7 +106,7 @@ unsafe extern "C" {
     fn real_sendmsg(fd: c_int, msg: *const libc::msghdr, flags: c_int) -> libc::ssize_t;
 }
 
-unsafe fn read_sa_family(addr: *const sockaddr) -> Option<c_int> {
+const unsafe fn read_sa_family(addr: *const sockaddr) -> Option<c_int> {
     if addr.is_null() {
         return None;
     }
@@ -149,8 +183,7 @@ unsafe fn maybe_rewrite_connect_addr(
 
     if family == AF_INET && (len as usize) >= std::mem::size_of::<sockaddr_in>() {
         let sin = unsafe { &*(addr as *const sockaddr_in) };
-        let localhost_be = u32::from(Ipv4Addr::LOCALHOST).to_be();
-        if sin.sin_addr.s_addr == localhost_be
+        if sin.sin_addr.s_addr == rewrite::LOCALHOST_NBO
             && unsafe { probe_has_listener(fd, silo_ip, sin.sin_port) }
         {
             let ptr = storage.as_mut_ptr();
@@ -211,6 +244,10 @@ unsafe fn call_real_bind(fd: c_int, addr: *const sockaddr, len: socklen_t) -> c_
 }
 
 unsafe fn probe_has_listener(fd: c_int, silo_ip: u32, port: u16) -> bool {
+    if cache_has_listener(port) {
+        return true;
+    }
+
     let saved_errno = unsafe { *errno_ptr() };
 
     let mut sock_type: c_int = libc::SOCK_STREAM;
@@ -254,6 +291,10 @@ unsafe fn probe_has_listener(fd: c_int, silo_ip: u32, port: u16) -> bool {
     let has_listener = ret < 0 && unsafe { *errno_ptr() } == libc::EADDRINUSE;
     unsafe { libc::close(probe_fd) };
     unsafe { *errno_ptr() = saved_errno };
+
+    if has_listener {
+        cache_set_listener(port);
+    }
 
     has_listener
 }
@@ -505,7 +546,7 @@ mod platform {
         original: real_connect,
     };
 
-    unsafe fn debug_read_port(addr: *const sockaddr, family: c_int, len: socklen_t) -> u16 {
+    const unsafe fn debug_read_port(addr: *const sockaddr, family: c_int, len: socklen_t) -> u16 {
         if family == AF_INET && (len as usize) >= std::mem::size_of::<sockaddr_in>() {
             unsafe { u16::from_be((*(addr as *const sockaddr_in)).sin_port) }
         } else if family == libc::AF_INET6 as c_int
@@ -614,13 +655,17 @@ mod platform {
                         if unsafe { probe_has_listener(fd, ip, port) } {
                             let mut sin6_copy: libc::sockaddr_in6 = unsafe { *sin6 };
                             sin6_copy.sin6_addr.s6_addr = rewrite::ipv4_mapped_v6(ip);
-                            return unsafe {
+                            let ret = unsafe {
                                 real_connect(
                                     fd,
                                     &sin6_copy as *const libc::sockaddr_in6 as *const sockaddr,
                                     len,
                                 )
                             };
+                            if ret == -1 && unsafe { *errno_ptr() } == libc::ECONNREFUSED {
+                                cache_clear_listener(port);
+                            }
+                            return ret;
                         }
                     }
                     return unsafe { real_connect(fd, addr, len) };
@@ -629,8 +674,15 @@ mod platform {
         }
 
         let mut storage = std::mem::MaybeUninit::<SockaddrStorage>::uninit();
-        let (addr, len) = unsafe { maybe_rewrite_connect_addr(fd, addr, len, &mut storage) };
-        unsafe { real_connect(fd, addr, len) }
+        let (new_addr, new_len) =
+            unsafe { maybe_rewrite_connect_addr(fd, addr, len, &mut storage) };
+        let ret = unsafe { real_connect(fd, new_addr, new_len) };
+        if new_addr != addr && ret == -1 && unsafe { *errno_ptr() } == libc::ECONNREFUSED {
+            if let Some(port) = unsafe { read_port(addr, len) } {
+                cache_clear_listener(port);
+            }
+        }
+        ret
     }
 
     type PosixSpawnFn = unsafe extern "C" fn(
@@ -945,8 +997,15 @@ mod platform {
             unsafe extern "C" fn(c_int, *const sockaddr, socklen_t) -> c_int
         );
         let mut storage = std::mem::MaybeUninit::<SockaddrStorage>::uninit();
-        let (addr, len) = unsafe { maybe_rewrite_connect_addr(fd, addr, len, &mut storage) };
-        unsafe { real_fn(fd, addr, len) }
+        let (new_addr, new_len) =
+            unsafe { maybe_rewrite_connect_addr(fd, addr, len, &mut storage) };
+        let ret = unsafe { real_fn(fd, new_addr, new_len) };
+        if new_addr != addr && ret == -1 && unsafe { *errno_ptr() } == libc::ECONNREFUSED {
+            if let Some(port) = unsafe { read_port(addr, len) } {
+                cache_clear_listener(port);
+            }
+        }
+        ret
     }
 
     #[unsafe(no_mangle)]

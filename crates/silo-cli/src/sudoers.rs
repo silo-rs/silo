@@ -10,11 +10,11 @@ const SUDOERS_VERSION_PREFIX: &str = "# silo sudoers v";
 const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[cfg(target_os = "macos")]
-pub(crate) const SECURE_BIND_LIB: &str = "/usr/local/libexec/libsilo_bind.dylib";
+pub const SECURE_BIND_LIB: &str = "/usr/local/libexec/libsilo_bind.dylib";
 #[cfg(target_os = "linux")]
-pub(crate) const SECURE_BIND_LIB: &str = "/usr/local/libexec/libsilo_bind.so";
+pub const SECURE_BIND_LIB: &str = "/usr/local/libexec/libsilo_bind.so";
 
-pub(crate) fn ensure() -> eyre::Result<()> {
+pub fn ensure() -> eyre::Result<()> {
     if let Ok(stamp) = std::fs::read_to_string(STAMP_PATH)
         && stamp_is_current(&stamp)
         && std::path::Path::new(SUDOERS_PATH).exists()
@@ -28,10 +28,7 @@ pub(crate) fn ensure() -> eyre::Result<()> {
 }
 
 fn helper_matches_embedded(path: &str, embedded: &[u8]) -> bool {
-    match std::fs::read(path) {
-        Ok(content) => content == embedded,
-        Err(_) => false,
-    }
+    std::fs::read(path).is_ok_and(|content| content == embedded)
 }
 
 fn stamp_is_current(stamp: &str) -> bool {
@@ -217,7 +214,7 @@ fn validate_sudoers_syntax(rules: &str) -> eyre::Result<()> {
     }
 }
 
-pub(crate) fn check_path_security(bin_path: &std::path::Path) -> Vec<String> {
+pub fn check_path_security(bin_path: &std::path::Path) -> Vec<String> {
     use std::os::unix::fs::MetadataExt;
 
     let mut warnings = Vec::new();

@@ -570,3 +570,62 @@ fn silo_ip_ipv6_passes_through() {
         "SILO_IP set to IPv6 should be treated as invalid, got: {stdout}"
     );
 }
+
+#[test]
+fn connect_repeated_to_same_port() {
+    let (stdout, _, success) = run_helper("connect_cache_hit", Some(TEST_IP));
+    assert!(success, "helper failed");
+    for i in 0..5 {
+        let key = format!("connect_{i}={TEST_IP}");
+        assert!(
+            stdout.contains(&key),
+            "connect {i} should reach {TEST_IP}, got: {stdout}"
+        );
+    }
+}
+
+#[test]
+fn connect_cache_invalidation_on_refused() {
+    let (stdout, _, success) = run_helper("connect_cache_invalidation", Some(TEST_IP));
+    assert!(success, "helper failed");
+    assert!(
+        stdout.contains(&format!("phase1={TEST_IP}")),
+        "phase1 should connect to {TEST_IP}, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("phase2=refused"),
+        "phase2 should get ECONNREFUSED after listener dropped, got: {stdout}"
+    );
+}
+
+#[test]
+fn connect_cache_full_cycle() {
+    let (stdout, _, success) = run_helper("connect_cache_full_cycle", Some(TEST_IP));
+    assert!(success, "helper failed");
+    assert!(
+        stdout.contains(&format!("phase1={TEST_IP}")),
+        "phase1 should connect to {TEST_IP}, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("phase2=refused"),
+        "phase2 should get ECONNREFUSED after listener dropped, got: {stdout}"
+    );
+    assert!(
+        stdout.contains(&format!("phase3={TEST_IP}")),
+        "phase3 should re-probe and connect to {TEST_IP}, got: {stdout}"
+    );
+}
+
+#[test]
+fn connect_cache_port_isolation() {
+    let (stdout, _, success) = run_helper("connect_cache_port_isolation", Some(TEST_IP));
+    assert!(success, "helper failed");
+    assert!(
+        stdout.contains(&format!("port_a={TEST_IP}")),
+        "port_a should connect to {TEST_IP}, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("port_b=refused"),
+        "port_b should get ECONNREFUSED (no listener, cache independent), got: {stdout}"
+    );
+}

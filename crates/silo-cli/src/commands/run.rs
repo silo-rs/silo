@@ -89,7 +89,7 @@ pub fn run(
     Err(err).context(format!("failed to exec: {}", program))
 }
 
-pub(crate) fn make_backend(
+pub fn make_backend(
     #[allow(unused_variables)] ctx: &silo::Context,
 ) -> eyre::Result<Box<dyn silo::BackendSession>> {
     #[cfg(target_os = "linux")]
@@ -118,7 +118,7 @@ pub(crate) fn make_backend(
 }
 
 fn verify_session(session: &Session) {
-    if let Ok(false) = silo::ip::alias_exists(session.ip()) {
+    if matches!(silo::ip::alias_exists(session.ip()), Ok(false)) {
         ui::check_warn("ip alias", "not found on loopback interface");
     }
 

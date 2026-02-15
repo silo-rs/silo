@@ -39,6 +39,10 @@ fn main() {
         "bind_v6_localhost_linux" => cmd_bind_v6(Ipv6Addr::LOCALHOST),
         "connect_v6_localhost" => cmd_connect_v6_localhost(),
         "concurrent_bind" => cmd_concurrent_bind(),
+        "connect_cache_hit" => cmd_connect_cache_hit(),
+        "connect_cache_invalidation" => cmd_connect_cache_invalidation(),
+        "connect_cache_full_cycle" => cmd_connect_cache_full_cycle(),
+        "connect_cache_port_isolation" => cmd_connect_cache_port_isolation(),
         other => {
             eprintln!("unknown command: {other}");
             std::process::exit(1);
@@ -567,9 +571,9 @@ fn cmd_sendmsg_localhost() -> io::Result<()> {
         dest_addr.sin_family = libc::AF_INET as _;
         dest_addr.sin_port = u16::to_be(bound_port);
         dest_addr.sin_addr.s_addr = u32::from(Ipv4Addr::LOCALHOST).to_be();
-        let data = b"silo-test";
+        let mut data = *b"silo-test";
         let mut iov = libc::iovec {
-            iov_base: data.as_ptr() as *mut libc::c_void,
+            iov_base: data.as_mut_ptr().cast::<libc::c_void>(),
             iov_len: data.len(),
         };
         let msg = libc::msghdr {
@@ -801,6 +805,118 @@ fn cmd_connect_v6_localhost() -> io::Result<()> {
         libc::close(connect_fd);
         libc::close(listen_fd);
     }
+    Ok(())
+}
+
+fn cmd_connect_cache_hit() -> io::Result<()> {
+    let silo_ip_str = env::var("SILO_IP").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let silo_ip: Ipv4Addr = silo_ip_str.parse().unwrap();
+
+    let listener = TcpListener::bind(SocketAddrV4::new(silo_ip, 0))?;
+    let port = listener.local_addr()?.port();
+
+    for i in 0..5 {
+        let stream = std::net::TcpStream::connect(format!("127.0.0.1:{port}"))?;
+        let peer = stream.peer_addr()?;
+        println!("connect_{i}={}", peer.ip());
+    }
+
+    Ok(())
+}
+
+fn cmd_connect_cache_invalidation() -> io::Result<()> {
+    let silo_ip_str = env::var("SILO_IP").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let silo_ip: Ipv4Addr = silo_ip_str.parse().unwrap();
+
+    let listener = TcpListener::bind(SocketAddrV4::new(silo_ip, 0))?;
+    let port = listener.local_addr()?.port();
+
+    let stream = std::net::TcpStream::connect(format!("127.0.0.1:{port}"))?;
+    let peer = stream.peer_addr()?;
+    println!("phase1={}", peer.ip());
+    drop(stream);
+    drop(listener);
+
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
+    match std::net::TcpStream::connect(format!("127.0.0.1:{port}")) {
+        Err(e) if e.kind() == io::ErrorKind::ConnectionRefused => {
+            println!("phase2=refused");
+        }
+        Ok(s) => {
+            println!("phase2=connected:{}", s.peer_addr()?.ip());
+        }
+        Err(e) => {
+            println!("phase2=error:{e}");
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_connect_cache_full_cycle() -> io::Result<()> {
+    let silo_ip_str = env::var("SILO_IP").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let silo_ip: Ipv4Addr = silo_ip_str.parse().unwrap();
+
+    let listener = TcpListener::bind(SocketAddrV4::new(silo_ip, 0))?;
+    let port = listener.local_addr()?.port();
+
+    let s1 = std::net::TcpStream::connect(format!("127.0.0.1:{port}"))?;
+    println!("phase1={}", s1.peer_addr()?.ip());
+    drop(s1);
+    drop(listener);
+
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
+    match std::net::TcpStream::connect(format!("127.0.0.1:{port}")) {
+        Err(e) if e.kind() == io::ErrorKind::ConnectionRefused => {
+            println!("phase2=refused");
+        }
+        Ok(s) => {
+            println!("phase2=connected:{}", s.peer_addr()?.ip());
+            return Ok(());
+        }
+        Err(e) => {
+            println!("phase2=error:{e}");
+            return Ok(());
+        }
+    }
+
+    let listener2 = TcpListener::bind(SocketAddrV4::new(silo_ip, port))?;
+    let _ = listener2.local_addr()?;
+
+    let s3 = std::net::TcpStream::connect(format!("127.0.0.1:{port}"))?;
+    println!("phase3={}", s3.peer_addr()?.ip());
+
+    Ok(())
+}
+
+fn cmd_connect_cache_port_isolation() -> io::Result<()> {
+    let silo_ip_str = env::var("SILO_IP").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let silo_ip: Ipv4Addr = silo_ip_str.parse().unwrap();
+
+    let listener_a = TcpListener::bind(SocketAddrV4::new(silo_ip, 0))?;
+    let port_a = listener_a.local_addr()?.port();
+
+    let sa = std::net::TcpStream::connect(format!("127.0.0.1:{port_a}"))?;
+    println!("port_a={}", sa.peer_addr()?.ip());
+
+    let tmp = TcpListener::bind(SocketAddrV4::new(silo_ip, 0))?;
+    let port_b = tmp.local_addr()?.port();
+    drop(tmp);
+
+    match std::net::TcpStream::connect(format!("127.0.0.1:{port_b}")) {
+        Err(e) if e.kind() == io::ErrorKind::ConnectionRefused => {
+            println!("port_b=refused");
+        }
+        Ok(s) => {
+            println!("port_b={}", s.peer_addr()?.ip());
+        }
+        Err(e) => {
+            println!("port_b=error:{e}");
+        }
+    }
+
     Ok(())
 }
 

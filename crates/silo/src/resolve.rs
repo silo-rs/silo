@@ -46,7 +46,7 @@ pub fn resolve(
     })
 }
 
-pub(crate) fn find_git_root(start: &Path) -> std::result::Result<PathBuf, Error> {
+pub fn find_git_root(start: &Path) -> std::result::Result<PathBuf, Error> {
     let mut dir = start.to_path_buf();
     loop {
         let candidate = dir.join(".git");
@@ -59,7 +59,7 @@ pub(crate) fn find_git_root(start: &Path) -> std::result::Result<PathBuf, Error>
     }
 }
 
-pub(crate) fn get_branch_name(git_root: &Path) -> Result<String> {
+pub fn get_branch_name(git_root: &Path) -> Result<String> {
     let output = Command::new("git")
         .args(["branch", "--show-current"])
         .current_dir(git_root)
@@ -86,11 +86,10 @@ pub(crate) fn get_branch_name(git_root: &Path) -> Result<String> {
     };
 
     let head_ref = head_ref.trim();
-    if let Some(branch) = head_ref.strip_prefix("ref: refs/heads/") {
-        Ok(branch.to_string())
-    } else {
-        Ok(head_ref.chars().take(8).collect())
-    }
+    head_ref.strip_prefix("ref: refs/heads/").map_or_else(
+        || Ok(head_ref.chars().take(8).collect()),
+        |branch| Ok(branch.to_string()),
+    )
 }
 
 pub fn sanitize_name(raw: &str) -> String {

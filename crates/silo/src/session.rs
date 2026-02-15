@@ -19,7 +19,7 @@ pub struct PreloadBackend {
 }
 
 impl PreloadBackend {
-    pub fn new(lib_path: PathBuf) -> Self {
+    pub const fn new(lib_path: PathBuf) -> Self {
         Self { lib_path }
     }
 
@@ -35,10 +35,10 @@ impl BackendSession for PreloadBackend {
         #[cfg(target_os = "linux")]
         let key = "LD_PRELOAD";
 
-        let val = match std::env::var(key) {
-            Ok(existing) => format!("{}:{}", self.lib_path.display(), existing),
-            Err(_) => self.lib_path.display().to_string(),
-        };
+        let val = std::env::var(key).map_or_else(
+            |_| self.lib_path.display().to_string(),
+            |existing| format!("{}:{}", self.lib_path.display(), existing),
+        );
         cmd.env(key, val);
         Ok(())
     }
@@ -112,7 +112,7 @@ impl Session {
         self.backend.prepare(cmd)
     }
 
-    pub fn context(&self) -> &Context {
+    pub const fn context(&self) -> &Context {
         &self.ctx
     }
 
@@ -120,7 +120,7 @@ impl Session {
         self.backend.name()
     }
 
-    pub fn ip(&self) -> Ipv4Addr {
+    pub const fn ip(&self) -> Ipv4Addr {
         self.ctx.ip()
     }
 

@@ -90,9 +90,9 @@ fn cmd_sendmsg_recvmsg() -> io::Result<()> {
         dest.sin_port = local.sin_port;
         dest.sin_addr.s_addr = u32::from(Ipv4Addr::LOCALHOST).to_be();
 
-        let data = b"silo-test";
+        let mut data = *b"silo-test";
         let mut iov = libc::iovec {
-            iov_base: data.as_ptr() as *mut libc::c_void,
+            iov_base: data.as_mut_ptr().cast::<libc::c_void>(),
             iov_len: data.len(),
         };
         let msg = libc::msghdr {

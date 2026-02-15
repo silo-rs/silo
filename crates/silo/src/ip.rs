@@ -202,17 +202,22 @@ pub fn active_ips(ips: &[Ipv4Addr]) -> Result<HashSet<Ipv4Addr>> {
 }
 
 pub(crate) fn is_ip_in_output(output: &str, ip: Ipv4Addr) -> bool {
-    let needle = format!("inet {}", ip);
+    use std::io::Write;
+    let mut buf = [0u8; 21]; // "inet " (5) + "255.255.255.255" (15) + null guard = 21
+    let len = {
+        let mut cursor = std::io::Cursor::new(&mut buf[..]);
+        write!(cursor, "inet {}", ip).unwrap();
+        cursor.position() as usize
+    };
+    let needle = std::str::from_utf8(&buf[..len]).unwrap();
     output.lines().any(|line| {
-        if let Some(pos) = line.find(&needle) {
-            let after = pos + needle.len();
+        line.find(needle).is_some_and(|pos| {
+            let after = pos + len;
             matches!(
                 line.as_bytes().get(after),
                 None | Some(b' ') | Some(b'\t') | Some(b'/')
             )
-        } else {
-            false
-        }
+        })
     })
 }
 

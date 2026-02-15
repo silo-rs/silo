@@ -28,7 +28,7 @@ pub fn run(all: bool, yes: bool, json: bool) -> eyre::Result<()> {
     let alias_set: HashSet<Ipv4Addr> = aliases.iter().copied().collect();
 
     let aliases_to_remove: Vec<Ipv4Addr> = if all {
-        aliases.clone()
+        aliases
     } else {
         aliases
             .iter()

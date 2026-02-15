@@ -27,7 +27,7 @@ impl Context {
         resolve::resolve(dir, name, ip)
     }
 
-    pub fn ip(&self) -> Ipv4Addr {
+    pub const fn ip(&self) -> Ipv4Addr {
         self.ip
     }
 

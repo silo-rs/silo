@@ -162,7 +162,7 @@ fn build_ebpf(workspace_dir: &std::path::Path, out_dir: &std::path::Path) {
     println!("cargo:rerun-if-changed=../silo-ebpf/Cargo.toml");
 }
 
-fn lib_name() -> &'static str {
+const fn lib_name() -> &'static str {
     if cfg!(target_os = "macos") {
         "libsilo_bind.dylib"
     } else {

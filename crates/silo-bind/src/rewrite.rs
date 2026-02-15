@@ -2,6 +2,7 @@
 
 use std::net::Ipv4Addr;
 
+pub const LOCALHOST_NBO: u32 = 0x7f000001_u32.to_be();
 pub const V6_LOOPBACK: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
 pub const V6_ANY: [u8; 16] = [0u8; 16];
 
@@ -13,16 +14,15 @@ pub fn parse_silo_ip(val: &str) -> Option<u32> {
     Some(u32::from(ip).to_be())
 }
 
-pub fn ipv4_mapped_v6(silo_ip: u32) -> [u8; 16] {
+pub const fn ipv4_mapped_v6(silo_ip: u32) -> [u8; 16] {
     let octets = silo_ip.to_ne_bytes();
     [
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, octets[0], octets[1], octets[2], octets[3],
     ]
 }
 
-pub fn rewrite_ipv4_addr(s_addr: u32, silo_ip: u32, match_any: bool) -> Option<u32> {
-    let localhost_be = u32::from(Ipv4Addr::LOCALHOST).to_be();
-    if (match_any && s_addr == 0) || s_addr == localhost_be {
+pub const fn rewrite_ipv4_addr(s_addr: u32, silo_ip: u32, match_any: bool) -> Option<u32> {
+    if (match_any && s_addr == 0) || s_addr == LOCALHOST_NBO {
         Some(silo_ip)
     } else {
         None
@@ -37,11 +37,10 @@ pub fn rewrite_ipv6_addr(s6_addr: [u8; 16], silo_ip: u32, match_any: bool) -> Op
     }
 }
 
-pub fn hide_alias(s_addr: u32, silo_ip: u32) -> Option<u32> {
-    let localhost_be = u32::from(Ipv4Addr::LOCALHOST).to_be();
+pub const fn hide_alias(s_addr: u32, silo_ip: u32) -> Option<u32> {
     let octets = s_addr.to_ne_bytes();
-    if octets[0] == 127 && s_addr != localhost_be && s_addr != silo_ip {
-        Some(localhost_be)
+    if octets[0] == 127 && s_addr != LOCALHOST_NBO && s_addr != silo_ip {
+        Some(LOCALHOST_NBO)
     } else {
         None
     }
@@ -56,7 +55,7 @@ mod tests {
     }
 
     fn localhost_be() -> u32 {
-        u32::from(Ipv4Addr::LOCALHOST).to_be()
+        LOCALHOST_NBO
     }
 
     #[test]

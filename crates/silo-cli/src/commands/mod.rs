@@ -3,7 +3,7 @@ pub mod env;
 pub mod ip;
 pub mod ls;
 pub mod prune;
-pub(crate) mod query;
+pub mod query;
 pub mod run;
 #[cfg(target_os = "linux")]
 pub mod setup_ebpf;
