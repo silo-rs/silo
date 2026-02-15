@@ -26,12 +26,50 @@ fn auto_run_args() -> Vec<String> {
 
 fn maybe_inject_run(args: Vec<String>, known: &[String]) -> Vec<String> {
     if args.len() > 1 && !args[1].starts_with('-') && !known.iter().any(|k| k == &args[1]) {
+        if let Some(suggestion) = closest_subcommand(&args[1], known) {
+            eprintln!(
+                "{} did you mean `silo {suggestion}`? Running as `silo run {} ...`",
+                "hint:".yellow().bold(),
+                args[1],
+            );
+        }
         let mut new_args = vec![args[0].clone(), "run".into()];
         new_args.extend_from_slice(&args[1..]);
         new_args
     } else {
         args
     }
+}
+
+fn closest_subcommand<'a>(input: &str, known: &'a [String]) -> Option<&'a str> {
+    let threshold = match input.len() {
+        0..=2 => 1,
+        _ => 2,
+    };
+    known
+        .iter()
+        .filter_map(|k| {
+            let d = edit_distance(input, k);
+            (d > 0 && d <= threshold).then_some((d, k.as_str()))
+        })
+        .min_by_key(|(d, _)| *d)
+        .map(|(_, name)| name)
+}
+
+fn edit_distance(a: &str, b: &str) -> usize {
+    let a = a.as_bytes();
+    let b = b.as_bytes();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut curr = vec![0; b.len() + 1];
+    for (i, &ca) in a.iter().enumerate() {
+        curr[0] = i + 1;
+        for (j, &cb) in b.iter().enumerate() {
+            let cost = usize::from(ca != cb);
+            curr[j + 1] = (prev[j] + cost).min(prev[j + 1] + 1).min(curr[j] + 1);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[b.len()]
 }
 use tracing_subscriber::{EnvFilter, fmt};
 
@@ -151,5 +189,57 @@ mod tests {
     fn known_subcommands_includes_help() {
         let known = known();
         assert!(known.contains(&"help".to_string()));
+    }
+
+    #[test]
+    fn closest_subcommand_exact_match_returns_none() {
+        assert_eq!(closest_subcommand("doctor", &known()), None);
+    }
+
+    #[test]
+    fn closest_subcommand_one_char_off() {
+        assert_eq!(closest_subcommand("doctorx", &known()), Some("doctor"));
+    }
+
+    #[test]
+    fn closest_subcommand_substitution() {
+        assert_eq!(closest_subcommand("docter", &known()), Some("doctor"));
+    }
+
+    #[test]
+    fn closest_subcommand_too_distant() {
+        assert_eq!(closest_subcommand("xyz", &known()), None);
+    }
+
+    #[test]
+    fn closest_subcommand_completely_unrelated() {
+        assert_eq!(closest_subcommand("webpack", &known()), None);
+    }
+
+    #[test]
+    fn edit_distance_identical() {
+        assert_eq!(edit_distance("abc", "abc"), 0);
+    }
+
+    #[test]
+    fn edit_distance_insertion() {
+        assert_eq!(edit_distance("doctor", "doctorx"), 1);
+    }
+
+    #[test]
+    fn edit_distance_deletion() {
+        assert_eq!(edit_distance("doctor", "docto"), 1);
+    }
+
+    #[test]
+    fn edit_distance_substitution() {
+        assert_eq!(edit_distance("doctor", "docter"), 1);
+    }
+
+    #[test]
+    fn edit_distance_empty() {
+        assert_eq!(edit_distance("", "abc"), 3);
+        assert_eq!(edit_distance("abc", ""), 3);
+        assert_eq!(edit_distance("", ""), 0);
     }
 }
