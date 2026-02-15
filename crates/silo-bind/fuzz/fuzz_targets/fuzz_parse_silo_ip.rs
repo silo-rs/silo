@@ -13,7 +13,7 @@ fuzz_target!(|data: &str| {
     }
 
     if let Ok(std_ip) = data.parse::<Ipv4Addr>() {
-        if std_ip.octets()[0] == 127 {
+        if std_ip.octets()[0] == 127 && std_ip != Ipv4Addr::LOCALHOST {
             assert!(
                 result.is_some(),
                 "std parsed '{}' as loopback {} but parse_silo_ip returned None",

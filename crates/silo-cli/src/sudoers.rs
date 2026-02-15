@@ -172,20 +172,44 @@ fn cleanup_legacy_paths() {
 fn install_embedded_helper(bytes: &[u8], dest: &str) -> eyre::Result<()> {
     use std::io::Write;
 
-    let mut tmp =
-        tempfile::NamedTempFile::new().context("failed to create temp file for helper")?;
-    tmp.write_all(bytes)
-        .context("failed to write helper binary to temp file")?;
-    tmp.flush().context("failed to flush helper temp file")?;
+    let tmp_dest = format!("{dest}.tmp");
 
-    let tmp_path = tmp.path().to_string_lossy().to_string();
     let status = Command::new("sudo")
-        .args(["install", "-o", "root", "-m", "755", &tmp_path, dest])
-        .status()
-        .with_context(|| format!("failed to install helper to {dest}"))?;
+        .args(["tee", &tmp_dest])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .and_then(|mut child| {
+            if let Some(ref mut stdin) = child.stdin {
+                stdin.write_all(bytes)?;
+            }
+            child.wait()
+        })
+        .with_context(|| format!("failed to write helper to {tmp_dest}"))?;
 
     if !status.success() {
-        bail!("sudo install to {dest} failed");
+        bail!("sudo tee {tmp_dest} failed");
+    }
+
+    let status = Command::new("sudo")
+        .args(["chmod", "755", &tmp_dest])
+        .status()
+        .with_context(|| format!("failed to chmod {tmp_dest}"))?;
+
+    if !status.success() {
+        let _ = Command::new("sudo").args(["rm", "-f", &tmp_dest]).status();
+        bail!("sudo chmod 755 {tmp_dest} failed");
+    }
+
+    let status = Command::new("sudo")
+        .args(["mv", "-f", &tmp_dest, dest])
+        .status()
+        .with_context(|| format!("failed to move helper to {dest}"))?;
+
+    if !status.success() {
+        let _ = Command::new("sudo").args(["rm", "-f", &tmp_dest]).status();
+        bail!("sudo mv {tmp_dest} {dest} failed");
     }
 
     Ok(())
