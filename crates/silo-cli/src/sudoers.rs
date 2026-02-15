@@ -253,8 +253,8 @@ pub(crate) fn check_path_security(bin_path: &std::path::Path) -> Vec<String> {
             if mode & 0o002 != 0 {
                 warnings.push(format!("{display} is world-writable"));
             }
-            if mode & 0o020 != 0 && uid != 0 {
-                warnings.push(format!("{display} is group-writable and not root-owned"));
+            if mode & 0o020 != 0 {
+                warnings.push(format!("{display} is group-writable"));
             }
         }
 
