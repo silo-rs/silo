@@ -7,11 +7,11 @@
 !Cargo.lock
 !README.md
 !LICENSE
-!install.sh
 !tests/
 !tests/**/*
 !demo.gif
 !.github/
 !.github/**/*
 !dist-workspace.toml
+!install.sh
 !AGENTS.md

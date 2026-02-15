@@ -76,4 +76,7 @@ pub enum Commands {
 
     #[command(name = "_hosts", hide = true)]
     Hosts,
+
+    #[command(name = "_ip", hide = true)]
+    IpAlias,
 }

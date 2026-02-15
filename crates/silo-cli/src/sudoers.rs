@@ -4,7 +4,7 @@ use colored::Colorize;
 use eyre::{Context, bail};
 
 const SUDOERS_PATH: &str = "/etc/sudoers.d/silo";
-const SUDOERS_VERSION: u32 = 4;
+const SUDOERS_VERSION: u32 = 5;
 const SUDOERS_VERSION_PREFIX: &str = "# silo sudoers v";
 const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -208,8 +208,7 @@ fn sudoers_rules() -> String {
     {
         format!(
             "{SUDOERS_VERSION_PREFIX}{SUDOERS_VERSION} pkg={PKG_VERSION}\n\
-             %admin ALL=(root) NOPASSWD: /sbin/ifconfig lo0 alias 127.* netmask 255.0.0.0\n\
-             %admin ALL=(root) NOPASSWD: /sbin/ifconfig lo0 -alias 127.*\n\
+             %admin ALL=(root) NOPASSWD: {silo_bin} _ip\n\
              %admin ALL=(root) NOPASSWD: {silo_bin} _hosts\n"
         )
     }
@@ -217,27 +216,12 @@ fn sudoers_rules() -> String {
     #[cfg(target_os = "linux")]
     {
         let group = detect_admin_group();
-        let ip_cmd = find_ip_command();
         format!(
             "{SUDOERS_VERSION_PREFIX}{SUDOERS_VERSION} pkg={PKG_VERSION}\n\
-             {group} ALL=(root) NOPASSWD: {ip_cmd} addr add 127.*/8 dev lo\n\
-             {group} ALL=(root) NOPASSWD: {ip_cmd} addr del 127.*/8 dev lo\n\
+             {group} ALL=(root) NOPASSWD: {silo_bin} _ip\n\
              {group} ALL=(root) NOPASSWD: {silo_bin} _hosts\n"
         )
     }
-}
-
-#[cfg(target_os = "linux")]
-fn find_ip_command() -> String {
-    if let Ok(p) = which::which("ip") {
-        return p.to_string_lossy().into_owned();
-    }
-    for candidate in ["/usr/sbin/ip", "/sbin/ip", "/usr/bin/ip", "/bin/ip"] {
-        if std::path::Path::new(candidate).exists() {
-            return candidate.to_string();
-        }
-    }
-    "ip".to_string()
 }
 
 #[cfg(target_os = "linux")]
@@ -267,11 +251,15 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     #[test]
-    fn sudoers_rules_use_silo_hosts_helper() {
+    fn sudoers_rules_use_helpers() {
         let rules = sudoers_rules();
         assert!(
             rules.contains("_hosts"),
             "sudoers rules must use silo _hosts, got:\n{rules}"
+        );
+        assert!(
+            rules.contains("_ip"),
+            "sudoers rules must use silo _ip, got:\n{rules}"
         );
         assert!(
             !rules.contains("_hosts add"),
@@ -312,25 +300,30 @@ mod tests {
     }
 
     #[test]
-    fn sudoers_ip_rules_restricted_to_loopback() {
+    fn sudoers_rules_have_no_wildcards() {
         let rules = sudoers_rules();
-        assert!(
-            rules.contains("127.*"),
-            "sudoers rules must restrict IPs to 127.*, got:\n{rules}"
-        );
+        for line in rules.lines() {
+            if line.starts_with('#') {
+                continue;
+            }
+            assert!(
+                !line.contains('*'),
+                "sudoers rules must not contain wildcards, got:\n{line}"
+            );
+        }
     }
 
     #[test]
-    fn sudoers_hosts_rule_has_no_wildcards() {
+    fn sudoers_rules_no_direct_ifconfig_or_ip() {
         let rules = sudoers_rules();
-        for line in rules.lines() {
-            if line.contains("_hosts") {
-                assert!(
-                    !line.contains('*'),
-                    "sudoers _hosts rule must not contain wildcards, got:\n{line}"
-                );
-            }
-        }
+        assert!(
+            !rules.contains("ifconfig"),
+            "sudoers rules must not reference ifconfig directly, got:\n{rules}"
+        );
+        assert!(
+            !rules.contains("ip addr"),
+            "sudoers rules must not reference ip addr directly, got:\n{rules}"
+        );
     }
 
     #[test]
