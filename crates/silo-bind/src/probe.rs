@@ -352,6 +352,7 @@ mod tests {
     #[test]
     fn probe_cached_port_skips_syscall() {
         let port_nbo = 45678u16.to_be();
+        CACHE_EPOCH.store(now_secs(), Ordering::Release);
         cache_set_listener(port_nbo);
 
         let has = unsafe { probe_has_listener(-1, 0, port_nbo) };
