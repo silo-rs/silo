@@ -10,7 +10,6 @@ use tracing::debug;
 use crate::error::{Error, Result};
 
 pub const HOSTS_PATH: &str = "/etc/hosts";
-pub const HOSTS_TMP: &str = "/etc/.hosts.silo.tmp";
 pub const SECURE_SILO_BIN: &str = "/usr/local/bin/silo";
 const BEGIN_MARKER: &str = "# BEGIN silo managed block - do not edit";
 const END_MARKER: &str = "# END silo managed block";
@@ -186,29 +185,24 @@ pub fn open_helper_lock() -> Result<RwLock<std::fs::File>> {
 
 pub fn write_hosts_direct(content: &str) -> Result<()> {
     use std::io::Write;
-    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    use std::os::unix::fs::PermissionsExt;
 
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o644)
-        .open(HOSTS_TMP)
+    let mut file = tempfile::NamedTempFile::new_in("/etc")
         .map_err(|e| Error::io("failed to create temp hosts file", e))?;
 
     file.write_all(content.as_bytes())
         .map_err(|e| Error::io("failed to write temp hosts file", e))?;
 
-    file.set_permissions(std::fs::Permissions::from_mode(0o644))
+    file.as_file()
+        .set_permissions(std::fs::Permissions::from_mode(0o644))
         .map_err(|e| Error::io("failed to set permissions on temp hosts file", e))?;
 
-    file.sync_all()
+    file.as_file()
+        .sync_all()
         .map_err(|e| Error::io("failed to sync temp hosts file", e))?;
 
-    drop(file);
-
-    std::fs::rename(HOSTS_TMP, HOSTS_PATH)
-        .map_err(|e| Error::io("failed to rename temp hosts to /etc/hosts", e))?;
+    file.persist(HOSTS_PATH)
+        .map_err(|e| Error::io("failed to rename temp hosts to /etc/hosts", e.into()))?;
 
     Ok(())
 }
