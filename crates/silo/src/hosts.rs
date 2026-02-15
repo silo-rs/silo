@@ -327,14 +327,13 @@ pub fn remove_entries(ips_to_remove: &HashSet<Ipv4Addr>) -> Result<Vec<(Ipv4Addr
 }
 
 pub fn open_helper_lock() -> Result<RwLock<std::fs::File>> {
-    let file = match std::fs::File::open(HELPER_LOCK_PATH) {
-        Ok(f) => f,
-        Err(_) => {
-            let _ = std::fs::File::create(HELPER_LOCK_PATH);
-            std::fs::File::open(HELPER_LOCK_PATH)
-                .map_err(|e| Error::io("failed to open silo hosts lock file", e))?
-        }
-    };
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(HELPER_LOCK_PATH)
+        .map_err(|e| Error::io("failed to open silo hosts lock file", e))?;
     Ok(RwLock::new(file))
 }
 
