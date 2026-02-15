@@ -564,8 +564,10 @@ mod tests {
     fn sudo_caller_ids_no_sudo_non_root() {
         // When not running as root and SUDO_UID is not set, should error
         if unsafe { libc::geteuid() } != 0 {
-            std::env::remove_var("SUDO_UID");
-            std::env::remove_var("SUDO_GID");
+            unsafe {
+                std::env::remove_var("SUDO_UID");
+                std::env::remove_var("SUDO_GID");
+            }
             let result = sudo_caller_ids();
             assert!(
                 result.is_err(),
@@ -576,21 +578,29 @@ mod tests {
 
     #[test]
     fn sudo_caller_ids_with_valid_env() {
-        std::env::set_var("SUDO_UID", "1000");
-        std::env::set_var("SUDO_GID", "1000");
+        unsafe {
+            std::env::set_var("SUDO_UID", "1000");
+            std::env::set_var("SUDO_GID", "1000");
+        }
         let result = sudo_caller_ids();
         assert_eq!(result.unwrap(), (1000, 1000));
-        std::env::remove_var("SUDO_UID");
-        std::env::remove_var("SUDO_GID");
+        unsafe {
+            std::env::remove_var("SUDO_UID");
+            std::env::remove_var("SUDO_GID");
+        }
     }
 
     #[test]
     fn sudo_caller_ids_with_invalid_env() {
-        std::env::set_var("SUDO_UID", "notanumber");
-        std::env::set_var("SUDO_GID", "1000");
+        unsafe {
+            std::env::set_var("SUDO_UID", "notanumber");
+            std::env::set_var("SUDO_GID", "1000");
+        }
         let result = sudo_caller_ids();
         assert!(result.is_err(), "should error on unparseable SUDO_UID");
-        std::env::remove_var("SUDO_UID");
-        std::env::remove_var("SUDO_GID");
+        unsafe {
+            std::env::remove_var("SUDO_UID");
+            std::env::remove_var("SUDO_GID");
+        }
     }
 }
