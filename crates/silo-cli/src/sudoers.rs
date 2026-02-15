@@ -4,7 +4,7 @@ use colored::Colorize;
 use eyre::{Context, bail};
 
 const SUDOERS_PATH: &str = "/etc/sudoers.d/silo";
-const SUDOERS_VERSION: u32 = 3;
+const SUDOERS_VERSION: u32 = 4;
 const SUDOERS_VERSION_PREFIX: &str = "# silo sudoers v";
 const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -192,8 +192,7 @@ fn sudoers_rules() -> String {
             "{SUDOERS_VERSION_PREFIX}{SUDOERS_VERSION} pkg={PKG_VERSION}\n\
              %admin ALL=(root) NOPASSWD: /sbin/ifconfig lo0 alias 127.* netmask 255.0.0.0\n\
              %admin ALL=(root) NOPASSWD: /sbin/ifconfig lo0 -alias 127.*\n\
-             %admin ALL=(root) NOPASSWD: {silo_bin} _hosts add 127.* *.silo *\n\
-             %admin ALL=(root) NOPASSWD: {silo_bin} _hosts remove *\n"
+             %admin ALL=(root) NOPASSWD: {silo_bin} _hosts\n"
         )
     }
 
@@ -205,8 +204,7 @@ fn sudoers_rules() -> String {
             "{SUDOERS_VERSION_PREFIX}{SUDOERS_VERSION} pkg={PKG_VERSION}\n\
              {group} ALL=(root) NOPASSWD: {ip_cmd} addr add 127.*/8 dev lo\n\
              {group} ALL=(root) NOPASSWD: {ip_cmd} addr del 127.*/8 dev lo\n\
-             {group} ALL=(root) NOPASSWD: {silo_bin} _hosts add 127.* *.silo *\n\
-             {group} ALL=(root) NOPASSWD: {silo_bin} _hosts remove *\n"
+             {group} ALL=(root) NOPASSWD: {silo_bin} _hosts\n"
         )
     }
 }
@@ -254,12 +252,16 @@ mod tests {
     fn sudoers_rules_use_silo_hosts_helper() {
         let rules = sudoers_rules();
         assert!(
-            rules.contains("_hosts add"),
-            "sudoers rules must use silo _hosts add, got:\n{rules}"
+            rules.contains("_hosts"),
+            "sudoers rules must use silo _hosts, got:\n{rules}"
         );
         assert!(
-            rules.contains("_hosts remove"),
-            "sudoers rules must use silo _hosts remove, got:\n{rules}"
+            !rules.contains("_hosts add"),
+            "sudoers rules must not pass args to _hosts (stdin protocol), got:\n{rules}"
+        );
+        assert!(
+            !rules.contains("_hosts remove"),
+            "sudoers rules must not pass args to _hosts (stdin protocol), got:\n{rules}"
         );
         assert!(
             !rules.contains("/usr/bin/tee"),
@@ -301,12 +303,16 @@ mod tests {
     }
 
     #[test]
-    fn sudoers_hosts_rules_restrict_to_silo_suffix() {
+    fn sudoers_hosts_rule_has_no_wildcards() {
         let rules = sudoers_rules();
-        assert!(
-            rules.contains("*.silo"),
-            "sudoers rules must restrict hostnames to *.silo, got:\n{rules}"
-        );
+        for line in rules.lines() {
+            if line.contains("_hosts") {
+                assert!(
+                    !line.contains('*'),
+                    "sudoers _hosts rule must not contain wildcards, got:\n{line}"
+                );
+            }
+        }
     }
 
     #[test]

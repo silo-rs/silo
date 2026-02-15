@@ -86,11 +86,6 @@ fn run() -> eyre::Result<()> {
         Commands::SetupEbpf => commands::setup_ebpf::run(),
         #[cfg(target_os = "linux")]
         Commands::TeardownEbpf => commands::teardown_ebpf::run(),
-        Commands::Hosts { action } => match action {
-            cli::HostsAction::Add { ip, hostname, dir } => {
-                commands::hosts_helper::run_add(ip, &hostname, &dir)
-            }
-            cli::HostsAction::Remove { ips } => commands::hosts_helper::run_remove(&ips),
-        },
+        Commands::Hosts => commands::hosts_helper::run_from_stdin(),
     }
 }

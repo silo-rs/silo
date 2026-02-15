@@ -14,4 +14,5 @@ which = { workspace = true }
 tracing = { workspace = true }
 fd-lock = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 tempfile = { workspace = true }

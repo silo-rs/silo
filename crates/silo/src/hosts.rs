@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use fd_lock::RwLock;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use crate::error::{Error, Result};
@@ -14,6 +14,25 @@ pub const SECURE_SILO_BIN: &str = "/usr/local/bin/silo";
 const BEGIN_MARKER: &str = "# BEGIN silo managed block - do not edit";
 const END_MARKER: &str = "# END silo managed block";
 const HELPER_LOCK_PATH: &str = "/etc/.silo-hosts.lock";
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum HostsRequest {
+    Add {
+        ip: Ipv4Addr,
+        hostname: String,
+        dir: String,
+    },
+    Remove {
+        ips: Vec<Ipv4Addr>,
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RemovedEntry {
+    pub ip: Ipv4Addr,
+    pub hostname: String,
+}
 
 pub fn validate_ip(ip: Ipv4Addr) -> Result<()> {
     if ip.octets()[0] != 127 {
@@ -77,24 +96,34 @@ fn silo_bin() -> PathBuf {
 pub fn ensure_entry(ip: Ipv4Addr, hostname: &str, dir: &Path) -> Result<()> {
     let bin = silo_bin();
 
-    let status = Command::new("sudo")
+    let request = HostsRequest::Add {
+        ip,
+        hostname: hostname.to_string(),
+        dir: dir.display().to_string(),
+    };
+
+    let mut child = Command::new("sudo")
         .arg(&bin)
-        .args([
-            "_hosts",
-            "add",
-            &ip.to_string(),
-            hostname,
-            &dir.display().to_string(),
-        ])
-        .stdin(Stdio::null())
+        .arg("_hosts")
+        .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())
-        .status()
-        .map_err(|e| Error::io("failed to run silo _hosts add", e))?;
+        .spawn()
+        .map_err(|e| Error::io("failed to run silo _hosts", e))?;
+
+    {
+        let stdin = child.stdin.take().expect("stdin was piped");
+        serde_json::to_writer(stdin, &request)
+            .map_err(|e| Error::io("failed to write to silo _hosts stdin", e.into()))?;
+    }
+
+    let status = child
+        .wait()
+        .map_err(|e| Error::io("failed to wait for silo _hosts", e))?;
 
     if !status.success() {
         return Err(Error::CommandFailed {
-            command: format!("sudo {} _hosts add {} {}", bin.display(), ip, hostname),
+            command: format!("sudo {} _hosts (add {} {})", bin.display(), ip, hostname),
         });
     }
 
@@ -139,36 +168,43 @@ pub fn remove_entries(ips_to_remove: &HashSet<Ipv4Addr>) -> Result<Vec<(Ipv4Addr
     }
 
     let bin = silo_bin();
-    let ip_args: Vec<String> = ips_to_remove.iter().map(|ip| ip.to_string()).collect();
 
-    let output = Command::new("sudo")
+    let request = HostsRequest::Remove {
+        ips: ips_to_remove.iter().copied().collect(),
+    };
+
+    let mut child = Command::new("sudo")
         .arg(&bin)
         .arg("_hosts")
-        .arg("remove")
-        .args(&ip_args)
-        .stdin(Stdio::null())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
-        .output()
-        .map_err(|e| Error::io("failed to run silo _hosts remove", e))?;
+        .spawn()
+        .map_err(|e| Error::io("failed to run silo _hosts", e))?;
+
+    {
+        let stdin = child.stdin.take().expect("stdin was piped");
+        serde_json::to_writer(stdin, &request)
+            .map_err(|e| Error::io("failed to write to silo _hosts stdin", e.into()))?;
+    }
+
+    let output = child
+        .wait_with_output()
+        .map_err(|e| Error::io("failed to wait for silo _hosts", e))?;
 
     if !output.status.success() {
         return Err(Error::CommandFailed {
-            command: "sudo silo _hosts remove".to_string(),
+            command: "sudo silo _hosts (remove)".to_string(),
         });
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut removed = Vec::new();
-    for line in stdout.lines() {
-        if let Some((ip_str, hostname)) = line.split_once('\t')
-            && let Ok(ip) = ip_str.parse::<Ipv4Addr>()
-        {
-            removed.push((ip, hostname.to_string()));
-        }
-    }
+    let removed: Vec<RemovedEntry> = serde_json::from_slice(&output.stdout)
+        .map_err(|e| Error::io("failed to parse _hosts response", e.into()))?;
 
-    debug!(count = removed.len(), "removed hosts entries");
-    Ok(removed)
+    let result: Vec<(Ipv4Addr, String)> = removed.into_iter().map(|e| (e.ip, e.hostname)).collect();
+
+    debug!(count = result.len(), "removed hosts entries");
+    Ok(result)
 }
 
 pub fn open_helper_lock() -> Result<RwLock<std::fs::File>> {

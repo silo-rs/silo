@@ -1,10 +1,17 @@
 use std::collections::HashSet;
-use std::io::Write;
 use std::net::Ipv4Addr;
 
-use silo::hosts;
+use silo::hosts::{self, HostsRequest, RemovedEntry};
 
-pub fn run_add(ip: Ipv4Addr, hostname: &str, dir: &str) -> eyre::Result<()> {
+pub fn run_from_stdin() -> eyre::Result<()> {
+    let request: HostsRequest = serde_json::from_reader(std::io::stdin().lock())?;
+    match request {
+        HostsRequest::Add { ip, hostname, dir } => run_add(ip, &hostname, &dir),
+        HostsRequest::Remove { ips } => run_remove(&ips),
+    }
+}
+
+fn run_add(ip: Ipv4Addr, hostname: &str, dir: &str) -> eyre::Result<()> {
     hosts::validate_ip(ip)?;
     hosts::validate_hostname(hostname)?;
     hosts::validate_dir(dir)?;
@@ -38,7 +45,7 @@ pub fn run_add(ip: Ipv4Addr, hostname: &str, dir: &str) -> eyre::Result<()> {
     Ok(())
 }
 
-pub fn run_remove(ips: &[Ipv4Addr]) -> eyre::Result<()> {
+fn run_remove(ips: &[Ipv4Addr]) -> eyre::Result<()> {
     for ip in ips {
         hosts::validate_ip(*ip)?;
     }
@@ -62,8 +69,8 @@ pub fn run_remove(ips: &[Ipv4Addr]) -> eyre::Result<()> {
             && ip_set.contains(&ip)
         {
             let main = entry.split_once("\t# ").map_or(entry.as_str(), |(m, _)| m);
-            let hostname = main.split('\t').nth(1).unwrap_or("");
-            removed.push((ip, hostname.to_string()));
+            let hostname = main.split('\t').nth(1).unwrap_or("").to_string();
+            removed.push(RemovedEntry { ip, hostname });
             continue;
         }
         kept.push(entry.clone());
@@ -74,11 +81,7 @@ pub fn run_remove(ips: &[Ipv4Addr]) -> eyre::Result<()> {
         hosts::write_hosts_direct(&output)?;
     }
 
-    let stdout = std::io::stdout();
-    let mut out = stdout.lock();
-    for (ip, hostname) in &removed {
-        writeln!(out, "{}\t{}", ip, hostname)?;
-    }
+    serde_json::to_writer(std::io::stdout().lock(), &removed)?;
 
     Ok(())
 }

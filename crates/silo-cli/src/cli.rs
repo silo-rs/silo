@@ -75,21 +75,5 @@ pub enum Commands {
     TeardownEbpf,
 
     #[command(name = "_hosts", hide = true)]
-    Hosts {
-        #[command(subcommand)]
-        action: HostsAction,
-    },
-}
-
-#[derive(Subcommand)]
-pub enum HostsAction {
-    Add {
-        ip: std::net::Ipv4Addr,
-        hostname: String,
-        dir: String,
-    },
-    Remove {
-        #[arg(required = true)]
-        ips: Vec<std::net::Ipv4Addr>,
-    },
+    Hosts,
 }
