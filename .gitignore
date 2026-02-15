@@ -15,3 +15,8 @@
 !dist-workspace.toml
 !install.sh
 !AGENTS.md
+!CHANGELOG.md
+!cliff.toml
+!deny.toml
+!rust-toolchain.toml
+!rustfmt.toml

@@ -1,0 +1,31 @@
+[graph]
+targets = [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+]
+
+[advisories]
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Zlib",
+]
+unused-allowed-license = "allow"
+
+[licenses.private]
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
