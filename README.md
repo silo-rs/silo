@@ -9,28 +9,24 @@
   <img src="demo.gif" width="100%" />
 </p>
 
-## Install
+## The problem
+
+You have two worktrees of the same app and want to run both, but they both bind port 3000. You can't use the same port twice.
+
+## The fix
 
 ```sh
 curl -fsSL https://setup.silo.rs | sh
 ```
 
-## Quick start
+Prefix any command with `silo`. Each worktree gets its own loopback IP, so the same port never conflicts:
 
 ```sh
-silo npm run dev
-# silo ● main [preload]
-#      127.1.42.7 · main.repo.silo
-# Listening on http://localhost:3000
+~/app/main    $ silo npm run dev    # → 127.1.42.7:3000
+~/app/feature $ silo npm run dev    # → 127.1.98.3:3000
 ```
 
-## How it works
-
-Prefix any command with `silo`. Each directory and branch gets its own localhost IP, so the same port never conflicts.
-
-```
-your app → bind("0.0.0.0:3000") → [ silo ] → bind("127.1.42.7:3000") ✅
-```
+Both are `:3000`, but on different IPs. Your app doesn't know the difference. Silo transparently rewrites `0.0.0.0` to the assigned IP before the bind happens.
 
 ## Commands
 
@@ -60,10 +56,10 @@ All services share the same isolated IP, no extra config needed.
 
 Silo pairs with tools that run parallel agents in git worktrees:
 
-- [vibe-kanban](https://github.com/BloopAI/vibe-kanban) — kanban board for coding agents
-- [claude-squad](https://github.com/smtg-ai/claude-squad) — parallel Claude Code sessions
-- [ccmanager](https://github.com/kbwo/ccmanager) — session manager for coding agents
-- [workmux](https://github.com/raine/workmux) — worktrees + tmux
+- [vibe-kanban](https://github.com/BloopAI/vibe-kanban) - kanban board for coding agents
+- [claude-squad](https://github.com/smtg-ai/claude-squad) - parallel Claude Code sessions
+- [ccmanager](https://github.com/kbwo/ccmanager) - session manager for coding agents
+- [workmux](https://github.com/raine/workmux) - worktrees + tmux
 
 ## Environment variables
 
