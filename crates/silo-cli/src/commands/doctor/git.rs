@@ -58,24 +58,7 @@ pub fn check_worktrees(ck: &mut Checker) -> Option<WorktreeInfo> {
     }
 
     let text = String::from_utf8_lossy(&output.stdout);
-    let mut entries = Vec::new();
-    let mut current_path: Option<String> = None;
-    let mut current_branch: Option<String> = None;
-
-    for line in text.lines() {
-        if let Some(path) = line.strip_prefix("worktree ") {
-            if let Some(ref p) = current_path {
-                entries.push(make_worktree_entry(p, current_branch.take()));
-            }
-            current_path = Some(path.to_string());
-            current_branch = None;
-        } else if let Some(branch) = line.strip_prefix("branch refs/heads/") {
-            current_branch = Some(branch.to_string());
-        }
-    }
-    if let Some(ref p) = current_path {
-        entries.push(make_worktree_entry(p, current_branch.take()));
-    }
+    let entries = parse_worktree_porcelain(&text);
 
     let count = entries.len();
     if count > 1 {
@@ -99,6 +82,29 @@ pub fn check_worktrees(ck: &mut Checker) -> Option<WorktreeInfo> {
     })
 }
 
+fn parse_worktree_porcelain(text: &str) -> Vec<WorktreeEntry> {
+    let mut entries = Vec::new();
+    let mut current_path: Option<String> = None;
+    let mut current_branch: Option<String> = None;
+
+    for line in text.lines() {
+        if let Some(path) = line.strip_prefix("worktree ") {
+            if let Some(ref p) = current_path {
+                entries.push(make_worktree_entry(p, current_branch.take()));
+            }
+            current_path = Some(path.to_string());
+            current_branch = None;
+        } else if let Some(branch) = line.strip_prefix("branch refs/heads/") {
+            current_branch = Some(branch.to_string());
+        }
+    }
+    if let Some(ref p) = current_path {
+        entries.push(make_worktree_entry(p, current_branch.take()));
+    }
+
+    entries
+}
+
 fn make_worktree_entry(path: &str, branch: Option<String>) -> WorktreeEntry {
     let canonical = Path::new(path)
         .canonicalize()
@@ -118,5 +124,67 @@ fn make_worktree_entry(path: &str, branch: Option<String>) -> WorktreeEntry {
             Some(branch_name)
         },
         ip,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_empty_porcelain() {
+        let entries = parse_worktree_porcelain("");
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn parse_single_worktree() {
+        let input = "worktree /home/user/project\nbranch refs/heads/main\nHEAD abc123\n";
+        let entries = parse_worktree_porcelain(input);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].path, "/home/user/project");
+        assert_eq!(entries[0].branch.as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn parse_multiple_worktrees() {
+        let input = "\
+worktree /home/user/project
+branch refs/heads/main
+HEAD abc123
+
+worktree /home/user/project-feat
+branch refs/heads/feature/auth
+HEAD def456
+";
+        let entries = parse_worktree_porcelain(input);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].branch.as_deref(), Some("main"));
+        assert_eq!(entries[1].branch.as_deref(), Some("feature/auth"));
+    }
+
+    #[test]
+    fn parse_detached_worktree() {
+        let input = "worktree /home/user/detached\nHEAD abc123\ndetached\n";
+        let entries = parse_worktree_porcelain(input);
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].branch.is_none());
+        assert!(entries[0].ip.is_none());
+    }
+
+    #[test]
+    fn parse_bare_worktree() {
+        let input = "worktree /home/user/bare.git\nbare\n";
+        let entries = parse_worktree_porcelain(input);
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].branch.is_none());
+    }
+
+    #[test]
+    fn worktree_with_branch_has_ip() {
+        let input = "worktree /tmp/test-project\nbranch refs/heads/main\n";
+        let entries = parse_worktree_porcelain(input);
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].ip.is_some());
     }
 }

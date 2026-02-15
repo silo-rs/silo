@@ -24,8 +24,10 @@ const KNOWN_SUBCOMMANDS: &[&str] = &[
 ];
 
 fn auto_run_args() -> Vec<String> {
-    let args: Vec<String> = std::env::args().collect();
+    maybe_inject_run(std::env::args().collect())
+}
 
+fn maybe_inject_run(args: Vec<String>) -> Vec<String> {
     if args.len() > 1 && !args[1].starts_with('-') && !KNOWN_SUBCOMMANDS.contains(&args[1].as_str())
     {
         let mut new_args = vec![args[0].clone(), "run".into()];
@@ -85,5 +87,59 @@ fn run() -> eyre::Result<()> {
         Commands::SetupEbpf => commands::setup_ebpf::run(),
         #[cfg(target_os = "linux")]
         Commands::TeardownEbpf => commands::teardown_ebpf::run(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(input: &[&str]) -> Vec<String> {
+        input.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn injects_run_for_unknown_command() {
+        let result = maybe_inject_run(args(&["silo", "npm", "dev"]));
+        assert_eq!(result, args(&["silo", "run", "npm", "dev"]));
+    }
+
+    #[test]
+    fn preserves_known_subcommand() {
+        for sub in KNOWN_SUBCOMMANDS {
+            let result = maybe_inject_run(args(&["silo", sub]));
+            assert_eq!(
+                result,
+                args(&["silo", sub]),
+                "should not inject run for {sub}"
+            );
+        }
+    }
+
+    #[test]
+    fn preserves_flags() {
+        let result = maybe_inject_run(args(&["silo", "--help"]));
+        assert_eq!(result, args(&["silo", "--help"]));
+    }
+
+    #[test]
+    fn no_args_passthrough() {
+        let result = maybe_inject_run(args(&["silo"]));
+        assert_eq!(result, args(&["silo"]));
+    }
+
+    #[test]
+    fn injects_run_preserves_all_trailing_args() {
+        let result = maybe_inject_run(args(&["silo", "node", "server.js", "--port", "3000"]));
+        assert_eq!(
+            result,
+            args(&["silo", "run", "node", "server.js", "--port", "3000"])
+        );
+    }
+
+    #[test]
+    fn unknown_subcommand_like_typo_gets_run_injected() {
+        let result = maybe_inject_run(args(&["silo", "doctorx"]));
+        assert_eq!(result, args(&["silo", "run", "doctorx"]));
     }
 }

@@ -173,3 +173,84 @@ pub fn run(json: bool) -> eyre::Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn checker_starts_empty() {
+        let ck = Checker::new();
+        assert_eq!(ck.checks.len(), 0);
+        assert_eq!(ck.warnings, 0);
+        assert_eq!(ck.errors, 0);
+    }
+
+    #[test]
+    fn checker_ok_does_not_increment_counters() {
+        let mut ck = Checker::new();
+        ck.ok("test", "all good");
+        assert_eq!(ck.checks.len(), 1);
+        assert_eq!(ck.warnings, 0);
+        assert_eq!(ck.errors, 0);
+    }
+
+    #[test]
+    fn checker_warn_increments_warnings() {
+        let mut ck = Checker::new();
+        ck.warn("test", "something off");
+        assert_eq!(ck.warnings, 1);
+        assert_eq!(ck.errors, 0);
+    }
+
+    #[test]
+    fn checker_error_increments_errors() {
+        let mut ck = Checker::new();
+        ck.error("test", "broken");
+        assert_eq!(ck.warnings, 0);
+        assert_eq!(ck.errors, 1);
+    }
+
+    #[test]
+    fn checker_info_does_not_increment_counters() {
+        let mut ck = Checker::new();
+        ck.info("test", "fyi");
+        assert_eq!(ck.checks.len(), 1);
+        assert_eq!(ck.warnings, 0);
+        assert_eq!(ck.errors, 0);
+    }
+
+    #[test]
+    fn checker_accumulates_multiple() {
+        let mut ck = Checker::new();
+        ck.ok("a", "ok");
+        ck.warn("b", "warn");
+        ck.error("c", "err");
+        ck.info("d", "info");
+        ck.warn("e", "warn2");
+        assert_eq!(ck.checks.len(), 5);
+        assert_eq!(ck.warnings, 2);
+        assert_eq!(ck.errors, 1);
+    }
+
+    #[test]
+    fn checker_preserves_names_and_details() {
+        let mut ck = Checker::new();
+        ck.ok("loopback", "lo0");
+        ck.error("bind lib", "not found");
+        assert_eq!(ck.checks[0].name, "loopback");
+        assert_eq!(ck.checks[0].detail, "lo0");
+        assert_eq!(ck.checks[1].name, "bind lib");
+        assert_eq!(ck.checks[1].detail, "not found");
+    }
+
+    #[test]
+    fn checker_serializes_to_json() {
+        let mut ck = Checker::new();
+        ck.ok("test", "passed");
+        ck.warn("test2", "issue");
+        let json = serde_json::to_string(&ck.checks).unwrap();
+        assert!(json.contains("\"status\":\"ok\""));
+        assert!(json.contains("\"status\":\"warn\""));
+    }
+}

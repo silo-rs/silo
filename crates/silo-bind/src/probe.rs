@@ -106,3 +106,114 @@ pub unsafe fn probe_has_listener(fd: c_int, silo_ip: u32, port: u16) -> bool {
 
     has_listener
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn set_and_check() {
+        let port = 40_000;
+        cache_set_listener(port);
+        assert!(cache_has_listener(port));
+    }
+
+    #[test]
+    fn clear_after_set() {
+        let port = 40_001;
+        cache_set_listener(port);
+        cache_clear_listener(port);
+        assert!(!cache_has_listener(port));
+    }
+
+    #[test]
+    fn unset_port_is_not_cached() {
+        let port = 40_002;
+        cache_clear_listener(port);
+        assert!(!cache_has_listener(port));
+    }
+
+    #[test]
+    fn independent_ports() {
+        let a = 40_010;
+        let b = 40_011;
+        cache_clear_listener(a);
+        cache_clear_listener(b);
+
+        cache_set_listener(a);
+        assert!(cache_has_listener(a));
+        assert!(!cache_has_listener(b));
+    }
+
+    #[test]
+    fn boundary_port_zero() {
+        cache_set_listener(0);
+        assert!(cache_has_listener(0));
+        cache_clear_listener(0);
+        assert!(!cache_has_listener(0));
+    }
+
+    #[test]
+    fn boundary_port_63() {
+        cache_set_listener(63);
+        assert!(cache_has_listener(63));
+        cache_clear_listener(63);
+        assert!(!cache_has_listener(63));
+    }
+
+    #[test]
+    fn boundary_port_64() {
+        cache_set_listener(64);
+        assert!(cache_has_listener(64));
+        cache_clear_listener(64);
+        assert!(!cache_has_listener(64));
+    }
+
+    #[test]
+    fn boundary_port_max() {
+        cache_set_listener(u16::MAX);
+        assert!(cache_has_listener(u16::MAX));
+        cache_clear_listener(u16::MAX);
+        assert!(!cache_has_listener(u16::MAX));
+    }
+
+    #[test]
+    fn set_does_not_clobber_neighbor_bits() {
+        let base = 40_064;
+        let neighbor = base + 1;
+        cache_clear_listener(base);
+        cache_clear_listener(neighbor);
+
+        cache_set_listener(base);
+        assert!(!cache_has_listener(neighbor));
+
+        cache_set_listener(neighbor);
+        assert!(cache_has_listener(base));
+        assert!(cache_has_listener(neighbor));
+
+        cache_clear_listener(base);
+        assert!(!cache_has_listener(base));
+        assert!(cache_has_listener(neighbor));
+
+        cache_clear_listener(neighbor);
+    }
+
+    #[test]
+    fn double_set_is_idempotent() {
+        let port = 40_100;
+        cache_set_listener(port);
+        cache_set_listener(port);
+        assert!(cache_has_listener(port));
+        cache_clear_listener(port);
+        assert!(!cache_has_listener(port));
+    }
+
+    #[test]
+    fn double_clear_is_idempotent() {
+        let port = 40_101;
+        cache_set_listener(port);
+        cache_clear_listener(port);
+        cache_clear_listener(port);
+        assert!(!cache_has_listener(port));
+    }
+}

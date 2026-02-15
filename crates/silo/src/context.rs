@@ -121,4 +121,48 @@ mod tests {
         let debug = format!("{:?}", ctx);
         assert!(debug.contains("Context"));
     }
+
+    #[test]
+    fn context_ip_override() {
+        let dir = tempfile::tempdir().unwrap();
+        git_init(dir.path());
+        let ip = Ipv4Addr::new(127, 5, 5, 5);
+        let ctx = Context::for_dir(dir.path(), Some("test"), Some(ip)).unwrap();
+        assert_eq!(ctx.ip(), ip);
+    }
+
+    #[test]
+    fn context_ip_override_non_loopback_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        git_init(dir.path());
+        let ip = Ipv4Addr::new(10, 0, 0, 1);
+        assert!(Context::for_dir(dir.path(), Some("test"), Some(ip)).is_err());
+    }
+
+    #[test]
+    fn context_hostname_ends_with_silo() {
+        let dir = tempfile::tempdir().unwrap();
+        git_init(dir.path());
+        let ctx = Context::for_dir(dir.path(), Some("my-branch"), None).unwrap();
+        assert!(ctx.hostname().ends_with(".silo"));
+        assert!(ctx.hostname().starts_with("my-branch."));
+    }
+
+    #[test]
+    fn context_deterministic_ip() {
+        let dir = tempfile::tempdir().unwrap();
+        git_init(dir.path());
+        let a = Context::for_dir(dir.path(), Some("main"), None).unwrap();
+        let b = Context::for_dir(dir.path(), Some("main"), None).unwrap();
+        assert_eq!(a.ip(), b.ip());
+    }
+
+    #[test]
+    fn context_different_names_different_ips() {
+        let dir = tempfile::tempdir().unwrap();
+        git_init(dir.path());
+        let a = Context::for_dir(dir.path(), Some("main"), None).unwrap();
+        let b = Context::for_dir(dir.path(), Some("develop"), None).unwrap();
+        assert_ne!(a.ip(), b.ip());
+    }
 }

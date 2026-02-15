@@ -87,3 +87,135 @@ fn extract_listen_address(line: &str) -> Option<(&str, &str)> {
         Some((ip, port))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_empty_output() {
+        let map = parse_listening_ports("");
+        assert!(map.is_empty());
+    }
+
+    #[test]
+    fn parse_filters_localhost() {
+        let map = parse_listening_ports("dummy 127.0.0.1:8080 stuff");
+        assert!(!map.contains_key(&Ipv4Addr::new(127, 0, 0, 1)));
+    }
+
+    #[test]
+    fn parse_filters_non_loopback() {
+        let map = parse_listening_ports("dummy 192.168.1.1:8080 stuff");
+        assert!(map.is_empty());
+    }
+
+    #[cfg(target_os = "macos")]
+    mod macos {
+        use super::*;
+
+        const LSOF_OUTPUT: &str = "\
+COMMAND   PID USER   FD   TYPE DEVICE SIZE/OFF NODE NAME
+node    12345 user   23u  IPv4 0x1234      0t0  TCP 127.1.2.3:3000 (LISTEN)
+node    12345 user   24u  IPv4 0x1235      0t0  TCP 127.1.2.3:3001 (LISTEN)
+node    12346 user   10u  IPv4 0x1236      0t0  TCP 127.0.0.1:5432 (LISTEN)
+node    12347 user   11u  IPv4 0x1237      0t0  TCP 127.1.4.5:8080 (LISTEN)";
+
+        #[test]
+        fn parse_lsof_output() {
+            let map = parse_listening_ports(LSOF_OUTPUT);
+            let ip1 = Ipv4Addr::new(127, 1, 2, 3);
+            let ip2 = Ipv4Addr::new(127, 1, 4, 5);
+            assert_eq!(map.get(&ip1).unwrap(), &vec![3000, 3001]);
+            assert_eq!(map.get(&ip2).unwrap(), &vec![8080]);
+            assert!(!map.contains_key(&Ipv4Addr::new(127, 0, 0, 1)));
+        }
+
+        #[test]
+        fn extract_lsof_line() {
+            let line = "node 123 user 23u IPv4 0x1234 0t0 TCP 127.1.2.3:3000 (LISTEN)";
+            let (ip, port) = extract_listen_address(line).unwrap();
+            assert_eq!(ip, "127.1.2.3");
+            assert_eq!(port, "3000");
+        }
+
+        #[test]
+        fn extract_no_loopback_returns_none() {
+            let line = "node 123 user 23u IPv4 0x1234 0t0 TCP 192.168.1.1:80 (LISTEN)";
+            assert!(extract_listen_address(line).is_none());
+        }
+
+        #[test]
+        fn ports_are_sorted() {
+            let input = "\
+COMMAND PID USER FD TYPE DEVICE SIZE NODE NAME
+x 1 u 1u IPv4 0 0t0 TCP 127.1.0.1:9000 (LISTEN)
+x 1 u 2u IPv4 0 0t0 TCP 127.1.0.1:80 (LISTEN)
+x 1 u 3u IPv4 0 0t0 TCP 127.1.0.1:443 (LISTEN)";
+            let map = parse_listening_ports(input);
+            let ports = map.get(&Ipv4Addr::new(127, 1, 0, 1)).unwrap();
+            assert_eq!(ports, &vec![80, 443, 9000]);
+        }
+
+        #[test]
+        fn no_duplicate_ports() {
+            let input = "\
+COMMAND PID USER FD TYPE DEVICE SIZE NODE NAME
+x 1 u 1u IPv4 0 0t0 TCP 127.1.0.1:3000 (LISTEN)
+x 2 u 1u IPv4 0 0t0 TCP 127.1.0.1:3000 (LISTEN)";
+            let map = parse_listening_ports(input);
+            let ports = map.get(&Ipv4Addr::new(127, 1, 0, 1)).unwrap();
+            assert_eq!(ports, &vec![3000]);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    mod linux {
+        use super::*;
+
+        const SS_OUTPUT: &str = "\
+LISTEN 0 128 127.1.2.3:3000 0.0.0.0:*
+LISTEN 0 128 127.1.2.3:3001 0.0.0.0:*
+LISTEN 0 128 127.0.0.1:5432 0.0.0.0:*
+LISTEN 0 128 127.1.4.5:8080 0.0.0.0:*";
+
+        #[test]
+        fn parse_ss_output() {
+            let map = parse_listening_ports(SS_OUTPUT);
+            let ip1 = Ipv4Addr::new(127, 1, 2, 3);
+            let ip2 = Ipv4Addr::new(127, 1, 4, 5);
+            assert_eq!(map.get(&ip1).unwrap(), &vec![3000, 3001]);
+            assert_eq!(map.get(&ip2).unwrap(), &vec![8080]);
+            assert!(!map.contains_key(&Ipv4Addr::new(127, 0, 0, 1)));
+        }
+
+        #[test]
+        fn extract_ss_line() {
+            let line = "LISTEN 0 128 127.1.2.3:3000 0.0.0.0:*";
+            let (ip, port) = extract_listen_address(line).unwrap();
+            assert_eq!(ip, "127.1.2.3");
+            assert_eq!(port, "3000");
+        }
+
+        #[test]
+        fn ports_are_sorted() {
+            let input = "\
+LISTEN 0 128 127.1.0.1:9000 0.0.0.0:*
+LISTEN 0 128 127.1.0.1:80 0.0.0.0:*
+LISTEN 0 128 127.1.0.1:443 0.0.0.0:*";
+            let map = parse_listening_ports(input);
+            let ports = map.get(&Ipv4Addr::new(127, 1, 0, 1)).unwrap();
+            assert_eq!(ports, &vec![80, 443, 9000]);
+        }
+
+        #[test]
+        fn no_duplicate_ports() {
+            let input = "\
+LISTEN 0 128 127.1.0.1:3000 0.0.0.0:*
+LISTEN 0 128 127.1.0.1:3000 0.0.0.0:*";
+            let map = parse_listening_ports(input);
+            let ports = map.get(&Ipv4Addr::new(127, 1, 0, 1)).unwrap();
+            assert_eq!(ports, &vec![3000]);
+        }
+    }
+}

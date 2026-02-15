@@ -42,3 +42,46 @@ pub fn run(name: Option<&str>, ip: Option<std::net::Ipv4Addr>, json: bool) -> ey
 fn shell_escape(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn escape_simple_string() {
+        assert_eq!(shell_escape("hello"), "'hello'");
+    }
+
+    #[test]
+    fn escape_with_single_quote() {
+        assert_eq!(shell_escape("it's"), "'it'\\''s'");
+    }
+
+    #[test]
+    fn escape_empty_string() {
+        assert_eq!(shell_escape(""), "''");
+    }
+
+    #[test]
+    fn escape_with_spaces() {
+        assert_eq!(shell_escape("hello world"), "'hello world'");
+    }
+
+    #[test]
+    fn escape_with_special_chars() {
+        assert_eq!(shell_escape("$HOME"), "'$HOME'");
+    }
+
+    #[test]
+    fn escape_path() {
+        assert_eq!(
+            shell_escape("/usr/local/lib/libsilo_bind.dylib"),
+            "'/usr/local/lib/libsilo_bind.dylib'"
+        );
+    }
+
+    #[test]
+    fn escape_multiple_single_quotes() {
+        assert_eq!(shell_escape("a'b'c"), "'a'\\''b'\\''c'");
+    }
+}

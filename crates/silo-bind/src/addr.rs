@@ -226,3 +226,115 @@ pub unsafe fn prepare_sendmsg(
     msg_buf.msg_namelen = new_len;
     msg_buf as *const libc::msghdr
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ptr;
+
+    #[test]
+    fn read_sa_family_null_returns_none() {
+        assert_eq!(unsafe { read_sa_family(ptr::null()) }, None);
+    }
+
+    #[test]
+    fn read_sa_family_ipv4() {
+        let mut sin: sockaddr_in = unsafe { std::mem::zeroed() };
+        sin.sin_family = AF_INET as _;
+        let sa = &sin as *const sockaddr_in as *const sockaddr;
+        assert_eq!(unsafe { read_sa_family(sa) }, Some(AF_INET));
+    }
+
+    #[test]
+    fn read_sa_family_ipv6() {
+        let mut sin6: libc::sockaddr_in6 = unsafe { std::mem::zeroed() };
+        sin6.sin6_family = libc::AF_INET6 as _;
+        let sa = &sin6 as *const libc::sockaddr_in6 as *const sockaddr;
+        assert_eq!(unsafe { read_sa_family(sa) }, Some(libc::AF_INET6));
+    }
+
+    #[test]
+    fn read_port_null_returns_none() {
+        assert_eq!(unsafe { read_port(ptr::null(), 0) }, None);
+    }
+
+    #[test]
+    fn read_port_ipv4() {
+        let mut sin: sockaddr_in = unsafe { std::mem::zeroed() };
+        sin.sin_family = AF_INET as _;
+        sin.sin_port = 8080u16.to_be();
+        let sa = &sin as *const sockaddr_in as *const sockaddr;
+        let len = std::mem::size_of::<sockaddr_in>() as socklen_t;
+        assert_eq!(unsafe { read_port(sa, len) }, Some(8080u16.to_be()));
+    }
+
+    #[test]
+    fn read_port_ipv6() {
+        let mut sin6: libc::sockaddr_in6 = unsafe { std::mem::zeroed() };
+        sin6.sin6_family = libc::AF_INET6 as _;
+        sin6.sin6_port = 443u16.to_be();
+        let sa = &sin6 as *const libc::sockaddr_in6 as *const sockaddr;
+        let len = std::mem::size_of::<libc::sockaddr_in6>() as socklen_t;
+        assert_eq!(unsafe { read_port(sa, len) }, Some(443u16.to_be()));
+    }
+
+    #[test]
+    fn read_port_truncated_ipv4_returns_none() {
+        let mut sin: sockaddr_in = unsafe { std::mem::zeroed() };
+        sin.sin_family = AF_INET as _;
+        sin.sin_port = 80u16.to_be();
+        let sa = &sin as *const sockaddr_in as *const sockaddr;
+        let short_len = (std::mem::size_of::<sockaddr_in>() - 1) as socklen_t;
+        assert_eq!(unsafe { read_port(sa, short_len) }, None);
+    }
+
+    #[test]
+    fn read_port_truncated_ipv6_returns_none() {
+        let mut sin6: libc::sockaddr_in6 = unsafe { std::mem::zeroed() };
+        sin6.sin6_family = libc::AF_INET6 as _;
+        sin6.sin6_port = 80u16.to_be();
+        let sa = &sin6 as *const libc::sockaddr_in6 as *const sockaddr;
+        let short_len = (std::mem::size_of::<libc::sockaddr_in6>() - 1) as socklen_t;
+        assert_eq!(unsafe { read_port(sa, short_len) }, None);
+    }
+
+    #[test]
+    fn read_port_unknown_family_returns_none() {
+        let mut sa: sockaddr = unsafe { std::mem::zeroed() };
+        sa.sa_family = libc::AF_UNIX as _;
+        let len = std::mem::size_of::<sockaddr>() as socklen_t;
+        assert_eq!(unsafe { read_port(&sa as *const sockaddr, len) }, None);
+    }
+
+    #[test]
+    fn prepare_sendmsg_null_msg_returns_null() {
+        let mut msg_buf: libc::msghdr = unsafe { std::mem::zeroed() };
+        let mut storage = MaybeUninit::<SockaddrStorage>::uninit();
+        let result = unsafe { prepare_sendmsg(ptr::null(), &mut msg_buf, &mut storage) };
+        assert!(result.is_null());
+    }
+
+    #[test]
+    fn prepare_sendmsg_null_name_returns_original() {
+        let msg: libc::msghdr = unsafe { std::mem::zeroed() };
+        let mut msg_buf: libc::msghdr = unsafe { std::mem::zeroed() };
+        let mut storage = MaybeUninit::<SockaddrStorage>::uninit();
+        let result =
+            unsafe { prepare_sendmsg(&msg as *const libc::msghdr, &mut msg_buf, &mut storage) };
+        assert_eq!(result, &msg as *const libc::msghdr);
+    }
+
+    #[test]
+    fn prepare_sendmsg_zero_namelen_returns_original() {
+        let mut sin: sockaddr_in = unsafe { std::mem::zeroed() };
+        sin.sin_family = AF_INET as _;
+        let mut msg: libc::msghdr = unsafe { std::mem::zeroed() };
+        msg.msg_name = &mut sin as *mut sockaddr_in as *mut libc::c_void;
+        msg.msg_namelen = 0;
+        let mut msg_buf: libc::msghdr = unsafe { std::mem::zeroed() };
+        let mut storage = MaybeUninit::<SockaddrStorage>::uninit();
+        let result =
+            unsafe { prepare_sendmsg(&msg as *const libc::msghdr, &mut msg_buf, &mut storage) };
+        assert_eq!(result, &msg as *const libc::msghdr);
+    }
+}
