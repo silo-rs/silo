@@ -103,6 +103,22 @@ fn find_ip_conflict(entries: &[String], ip: Ipv4Addr, hostname: &str) -> Option<
     None
 }
 
+pub fn check_collision(ip: Ipv4Addr, hostname: &str) -> Result<()> {
+    let content = match std::fs::read_to_string(HOSTS_PATH) {
+        Ok(c) => c,
+        Err(_) => return Ok(()),
+    };
+    let (_, entries, _) = parse_block(&content);
+    if let Some(conflict) = find_ip_conflict(&entries, ip, hostname) {
+        return Err(Error::IpCollision {
+            ip,
+            existing: conflict,
+            new: hostname.to_string(),
+        });
+    }
+    Ok(())
+}
+
 pub fn run_hosts_direct(request: &HostsRequest) -> Result<Vec<RemovedEntry>> {
     match request {
         HostsRequest::Add { ip, hostname, dir } => {
@@ -130,13 +146,11 @@ fn run_direct_add(ip: Ipv4Addr, hostname: &str, dir: &str) -> Result<()> {
     let new_line = format!("{}\t{}\t# {}", ip, hostname, dir);
 
     if let Some(conflict) = find_ip_conflict(&entries, ip, hostname) {
-        tracing::warn!(
-            ip = %ip,
-            existing = %conflict,
-            new = %hostname,
-            "IP collision detected — two sessions resolved to the same address. \
-             Use `silo run --ip <addr>` to override one of them.",
-        );
+        return Err(Error::IpCollision {
+            ip,
+            existing: conflict,
+            new: hostname.to_string(),
+        });
     }
 
     if let Some(pos) = entries
