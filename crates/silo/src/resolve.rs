@@ -1,6 +1,6 @@
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use tracing::debug;
 
@@ -46,17 +46,23 @@ pub fn resolve(
     })
 }
 
-pub fn find_git_root(start: &Path) -> std::result::Result<PathBuf, Error> {
-    let mut dir = start.to_path_buf();
-    loop {
-        let candidate = dir.join(".git");
-        if candidate.exists() {
-            return Ok(dir);
-        }
-        if !dir.pop() {
-            return Err(Error::NotGitRepo);
-        }
+pub fn find_git_root(start: &Path) -> Result<PathBuf> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(start)
+        .stderr(Stdio::null())
+        .output()
+        .map_err(|e| Error::io("failed to run git", e))?;
+
+    if !output.status.success() {
+        return Err(Error::NotGitRepo);
     }
+
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if path.is_empty() {
+        return Err(Error::NotGitRepo);
+    }
+    Ok(PathBuf::from(path))
 }
 
 pub fn get_branch_name(git_root: &Path) -> Result<String> {
@@ -278,6 +284,16 @@ mod tests {
         );
     }
 
+    fn git_init(dir: &Path) {
+        Command::new("git")
+            .args(["init"])
+            .current_dir(dir)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("git init failed");
+    }
+
     #[test]
     fn find_git_root_not_git() {
         let dir = tempfile::tempdir().unwrap();
@@ -288,19 +304,25 @@ mod tests {
     #[test]
     fn find_git_root_at_root() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir(dir.path().join(".git")).unwrap();
+        git_init(dir.path());
         let root = find_git_root(dir.path()).unwrap();
-        assert_eq!(root, dir.path());
+        assert_eq!(
+            root.canonicalize().unwrap(),
+            dir.path().canonicalize().unwrap()
+        );
     }
 
     #[test]
     fn find_git_root_from_subdir() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir(dir.path().join(".git")).unwrap();
+        git_init(dir.path());
         let sub = dir.path().join("src").join("lib");
         std::fs::create_dir_all(&sub).unwrap();
         let root = find_git_root(&sub).unwrap();
-        assert_eq!(root, dir.path());
+        assert_eq!(
+            root.canonicalize().unwrap(),
+            dir.path().canonicalize().unwrap()
+        );
     }
 
     #[test]

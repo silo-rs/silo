@@ -56,13 +56,26 @@ impl Context {
 mod tests {
     use super::*;
 
+    fn git_init(dir: &std::path::Path) {
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(dir)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .expect("git init failed");
+    }
+
     #[test]
     fn context_for_git_dir() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir(dir.path().join(".git")).unwrap();
+        git_init(dir.path());
         let ctx = Context::for_dir(dir.path(), Some("test"), None).unwrap();
         assert_eq!(ctx.name(), "test");
-        assert_eq!(ctx.dir(), dir.path());
+        assert_eq!(
+            ctx.dir().canonicalize().unwrap(),
+            dir.path().canonicalize().unwrap()
+        );
         assert_eq!(ctx.ip().octets()[0], 127);
         assert!(ctx.hostname().ends_with(".silo"));
     }
@@ -76,7 +89,7 @@ mod tests {
     #[test]
     fn context_clone() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir(dir.path().join(".git")).unwrap();
+        git_init(dir.path());
         let ctx = Context::for_dir(dir.path(), Some("main"), None).unwrap();
         let cloned = ctx.clone();
         assert_eq!(ctx.ip(), cloned.ip());
@@ -87,7 +100,7 @@ mod tests {
     #[test]
     fn context_env_vars() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir(dir.path().join(".git")).unwrap();
+        git_init(dir.path());
         let ctx = Context::for_dir(dir.path(), Some("feat"), None).unwrap();
         let vars = ctx.env_vars();
         assert_eq!(vars.len(), 4);
@@ -103,7 +116,7 @@ mod tests {
     #[test]
     fn context_debug() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir(dir.path().join(".git")).unwrap();
+        git_init(dir.path());
         let ctx = Context::for_dir(dir.path(), Some("main"), None).unwrap();
         let debug = format!("{:?}", ctx);
         assert!(debug.contains("Context"));
