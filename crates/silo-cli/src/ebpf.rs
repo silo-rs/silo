@@ -15,37 +15,72 @@ use eyre::{Context, ContextCompat};
 
 const CGROUP_BASE: &str = "/sys/fs/cgroup/silo";
 const PIN_BASE: &str = "/sys/fs/bpf/silo";
-pub const PROGRAM_NAMES: &[&str] = &[
-    "silo_bind4",
-    "silo_bind6",
-    "silo_connect4",
-    "silo_connect6",
-    "silo_sendmsg4",
-    "silo_sendmsg6",
-    "silo_recvmsg4",
-    "silo_recvmsg6",
-    "silo_getpeername4",
-    "silo_getpeername6",
-    "silo_getsockname4",
-    "silo_getsockname6",
-];
 
-fn attach_type_for(name: &str) -> CgroupSockAddrAttachType {
-    use CgroupSockAddrAttachType::*;
-    match name {
-        "silo_bind4" => Bind4,
-        "silo_bind6" => Bind6,
-        "silo_connect4" => Connect4,
-        "silo_connect6" => Connect6,
-        "silo_sendmsg4" => UDPSendMsg4,
-        "silo_sendmsg6" => UDPSendMsg6,
-        "silo_recvmsg4" => UDPRecvMsg4,
-        "silo_recvmsg6" => UDPRecvMsg6,
-        "silo_getpeername4" => GetPeerName4,
-        "silo_getpeername6" => GetPeerName6,
-        "silo_getsockname4" => GetSockName4,
-        "silo_getsockname6" => GetSockName6,
-        _ => unreachable!("unknown BPF program name: {name}"),
+#[derive(Debug, Clone, Copy)]
+pub enum BpfProgram {
+    Bind4,
+    Bind6,
+    Connect4,
+    Connect6,
+    SendMsg4,
+    SendMsg6,
+    RecvMsg4,
+    RecvMsg6,
+    GetPeerName4,
+    GetPeerName6,
+    GetSockName4,
+    GetSockName6,
+}
+
+impl BpfProgram {
+    pub const ALL: &[Self] = &[
+        Self::Bind4,
+        Self::Bind6,
+        Self::Connect4,
+        Self::Connect6,
+        Self::SendMsg4,
+        Self::SendMsg6,
+        Self::RecvMsg4,
+        Self::RecvMsg6,
+        Self::GetPeerName4,
+        Self::GetPeerName6,
+        Self::GetSockName4,
+        Self::GetSockName6,
+    ];
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Bind4 => "silo_bind4",
+            Self::Bind6 => "silo_bind6",
+            Self::Connect4 => "silo_connect4",
+            Self::Connect6 => "silo_connect6",
+            Self::SendMsg4 => "silo_sendmsg4",
+            Self::SendMsg6 => "silo_sendmsg6",
+            Self::RecvMsg4 => "silo_recvmsg4",
+            Self::RecvMsg6 => "silo_recvmsg6",
+            Self::GetPeerName4 => "silo_getpeername4",
+            Self::GetPeerName6 => "silo_getpeername6",
+            Self::GetSockName4 => "silo_getsockname4",
+            Self::GetSockName6 => "silo_getsockname6",
+        }
+    }
+
+    pub const fn attach_type(self) -> CgroupSockAddrAttachType {
+        use CgroupSockAddrAttachType::*;
+        match self {
+            Self::Bind4 => Bind4,
+            Self::Bind6 => Bind6,
+            Self::Connect4 => Connect4,
+            Self::Connect6 => Connect6,
+            Self::SendMsg4 => UDPSendMsg4,
+            Self::SendMsg6 => UDPSendMsg6,
+            Self::RecvMsg4 => UDPRecvMsg4,
+            Self::RecvMsg6 => UDPRecvMsg6,
+            Self::GetPeerName4 => GetPeerName4,
+            Self::GetPeerName6 => GetPeerName6,
+            Self::GetSockName4 => GetSockName4,
+            Self::GetSockName6 => GetSockName6,
+        }
     }
 }
 
@@ -104,7 +139,8 @@ impl EbpfSession {
             .insert(cgroup_id, ip_nbo, 0)
             .context("failed to write silo IP to BPF map")?;
 
-        for name in PROGRAM_NAMES {
+        for &prog_kind in BpfProgram::ALL {
+            let name = prog_kind.name();
             let prog: &mut CgroupSockAddr = bpf
                 .program_mut(name)
                 .with_context(|| format!("BPF program {name} not found"))?
@@ -139,9 +175,10 @@ impl EbpfSession {
             .context("failed to write silo IP to pinned BPF map")?;
 
         let mut programs = Vec::new();
-        for name in PROGRAM_NAMES {
+        for &prog_kind in BpfProgram::ALL {
+            let name = prog_kind.name();
             let pin_path = PathBuf::from(PIN_BASE).join(name);
-            let mut prog = CgroupSockAddr::from_pin(&pin_path, attach_type_for(name))
+            let mut prog = CgroupSockAddr::from_pin(&pin_path, prog_kind.attach_type())
                 .with_context(|| format!("failed to open pinned BPF program {name}"))?;
             prog.attach(cgroup_fd, CgroupAttachMode::Single)
                 .with_context(|| format!("failed to attach pinned BPF program {name}"))?;
@@ -263,7 +300,8 @@ pub fn setup_pinned() -> eyre::Result<()> {
 
     let mut bpf = Ebpf::load(EBPF_BYTES).context("failed to load eBPF programs")?;
 
-    for name in PROGRAM_NAMES {
+    for &prog_kind in BpfProgram::ALL {
+        let name = prog_kind.name();
         let prog: &mut CgroupSockAddr = bpf
             .program_mut(name)
             .with_context(|| format!("BPF program {name} not found"))?
@@ -298,14 +336,16 @@ pub fn teardown_pinned() -> eyre::Result<()> {
 
 fn set_pin_permissions() {
     use std::os::unix::fs::PermissionsExt;
-    let (uid, gid) = sudo_caller_ids();
+    let Ok((uid, gid)) = sudo_caller_ids() else {
+        return;
+    };
 
     let _ = fs::set_permissions(PIN_BASE, fs::Permissions::from_mode(0o755));
     let _ = chown_path(PIN_BASE, uid, gid);
 
-    for name in PROGRAM_NAMES {
+    for &prog_kind in BpfProgram::ALL {
         let _ = fs::set_permissions(
-            PathBuf::from(PIN_BASE).join(name),
+            PathBuf::from(PIN_BASE).join(prog_kind.name()),
             fs::Permissions::from_mode(0o644),
         );
     }
@@ -316,8 +356,8 @@ fn set_pin_permissions() {
 }
 
 fn teardown_pinned_inner() {
-    for name in PROGRAM_NAMES {
-        let _ = fs::remove_file(PathBuf::from(PIN_BASE).join(name));
+    for &prog_kind in BpfProgram::ALL {
+        let _ = fs::remove_file(PathBuf::from(PIN_BASE).join(prog_kind.name()));
     }
     let _ = fs::remove_file(PathBuf::from(PIN_BASE).join("SILO_CONFIG"));
     let _ = fs::remove_dir(PIN_BASE);
@@ -377,7 +417,7 @@ fn live_cgroup_ids(base: &Path) -> HashSet<u64> {
 fn setup_cgroup_base() -> eyre::Result<()> {
     fs::create_dir_all(CGROUP_BASE).with_context(|| format!("failed to create {CGROUP_BASE}"))?;
 
-    let (uid, gid) = sudo_caller_ids();
+    let (uid, gid) = sudo_caller_ids().context("failed to determine caller identity")?;
     chown_path(CGROUP_BASE, uid, gid).with_context(|| format!("failed to chown {CGROUP_BASE}"))?;
 
     for name in &["cgroup.procs", "cgroup.threads"] {
@@ -465,16 +505,23 @@ fn has_bpf_caps() -> bool {
     caps & (CAP_NET_ADMIN | CAP_BPF) == (CAP_NET_ADMIN | CAP_BPF)
 }
 
-fn sudo_caller_ids() -> (u32, u32) {
-    let uid = std::env::var("SUDO_UID")
-        .ok()
-        .and_then(|s| s.parse::<u32>().ok())
-        .unwrap_or(0);
-    let gid = std::env::var("SUDO_GID")
-        .ok()
-        .and_then(|s| s.parse::<u32>().ok())
-        .unwrap_or(0);
-    (uid, gid)
+fn sudo_caller_ids() -> eyre::Result<(u32, u32)> {
+    let euid = unsafe { libc::geteuid() };
+    let uid = match std::env::var("SUDO_UID") {
+        Ok(s) => s
+            .parse::<u32>()
+            .with_context(|| format!("SUDO_UID={s:?} is not a valid uid"))?,
+        Err(_) if euid == 0 => 0,
+        Err(_) => eyre::bail!("not running as root and SUDO_UID is not set"),
+    };
+    let gid = match std::env::var("SUDO_GID") {
+        Ok(s) => s
+            .parse::<u32>()
+            .with_context(|| format!("SUDO_GID={s:?} is not a valid gid"))?,
+        Err(_) if euid == 0 => 0,
+        Err(_) => eyre::bail!("not running as root and SUDO_GID is not set"),
+    };
+    Ok((uid, gid))
 }
 
 fn chown_path<P: AsRef<Path>>(path: P, uid: u32, gid: u32) -> eyre::Result<()> {
@@ -489,3 +536,61 @@ fn chown_path<P: AsRef<Path>>(path: P, uid: u32, gid: u32) -> eyre::Result<()> {
 }
 
 static EBPF_BYTES: &[u8] = aya::include_bytes_aligned!(concat!(env!("OUT_DIR"), "/silo-ebpf"));
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bpf_program_all_is_exhaustive() {
+        assert_eq!(BpfProgram::ALL.len(), 12);
+        let names: Vec<&str> = BpfProgram::ALL.iter().map(|p| p.name()).collect();
+        let unique: std::collections::HashSet<&str> = names.iter().copied().collect();
+        assert_eq!(names.len(), unique.len(), "duplicate program names");
+    }
+
+    #[test]
+    fn bpf_program_names_match_convention() {
+        for &prog in BpfProgram::ALL {
+            assert!(
+                prog.name().starts_with("silo_"),
+                "program name {:?} must start with silo_",
+                prog.name()
+            );
+        }
+    }
+
+    #[test]
+    fn sudo_caller_ids_no_sudo_non_root() {
+        // When not running as root and SUDO_UID is not set, should error
+        if unsafe { libc::geteuid() } != 0 {
+            std::env::remove_var("SUDO_UID");
+            std::env::remove_var("SUDO_GID");
+            let result = sudo_caller_ids();
+            assert!(
+                result.is_err(),
+                "should error when not root and no SUDO_UID"
+            );
+        }
+    }
+
+    #[test]
+    fn sudo_caller_ids_with_valid_env() {
+        std::env::set_var("SUDO_UID", "1000");
+        std::env::set_var("SUDO_GID", "1000");
+        let result = sudo_caller_ids();
+        assert_eq!(result.unwrap(), (1000, 1000));
+        std::env::remove_var("SUDO_UID");
+        std::env::remove_var("SUDO_GID");
+    }
+
+    #[test]
+    fn sudo_caller_ids_with_invalid_env() {
+        std::env::set_var("SUDO_UID", "notanumber");
+        std::env::set_var("SUDO_GID", "1000");
+        let result = sudo_caller_ids();
+        assert!(result.is_err(), "should error on unparseable SUDO_UID");
+        std::env::remove_var("SUDO_UID");
+        std::env::remove_var("SUDO_GID");
+    }
+}

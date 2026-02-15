@@ -18,3 +18,4 @@ fd-lock = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
+colored = { workspace = true }

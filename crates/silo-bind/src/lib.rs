@@ -21,19 +21,19 @@ static LISTENER_CACHE: [AtomicU64; 1024] = [const { AtomicU64::new(0) }; 1024];
 fn cache_has_listener(port: u16) -> bool {
     let idx = (port as usize) / 64;
     let bit = (port as usize) % 64;
-    LISTENER_CACHE[idx].load(Ordering::Relaxed) & (1u64 << bit) != 0
+    LISTENER_CACHE[idx].load(Ordering::Acquire) & (1u64 << bit) != 0
 }
 
 fn cache_set_listener(port: u16) {
     let idx = (port as usize) / 64;
     let bit = (port as usize) % 64;
-    LISTENER_CACHE[idx].fetch_or(1u64 << bit, Ordering::Relaxed);
+    LISTENER_CACHE[idx].fetch_or(1u64 << bit, Ordering::Release);
 }
 
 fn cache_clear_listener(port: u16) {
     let idx = (port as usize) / 64;
     let bit = (port as usize) % 64;
-    LISTENER_CACHE[idx].fetch_and(!(1u64 << bit), Ordering::Relaxed);
+    LISTENER_CACHE[idx].fetch_and(!(1u64 << bit), Ordering::Release);
 }
 
 unsafe fn read_port(addr: *const sockaddr, len: socklen_t) -> Option<u16> {

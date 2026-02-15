@@ -281,9 +281,9 @@ fn check_ebpf(checks: &mut Vec<Check>, warnings: &mut usize) {
 
     let pin_base = Path::new("/sys/fs/bpf/silo");
     if pin_base.join("silo_bind4").exists() {
-        let pinned = crate::ebpf::PROGRAM_NAMES
+        let pinned = crate::ebpf::BpfProgram::ALL
             .iter()
-            .filter(|name| pin_base.join(name).exists())
+            .filter(|p| pin_base.join(p.name()).exists())
             .count();
         let has_map = pin_base.join("SILO_CONFIG").exists();
         checks.push(Check {
@@ -292,7 +292,7 @@ fn check_ebpf(checks: &mut Vec<Check>, warnings: &mut usize) {
             detail: format!(
                 "{}/{} programs, config map: {}",
                 pinned,
-                crate::ebpf::PROGRAM_NAMES.len(),
+                crate::ebpf::BpfProgram::ALL.len(),
                 if has_map { "yes" } else { "no" },
             ),
         });
