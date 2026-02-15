@@ -286,4 +286,187 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn read_shebang_no_newline() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("no_nl.sh");
+        std::fs::write(&script, "#!/bin/bash").unwrap();
+        let cpath = CString::new(script.to_str().unwrap()).unwrap();
+        let result = unsafe { read_shebang_of(cpath.as_ptr()) };
+        let (interp, arg) = result.unwrap();
+        assert_eq!(interp, "/bin/bash");
+        assert!(arg.is_none());
+    }
+
+    #[test]
+    fn read_shebang_with_leading_spaces() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("spaces.sh");
+        std::fs::write(&script, "#!  /bin/bash\necho hello\n").unwrap();
+        let cpath = CString::new(script.to_str().unwrap()).unwrap();
+        let result = unsafe { read_shebang_of(cpath.as_ptr()) };
+        let (interp, _) = result.unwrap();
+        assert_eq!(interp, "/bin/bash");
+    }
+
+    #[test]
+    fn read_shebang_with_multiple_args() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("multi_arg.sh");
+        std::fs::write(&script, "#!/usr/bin/env -S python3 -u\nimport sys\n").unwrap();
+        let cpath = CString::new(script.to_str().unwrap()).unwrap();
+        let result = unsafe { read_shebang_of(cpath.as_ptr()) };
+        let (interp, arg) = result.unwrap();
+        assert_eq!(interp, "/usr/bin/env");
+        assert_eq!(arg.as_deref(), Some("-S python3 -u"));
+    }
+
+    #[test]
+    fn read_shebang_long_line_within_buffer() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("long.sh");
+        let long_interp = format!("/{}", "a".repeat(200));
+        let content = format!("#!{}\necho hi\n", long_interp);
+        std::fs::write(&script, &content).unwrap();
+        let cpath = CString::new(script.to_str().unwrap()).unwrap();
+        let result = unsafe { read_shebang_of(cpath.as_ptr()) };
+        let (interp, _) = result.unwrap();
+        assert_eq!(interp, long_interp);
+    }
+
+    #[test]
+    fn read_shebang_exceeds_buffer() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("overflow.sh");
+        let long_interp = format!("/{}", "x".repeat(300));
+        let content = format!("#!{}\necho hi\n", long_interp);
+        std::fs::write(&script, &content).unwrap();
+        let cpath = CString::new(script.to_str().unwrap()).unwrap();
+        let result = unsafe { read_shebang_of(cpath.as_ptr()) };
+        assert!(result.is_some());
+        let (interp, _) = result.unwrap();
+        assert!(interp.len() < long_interp.len(), "should be truncated");
+    }
+
+    #[test]
+    fn read_shebang_only_hash_bang() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("bare.sh");
+        std::fs::write(&script, "#!\n").unwrap();
+        let cpath = CString::new(script.to_str().unwrap()).unwrap();
+        let result = unsafe { read_shebang_of(cpath.as_ptr()) };
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn read_shebang_whitespace_only_after_hashbang() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("ws.sh");
+        std::fs::write(&script, "#!   \n").unwrap();
+        let cpath = CString::new(script.to_str().unwrap()).unwrap();
+        let result = unsafe { read_shebang_of(cpath.as_ptr()) };
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn read_shebang_crlf_line_ending() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("crlf.sh");
+        std::fs::write(&script, "#!/bin/bash\r\necho hello\n").unwrap();
+        let cpath = CString::new(script.to_str().unwrap()).unwrap();
+        let result = unsafe { read_shebang_of(cpath.as_ptr()) };
+        let (interp, _) = result.unwrap();
+        assert_eq!(interp, "/bin/bash");
+    }
+
+    #[test]
+    fn read_shebang_tab_separated_arg() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("tab.sh");
+        std::fs::write(&script, "#!/usr/bin/env\tbash\necho hello\n").unwrap();
+        let cpath = CString::new(script.to_str().unwrap()).unwrap();
+        let result = unsafe { read_shebang_of(cpath.as_ptr()) };
+        let (interp, arg) = result.unwrap();
+        assert_eq!(interp, "/usr/bin/env");
+        assert_eq!(arg.as_deref(), Some("bash"));
+    }
+
+    #[test]
+    fn read_shebang_three_byte_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("tiny.sh");
+        std::fs::write(&script, "#!x").unwrap();
+        let cpath = CString::new(script.to_str().unwrap()).unwrap();
+        let result = unsafe { read_shebang_of(cpath.as_ptr()) };
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn resolve_sip_exec_null_path_returns_none() {
+        let result = unsafe { resolve_sip_exec(std::ptr::null(), std::ptr::null()) };
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn resolve_sip_exec_non_sip_binary_returns_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("mybinary");
+        std::fs::write(&bin, [0x7f, 0x45, 0x4c, 0x46]).unwrap();
+        let cpath = CString::new(bin.to_str().unwrap()).unwrap();
+        let result = unsafe { resolve_sip_exec(cpath.as_ptr(), std::ptr::null()) };
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn resolve_sip_exec_non_sip_script_with_non_sip_shebang() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("safe.sh");
+        std::fs::write(&script, "#!/opt/homebrew/bin/bash\necho hello\n").unwrap();
+        let cpath = CString::new(script.to_str().unwrap()).unwrap();
+        let result = unsafe { resolve_sip_exec(cpath.as_ptr(), std::ptr::null()) };
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn is_sip_path_empty_string() {
+        assert!(!is_sip_path(""));
+    }
+
+    #[test]
+    fn is_sip_path_relative_not_sip() {
+        assert!(!is_sip_path("usr/bin/bash"));
+        assert!(!is_sip_path("bin/sh"));
+    }
+
+    #[test]
+    fn is_sip_path_prefix_only_not_sip() {
+        assert!(!is_sip_path("/usr/bi"));
+        assert!(!is_sip_path("/bin"));
+    }
+
+    #[test]
+    fn is_sip_path_usr_local_not_sip() {
+        assert!(!is_sip_path("/usr/local/bin/bash"));
+        assert!(!is_sip_path("/usr/local/sbin/helper"));
+    }
+
+    #[test]
+    fn is_sip_path_minimum_valid() {
+        assert!(is_sip_path("/usr/bin/x"));
+        assert!(is_sip_path("/bin/x"));
+        assert!(is_sip_path("/sbin/x"));
+        assert!(is_sip_path("/usr/sbin/x"));
+    }
+
+    #[test]
+    fn find_non_sip_empty_name_does_not_crash() {
+        let _ = find_non_sip_in_path("");
+    }
+
+    #[test]
+    fn find_non_sip_unknown_binary_uses_no_fallbacks() {
+        let result = find_non_sip_in_path("unknown-binary-xyz-12345");
+        assert!(result.is_none());
+    }
 }

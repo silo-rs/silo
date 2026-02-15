@@ -337,4 +337,246 @@ mod tests {
             unsafe { prepare_sendmsg(&msg as *const libc::msghdr, &mut msg_buf, &mut storage) };
         assert_eq!(result, &msg as *const libc::msghdr);
     }
+
+    #[test]
+    fn maybe_rewrite_addr_null_returns_original() {
+        let mut storage = MaybeUninit::<SockaddrStorage>::uninit();
+        let (out_addr, out_len) = unsafe { maybe_rewrite_addr(ptr::null(), 0, true, &mut storage) };
+        assert!(out_addr.is_null());
+        assert_eq!(out_len, 0);
+    }
+
+    #[test]
+    fn maybe_rewrite_addr_unix_passthrough() {
+        let mut sun: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+        sun.sun_family = libc::AF_UNIX as _;
+        let sa = &sun as *const libc::sockaddr_un as *const sockaddr;
+        let len = std::mem::size_of::<libc::sockaddr_un>() as socklen_t;
+        let mut storage = MaybeUninit::<SockaddrStorage>::uninit();
+        let (out_addr, out_len) = unsafe { maybe_rewrite_addr(sa, len, true, &mut storage) };
+        assert_eq!(out_addr, sa);
+        assert_eq!(out_len, len);
+    }
+
+    #[test]
+    fn maybe_rewrite_addr_v4_truncated_passthrough() {
+        let mut sin: sockaddr_in = unsafe { std::mem::zeroed() };
+        sin.sin_family = AF_INET as _;
+        sin.sin_addr.s_addr = 0;
+        let sa = &sin as *const sockaddr_in as *const sockaddr;
+        let short_len = (std::mem::size_of::<sockaddr_in>() - 1) as socklen_t;
+        let mut storage = MaybeUninit::<SockaddrStorage>::uninit();
+        let (out_addr, out_len) = unsafe { maybe_rewrite_addr(sa, short_len, true, &mut storage) };
+        assert_eq!(out_addr, sa);
+        assert_eq!(out_len, short_len);
+    }
+
+    #[test]
+    fn maybe_rewrite_addr_v6_truncated_passthrough() {
+        let mut sin6: libc::sockaddr_in6 = unsafe { std::mem::zeroed() };
+        sin6.sin6_family = libc::AF_INET6 as _;
+        let sa = &sin6 as *const libc::sockaddr_in6 as *const sockaddr;
+        let short_len = (std::mem::size_of::<libc::sockaddr_in6>() - 1) as socklen_t;
+        let mut storage = MaybeUninit::<SockaddrStorage>::uninit();
+        let (out_addr, out_len) = unsafe { maybe_rewrite_addr(sa, short_len, true, &mut storage) };
+        assert_eq!(out_addr, sa);
+        assert_eq!(out_len, short_len);
+    }
+
+    #[test]
+    fn maybe_rewrite_addr_non_loopback_v4_passthrough() {
+        let mut sin: sockaddr_in = unsafe { std::mem::zeroed() };
+        sin.sin_family = AF_INET as _;
+        sin.sin_addr.s_addr = u32::from(std::net::Ipv4Addr::new(192, 168, 1, 1)).to_be();
+        sin.sin_port = 8080u16.to_be();
+        let sa = &sin as *const sockaddr_in as *const sockaddr;
+        let len = std::mem::size_of::<sockaddr_in>() as socklen_t;
+        let mut storage = MaybeUninit::<SockaddrStorage>::uninit();
+        let (out_addr, out_len) = unsafe { maybe_rewrite_addr(sa, len, true, &mut storage) };
+        assert_eq!(out_addr, sa);
+        assert_eq!(out_len, len);
+    }
+
+    #[test]
+    fn maybe_rewrite_addr_non_loopback_v6_passthrough() {
+        let mut sin6: libc::sockaddr_in6 = unsafe { std::mem::zeroed() };
+        sin6.sin6_family = libc::AF_INET6 as _;
+        sin6.sin6_addr.s6_addr = [0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+        let sa = &sin6 as *const libc::sockaddr_in6 as *const sockaddr;
+        let len = std::mem::size_of::<libc::sockaddr_in6>() as socklen_t;
+        let mut storage = MaybeUninit::<SockaddrStorage>::uninit();
+        let (out_addr, out_len) = unsafe { maybe_rewrite_addr(sa, len, true, &mut storage) };
+        assert_eq!(out_addr, sa);
+        assert_eq!(out_len, len);
+    }
+
+    #[test]
+    fn maybe_rewrite_addr_preserves_port() {
+        let mut sin: sockaddr_in = unsafe { std::mem::zeroed() };
+        sin.sin_family = AF_INET as _;
+        sin.sin_addr.s_addr = 0;
+        sin.sin_port = 3000u16.to_be();
+        let sa = &sin as *const sockaddr_in as *const sockaddr;
+        let len = std::mem::size_of::<sockaddr_in>() as socklen_t;
+        let mut storage = MaybeUninit::<SockaddrStorage>::uninit();
+        let (out_addr, out_len) = unsafe { maybe_rewrite_addr(sa, len, true, &mut storage) };
+        let out_sin = unsafe { &*(out_addr as *const sockaddr_in) };
+        assert_eq!(out_sin.sin_port, 3000u16.to_be());
+        assert_eq!(out_len, len);
+    }
+
+    #[test]
+    fn maybe_rewrite_addr_zero_len_passthrough() {
+        let sin: sockaddr_in = unsafe { std::mem::zeroed() };
+        let sa = &sin as *const sockaddr_in as *const sockaddr;
+        let mut storage = MaybeUninit::<SockaddrStorage>::uninit();
+        let (out_addr, out_len) = unsafe { maybe_rewrite_addr(sa, 0, true, &mut storage) };
+        assert_eq!(out_addr, sa);
+        assert_eq!(out_len, 0);
+    }
+
+    #[test]
+    fn maybe_rewrite_connect_addr_null_returns_original() {
+        let mut storage = MaybeUninit::<SockaddrStorage>::uninit();
+        let (out_addr, out_len) =
+            unsafe { maybe_rewrite_connect_addr(-1, ptr::null(), 0, &mut storage) };
+        assert!(out_addr.is_null());
+        assert_eq!(out_len, 0);
+    }
+
+    #[test]
+    fn maybe_rewrite_connect_addr_unix_passthrough() {
+        let mut sun: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+        sun.sun_family = libc::AF_UNIX as _;
+        let sa = &sun as *const libc::sockaddr_un as *const sockaddr;
+        let len = std::mem::size_of::<libc::sockaddr_un>() as socklen_t;
+        let mut storage = MaybeUninit::<SockaddrStorage>::uninit();
+        let (out_addr, out_len) = unsafe { maybe_rewrite_connect_addr(-1, sa, len, &mut storage) };
+        assert_eq!(out_addr, sa);
+        assert_eq!(out_len, len);
+    }
+
+    #[test]
+    fn maybe_rewrite_connect_addr_v4_truncated_passthrough() {
+        let mut sin: sockaddr_in = unsafe { std::mem::zeroed() };
+        sin.sin_family = AF_INET as _;
+        sin.sin_addr.s_addr = rewrite::LOCALHOST_NBO;
+        let sa = &sin as *const sockaddr_in as *const sockaddr;
+        let short_len = (std::mem::size_of::<sockaddr_in>() - 1) as socklen_t;
+        let mut storage = MaybeUninit::<SockaddrStorage>::uninit();
+        let (out_addr, out_len) =
+            unsafe { maybe_rewrite_connect_addr(-1, sa, short_len, &mut storage) };
+        assert_eq!(out_addr, sa);
+        assert_eq!(out_len, short_len);
+    }
+
+    #[test]
+    fn bind_prepare_v6_null_returns_none() {
+        let fd = unsafe { libc::socket(libc::AF_INET6, libc::SOCK_STREAM, 0) };
+        let result = unsafe { bind_prepare_v6(fd, ptr::null(), 0) };
+        assert!(result.is_none());
+        if fd >= 0 {
+            unsafe { libc::close(fd) };
+        }
+    }
+
+    #[test]
+    fn bind_prepare_v6_ipv4_returns_none() {
+        let mut sin: sockaddr_in = unsafe { std::mem::zeroed() };
+        sin.sin_family = AF_INET as _;
+        let sa = &sin as *const sockaddr_in as *const sockaddr;
+        let len = std::mem::size_of::<sockaddr_in>() as socklen_t;
+        let fd = unsafe { libc::socket(AF_INET, libc::SOCK_STREAM, 0) };
+        let result = unsafe { bind_prepare_v6(fd, sa, len) };
+        assert!(result.is_none());
+        if fd >= 0 {
+            unsafe { libc::close(fd) };
+        }
+    }
+
+    #[test]
+    fn bind_prepare_v6_truncated_returns_none() {
+        let mut sin6: libc::sockaddr_in6 = unsafe { std::mem::zeroed() };
+        sin6.sin6_family = libc::AF_INET6 as _;
+        let sa = &sin6 as *const libc::sockaddr_in6 as *const sockaddr;
+        let short_len = (std::mem::size_of::<libc::sockaddr_in6>() - 1) as socklen_t;
+        let fd = unsafe { libc::socket(libc::AF_INET6, libc::SOCK_STREAM, 0) };
+        let result = unsafe { bind_prepare_v6(fd, sa, short_len) };
+        assert!(result.is_none());
+        if fd >= 0 {
+            unsafe { libc::close(fd) };
+        }
+    }
+
+    #[test]
+    fn bind_prepare_v6_non_rewritable_addr_returns_none() {
+        let mut sin6: libc::sockaddr_in6 = unsafe { std::mem::zeroed() };
+        sin6.sin6_family = libc::AF_INET6 as _;
+        sin6.sin6_addr.s6_addr = [0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+        let sa = &sin6 as *const libc::sockaddr_in6 as *const sockaddr;
+        let len = std::mem::size_of::<libc::sockaddr_in6>() as socklen_t;
+        let fd = unsafe { libc::socket(libc::AF_INET6, libc::SOCK_STREAM, 0) };
+        let result = unsafe { bind_prepare_v6(fd, sa, len) };
+        assert!(result.is_none());
+        if fd >= 0 {
+            unsafe { libc::close(fd) };
+        }
+    }
+
+    #[test]
+    fn prepare_sendmsg_with_unix_name_passthrough() {
+        let mut sun: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+        sun.sun_family = libc::AF_UNIX as _;
+        let mut msg: libc::msghdr = unsafe { std::mem::zeroed() };
+        msg.msg_name = &mut sun as *mut libc::sockaddr_un as *mut libc::c_void;
+        msg.msg_namelen = std::mem::size_of::<libc::sockaddr_un>() as socklen_t;
+        let mut msg_buf: libc::msghdr = unsafe { std::mem::zeroed() };
+        let mut storage = MaybeUninit::<SockaddrStorage>::uninit();
+        let result =
+            unsafe { prepare_sendmsg(&msg as *const libc::msghdr, &mut msg_buf, &mut storage) };
+        assert_eq!(result, &msg as *const libc::msghdr);
+    }
+
+    #[test]
+    fn prepare_sendmsg_with_inet4_name_passthrough() {
+        let mut sin: sockaddr_in = unsafe { std::mem::zeroed() };
+        sin.sin_family = AF_INET as _;
+        sin.sin_addr.s_addr = u32::from(std::net::Ipv4Addr::new(10, 0, 0, 1)).to_be();
+        sin.sin_port = 8080u16.to_be();
+        let mut msg: libc::msghdr = unsafe { std::mem::zeroed() };
+        msg.msg_name = &mut sin as *mut sockaddr_in as *mut libc::c_void;
+        msg.msg_namelen = std::mem::size_of::<sockaddr_in>() as socklen_t;
+        let mut msg_buf: libc::msghdr = unsafe { std::mem::zeroed() };
+        let mut storage = MaybeUninit::<SockaddrStorage>::uninit();
+        let result =
+            unsafe { prepare_sendmsg(&msg as *const libc::msghdr, &mut msg_buf, &mut storage) };
+        assert_eq!(result, &msg as *const libc::msghdr);
+    }
+
+    #[test]
+    fn read_port_zero_len_returns_none() {
+        let sin: sockaddr_in = unsafe { std::mem::zeroed() };
+        let sa = &sin as *const sockaddr_in as *const sockaddr;
+        assert_eq!(unsafe { read_port(sa, 0) }, None);
+    }
+
+    #[test]
+    fn read_port_exact_v4_len() {
+        let mut sin: sockaddr_in = unsafe { std::mem::zeroed() };
+        sin.sin_family = AF_INET as _;
+        sin.sin_port = 3000u16.to_be();
+        let sa = &sin as *const sockaddr_in as *const sockaddr;
+        let len = std::mem::size_of::<sockaddr_in>() as socklen_t;
+        assert_eq!(unsafe { read_port(sa, len) }, Some(3000u16.to_be()));
+    }
+
+    #[test]
+    fn read_port_exact_v6_len() {
+        let mut sin6: libc::sockaddr_in6 = unsafe { std::mem::zeroed() };
+        sin6.sin6_family = libc::AF_INET6 as _;
+        sin6.sin6_port = 8443u16.to_be();
+        let sa = &sin6 as *const libc::sockaddr_in6 as *const sockaddr;
+        let len = std::mem::size_of::<libc::sockaddr_in6>() as socklen_t;
+        assert_eq!(unsafe { read_port(sa, len) }, Some(8443u16.to_be()));
+    }
 }

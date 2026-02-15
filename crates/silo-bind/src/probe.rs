@@ -216,4 +216,200 @@ mod tests {
         cache_clear_listener(port);
         assert!(!cache_has_listener(port));
     }
+
+    #[test]
+    fn probe_detects_tcp_listener() {
+        let listener = unsafe { libc::socket(AF_INET, libc::SOCK_STREAM, 0) };
+        assert!(listener >= 0, "failed to create listener socket");
+
+        let mut sin: sockaddr_in = unsafe { std::mem::zeroed() };
+        #[cfg(target_os = "macos")]
+        {
+            sin.sin_len = std::mem::size_of::<sockaddr_in>() as u8;
+        }
+        sin.sin_family = AF_INET as _;
+        sin.sin_addr.s_addr = 0x7f000001_u32.to_be();
+        sin.sin_port = 0;
+
+        let ret = unsafe {
+            call_real_bind(
+                listener,
+                &sin as *const sockaddr_in as *const sockaddr,
+                std::mem::size_of::<sockaddr_in>() as socklen_t,
+            )
+        };
+        assert_eq!(ret, 0, "bind failed");
+
+        let ret = unsafe { libc::listen(listener, 1) };
+        assert_eq!(ret, 0, "listen failed");
+
+        let mut bound: sockaddr_in = unsafe { std::mem::zeroed() };
+        let mut bound_len = std::mem::size_of::<sockaddr_in>() as socklen_t;
+        unsafe {
+            libc::getsockname(
+                listener,
+                &mut bound as *mut sockaddr_in as *mut sockaddr,
+                &mut bound_len,
+            );
+        }
+        let port_nbo = bound.sin_port;
+        cache_clear_listener(port_nbo);
+
+        let probe_fd = unsafe { libc::socket(AF_INET, libc::SOCK_STREAM, 0) };
+        assert!(probe_fd >= 0);
+
+        let localhost_nbo = 0x7f000001_u32.to_be();
+        let has = unsafe { probe_has_listener(probe_fd, localhost_nbo, port_nbo) };
+        assert!(has, "should detect active TCP listener");
+        assert!(
+            cache_has_listener(port_nbo),
+            "cache should be set after positive probe"
+        );
+
+        cache_clear_listener(port_nbo);
+        unsafe { libc::close(probe_fd) };
+        unsafe { libc::close(listener) };
+    }
+
+    #[test]
+    fn probe_no_listener_returns_false() {
+        let sock = unsafe { libc::socket(AF_INET, libc::SOCK_STREAM, 0) };
+        assert!(sock >= 0);
+        let mut sin: sockaddr_in = unsafe { std::mem::zeroed() };
+        #[cfg(target_os = "macos")]
+        {
+            sin.sin_len = std::mem::size_of::<sockaddr_in>() as u8;
+        }
+        sin.sin_family = AF_INET as _;
+        sin.sin_addr.s_addr = 0x7f000001_u32.to_be();
+        sin.sin_port = 0;
+        let ret = unsafe {
+            call_real_bind(
+                sock,
+                &sin as *const sockaddr_in as *const sockaddr,
+                std::mem::size_of::<sockaddr_in>() as socklen_t,
+            )
+        };
+        assert_eq!(ret, 0);
+        let mut bound: sockaddr_in = unsafe { std::mem::zeroed() };
+        let mut bound_len = std::mem::size_of::<sockaddr_in>() as socklen_t;
+        unsafe {
+            libc::getsockname(
+                sock,
+                &mut bound as *mut sockaddr_in as *mut sockaddr,
+                &mut bound_len,
+            );
+        }
+        let port_nbo = bound.sin_port;
+        unsafe { libc::close(sock) };
+
+        cache_clear_listener(port_nbo);
+
+        let probe_fd = unsafe { libc::socket(AF_INET, libc::SOCK_STREAM, 0) };
+        assert!(probe_fd >= 0);
+
+        let localhost_nbo = 0x7f000001_u32.to_be();
+        let has = unsafe { probe_has_listener(probe_fd, localhost_nbo, port_nbo) };
+        assert!(!has, "should not detect listener on closed port");
+        assert!(
+            !cache_has_listener(port_nbo),
+            "cache should not be set after negative probe"
+        );
+
+        unsafe { libc::close(probe_fd) };
+    }
+
+    #[test]
+    fn probe_cached_port_skips_syscall() {
+        let port_nbo = 45678u16.to_be();
+        cache_set_listener(port_nbo);
+
+        let has = unsafe { probe_has_listener(-1, 0, port_nbo) };
+        assert!(has, "cached port should return true without probing");
+
+        cache_clear_listener(port_nbo);
+    }
+
+    #[test]
+    fn probe_udp_listener() {
+        let sock = unsafe { libc::socket(AF_INET, libc::SOCK_DGRAM, 0) };
+        assert!(sock >= 0);
+
+        let mut sin: sockaddr_in = unsafe { std::mem::zeroed() };
+        #[cfg(target_os = "macos")]
+        {
+            sin.sin_len = std::mem::size_of::<sockaddr_in>() as u8;
+        }
+        sin.sin_family = AF_INET as _;
+        sin.sin_addr.s_addr = 0x7f000001_u32.to_be();
+        sin.sin_port = 0;
+
+        let ret = unsafe {
+            call_real_bind(
+                sock,
+                &sin as *const sockaddr_in as *const sockaddr,
+                std::mem::size_of::<sockaddr_in>() as socklen_t,
+            )
+        };
+        assert_eq!(ret, 0, "UDP bind failed");
+
+        let mut bound: sockaddr_in = unsafe { std::mem::zeroed() };
+        let mut bound_len = std::mem::size_of::<sockaddr_in>() as socklen_t;
+        unsafe {
+            libc::getsockname(
+                sock,
+                &mut bound as *mut sockaddr_in as *mut sockaddr,
+                &mut bound_len,
+            );
+        }
+        let port_nbo = bound.sin_port;
+        cache_clear_listener(port_nbo);
+
+        let probe_fd = unsafe { libc::socket(AF_INET, libc::SOCK_DGRAM, 0) };
+        assert!(probe_fd >= 0);
+
+        let localhost_nbo = 0x7f000001_u32.to_be();
+        let has = unsafe { probe_has_listener(probe_fd, localhost_nbo, port_nbo) };
+        assert!(has, "should detect active UDP listener");
+
+        cache_clear_listener(port_nbo);
+        unsafe { libc::close(probe_fd) };
+        unsafe { libc::close(sock) };
+    }
+
+    #[test]
+    fn probe_preserves_errno() {
+        let probe_fd = unsafe { libc::socket(AF_INET, libc::SOCK_STREAM, 0) };
+        assert!(probe_fd >= 0);
+
+        unsafe { *crate::errno_ptr() = libc::ENOENT };
+
+        let localhost_nbo = 0x7f000001_u32.to_be();
+        let port_nbo = 59999u16.to_be();
+        cache_clear_listener(port_nbo);
+
+        let _ = unsafe { probe_has_listener(probe_fd, localhost_nbo, port_nbo) };
+
+        assert_eq!(
+            unsafe { *crate::errno_ptr() },
+            libc::ENOENT,
+            "probe_has_listener should restore errno"
+        );
+
+        cache_clear_listener(port_nbo);
+        unsafe { libc::close(probe_fd) };
+    }
+
+    #[test]
+    fn probe_invalid_fd_returns_false() {
+        let port_nbo = 44444u16.to_be();
+        cache_clear_listener(port_nbo);
+
+        let localhost_nbo = 0x7f000001_u32.to_be();
+
+        let has = unsafe { probe_has_listener(-1, localhost_nbo, port_nbo) };
+        let _ = has;
+
+        cache_clear_listener(port_nbo);
+    }
 }
