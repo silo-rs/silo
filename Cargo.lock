@@ -714,7 +714,6 @@ dependencies = [
 name = "silo"
 version = "0.3.0"
 dependencies = [
- "colored",
  "fd-lock",
  "serde",
  "serde_json",

@@ -2,8 +2,6 @@ use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use colored::Colorize;
-
 use crate::context::Context;
 use crate::error::Result;
 use crate::{hosts, ip};
@@ -99,10 +97,7 @@ impl Session {
         if opts.hosts_entry {
             hosts::check_collision(ctx.ip(), ctx.hostname())?;
             if let Err(e) = hosts::ensure_entry(ctx.ip(), ctx.hostname(), ctx.dir()) {
-                eprintln!(
-                    "{} failed to update /etc/hosts: {e} (run `silo doctor` to diagnose)",
-                    "warning:".yellow().bold(),
-                );
+                tracing::warn!("failed to update /etc/hosts: {e} (run `silo doctor` to diagnose)");
             }
         }
         Ok(Self { ctx, backend })
