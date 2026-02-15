@@ -27,6 +27,7 @@ jobs:
       - run: cargo deny check
       - uses: taiki-e/install-action@cargo-machete
       - run: cargo machete
+      - uses: crate-ci/typos@master
 
   test:
     name: Test (${{ matrix.os }})
@@ -38,9 +39,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
       - run: cargo build -p silo-bind
-      - run: cargo test --workspace
+      - run: cargo nextest run --workspace
+
+  careful:
+    name: Careful
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-careful
+      - run: cargo +nightly careful build -p silo-bind
+      - run: cargo +nightly careful test -p silo-bind
 
   build-ebpf:
     name: Build eBPF

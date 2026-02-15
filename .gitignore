@@ -20,3 +20,4 @@
 !deny.toml
 !rust-toolchain.toml
 !rustfmt.toml
+!typos.toml
