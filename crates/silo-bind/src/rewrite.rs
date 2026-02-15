@@ -7,6 +7,9 @@ pub const V6_ANY: [u8; 16] = [0u8; 16];
 
 pub fn parse_silo_ip(val: &str) -> Option<u32> {
     let ip: Ipv4Addr = val.parse().ok()?;
+    if ip.octets()[0] != 127 {
+        return None;
+    }
     Some(u32::from(ip).to_be())
 }
 
@@ -67,8 +70,15 @@ mod tests {
     }
 
     #[test]
-    fn parse_zeros() {
-        assert_eq!(parse_silo_ip("0.0.0.0"), Some(0));
+    fn parse_zeros_rejected() {
+        assert_eq!(parse_silo_ip("0.0.0.0"), None);
+    }
+
+    #[test]
+    fn parse_non_loopback_rejected() {
+        assert_eq!(parse_silo_ip("10.0.0.1"), None);
+        assert_eq!(parse_silo_ip("192.168.1.1"), None);
+        assert_eq!(parse_silo_ip("8.8.8.8"), None);
     }
 
     #[test]
@@ -300,9 +310,13 @@ mod tests {
             #[test]
             fn parse_roundtrip(a in 0u8..=255, b in 0u8..=255, c in 0u8..=255, d in 0u8..=255) {
                 let s = format!("{a}.{b}.{c}.{d}");
-                let result = parse_silo_ip(&s).unwrap();
-                let expected = u32::from(Ipv4Addr::new(a, b, c, d)).to_be();
-                prop_assert_eq!(result, expected);
+                let result = parse_silo_ip(&s);
+                if a == 127 {
+                    let expected = u32::from(Ipv4Addr::new(a, b, c, d)).to_be();
+                    prop_assert_eq!(result, Some(expected));
+                } else {
+                    prop_assert_eq!(result, None);
+                }
             }
         }
     }
