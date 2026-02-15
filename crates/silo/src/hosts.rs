@@ -322,6 +322,12 @@ pub fn write_hosts_direct(content: &str) -> Result<()> {
     file.persist(HOSTS_PATH)
         .map_err(|e| Error::io("failed to rename temp hosts to /etc/hosts", e.into()))?;
 
+    let readback = std::fs::read_to_string(HOSTS_PATH)
+        .map_err(|e| Error::io("failed to verify /etc/hosts after write", e))?;
+    if readback != content {
+        tracing::warn!("/etc/hosts content changed after write — possible concurrent modification");
+    }
+
     Ok(())
 }
 

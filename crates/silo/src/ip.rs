@@ -18,13 +18,13 @@ pub enum IpRequest {
 
 #[cfg(target_os = "linux")]
 fn find_ip_command() -> String {
-    if let Ok(p) = which::which("ip") {
-        return p.to_string_lossy().into_owned();
-    }
     for candidate in ["/usr/sbin/ip", "/sbin/ip", "/usr/bin/ip", "/bin/ip"] {
         if std::path::Path::new(candidate).exists() {
             return candidate.to_string();
         }
+    }
+    if let Ok(p) = which::which("ip") {
+        return p.to_string_lossy().into_owned();
     }
     "ip".to_string()
 }

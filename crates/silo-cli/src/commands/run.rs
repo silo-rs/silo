@@ -164,6 +164,7 @@ const EMBEDDED_BIND_LIB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/libsi
 const EMBEDDED_BIND_LIB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/libsilo_bind.so"));
 
 pub fn find_bind_lib() -> eyre::Result<PathBuf> {
+    #[cfg(debug_assertions)]
     if let Ok(path) = std::env::var("SILO_BIND_LIB") {
         let p = PathBuf::from(path);
         if p.exists() {

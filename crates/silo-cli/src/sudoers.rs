@@ -127,6 +127,15 @@ fn write_root_file(bytes: &[u8], dest: &str, mode: &str) -> eyre::Result<()> {
     let tmp_dest = format!("{dest}.tmp");
 
     let status = Command::new("sudo")
+        .args(["install", "-m", mode, "/dev/null", &tmp_dest])
+        .status()
+        .with_context(|| format!("failed to create {tmp_dest}"))?;
+
+    if !status.success() {
+        bail!("failed to pre-create {tmp_dest} with mode {mode}");
+    }
+
+    let status = Command::new("sudo")
         .args(["tee", &tmp_dest])
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
@@ -141,17 +150,8 @@ fn write_root_file(bytes: &[u8], dest: &str, mode: &str) -> eyre::Result<()> {
         .with_context(|| format!("failed to write {tmp_dest}"))?;
 
     if !status.success() {
-        bail!("sudo tee {tmp_dest} failed");
-    }
-
-    let status = Command::new("sudo")
-        .args(["chmod", mode, &tmp_dest])
-        .status()
-        .with_context(|| format!("failed to chmod {tmp_dest}"))?;
-
-    if !status.success() {
         let _ = Command::new("sudo").args(["rm", "-f", &tmp_dest]).status();
-        bail!("sudo chmod {mode} {tmp_dest} failed");
+        bail!("sudo tee {tmp_dest} failed");
     }
 
     let status = Command::new("sudo")
