@@ -12,6 +12,7 @@ use std::ffi::{CStr, CString};
 use libc::{AF_INET, sockaddr, sockaddr_in, socklen_t};
 
 static SILO_IP: OnceLock<Option<u32>> = OnceLock::new();
+static CONNECT_ENABLED: OnceLock<bool> = OnceLock::new();
 
 #[cfg(target_os = "macos")]
 static DEBUG: OnceLock<bool> = OnceLock::new();
@@ -136,6 +137,9 @@ unsafe fn maybe_rewrite_connect_addr(
     len: socklen_t,
     storage: &mut MaybeUninit<SockaddrStorage>,
 ) -> (*const sockaddr, socklen_t) {
+    if !connect_enabled() {
+        return (addr, len);
+    }
     let Some(family) = (unsafe { read_sa_family(addr) }) else {
         return (addr, len);
     };
@@ -259,6 +263,10 @@ fn get_silo_ip() -> Option<u32> {
         let val = env::var("SILO_IP").ok()?;
         rewrite::parse_silo_ip(&val)
     })
+}
+
+fn connect_enabled() -> bool {
+    *CONNECT_ENABLED.get_or_init(|| env::var("SILO_CONNECT").map(|v| v != "0").unwrap_or(true))
 }
 
 unsafe fn hide_other_silo_aliases(ifap: *mut libc::ifaddrs) {
@@ -592,7 +600,7 @@ mod platform {
         addr: *const sockaddr,
         len: socklen_t,
     ) -> c_int {
-        if !addr.is_null() {
+        if !addr.is_null() && connect_enabled() {
             let family = unsafe { (*addr).sa_family } as c_int;
 
             if family == libc::AF_INET6 as c_int

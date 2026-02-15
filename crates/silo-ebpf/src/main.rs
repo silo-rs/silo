@@ -57,12 +57,14 @@ fn has_listener(ctx: &SockAddrContext, ip: u32, port: u32) -> bool {
 
         let release: ReleaseFn = core::mem::transmute(BPF_FUNC_SK_RELEASE);
 
+        const CURRENT_NETNS: u64 = u64::MAX;
+
         let tcp_lookup: LookupFn = core::mem::transmute(BPF_FUNC_SK_LOOKUP_TCP);
         let sk = tcp_lookup(
             ctx.sock_addr as *const core::ffi::c_void,
             &tuple,
             tuple_size,
-            0,
+            CURRENT_NETNS,
             0,
         );
         if !sk.is_null() {
@@ -75,7 +77,7 @@ fn has_listener(ctx: &SockAddrContext, ip: u32, port: u32) -> bool {
             ctx.sock_addr as *const core::ffi::c_void,
             &tuple,
             tuple_size,
-            0,
+            CURRENT_NETNS,
             0,
         );
         if !sk.is_null() {

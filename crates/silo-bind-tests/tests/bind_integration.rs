@@ -552,12 +552,12 @@ fn bind_v6_localhost_is_rewritten() {
 }
 
 #[test]
-fn silo_ip_with_whitespace_passes_through() {
+fn silo_ip_with_whitespace_is_trimmed() {
     let (stdout, _, success) = run_helper("passthrough", Some(" 127.0.99.1"));
     assert!(success, "helper failed");
     assert!(
-        stdout.contains("0.0.0.0"),
-        "SILO_IP with leading whitespace should be treated as invalid, got: {stdout}"
+        !stdout.contains("0.0.0.0"),
+        "SILO_IP with whitespace should be accepted after trimming, got: {stdout}"
     );
 }
 
