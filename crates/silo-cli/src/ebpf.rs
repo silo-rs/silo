@@ -597,7 +597,7 @@ mod tests {
             std::env::set_var("SUDO_GID", "1000");
         }
         let result = sudo_caller_ids();
-        assert!(result.is_err(), "should error on unparseable SUDO_UID");
+        assert!(result.is_err(), "should error on unparsable SUDO_UID");
         unsafe {
             std::env::remove_var("SUDO_UID");
             std::env::remove_var("SUDO_GID");
