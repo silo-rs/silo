@@ -33,7 +33,7 @@ pub fn resolve(
         None => compute_ip(&canonical, &name),
     };
 
-    let project_name = main_repo_name(&git_root);
+    let project_name = sanitize_name(&main_repo_name(&git_root));
     let hostname = format!("{}.{}.silo", name, project_name);
 
     debug!(%ip, %name, %hostname, dir = %git_root.display(), "resolved silo context");
@@ -109,7 +109,7 @@ pub fn sanitize_name(raw: &str) -> String {
         .collect::<Vec<_>>()
         .join("-");
 
-    if !raw.is_ascii() {
+    if !raw.is_ascii() || (!raw.is_empty() && ascii_part.is_empty()) {
         let mut hash = FNV_OFFSET;
         for &b in raw.as_bytes() {
             hash ^= b as u64;
@@ -333,7 +333,9 @@ mod tests {
 
     #[test]
     fn sanitize_name_all_special() {
-        assert_eq!(sanitize_name("///...///"), "");
+        assert!(!sanitize_name("///...///").is_empty());
+        assert_ne!(sanitize_name("///"), sanitize_name("..."));
+        assert_ne!(sanitize_name("@@@"), sanitize_name("+++"));
     }
 
     #[test]
