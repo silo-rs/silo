@@ -127,10 +127,14 @@ fn verify_session(session: &Session) {
             .iter()
             .any(|e| e.ip == session.ip() && e.hostname == session.hostname());
         if !has_entry {
-            ui::check_warn(
-                "hosts",
-                format!("{} not found in /etc/hosts", session.hostname()),
-            );
+            if let Some(reason) = session.hosts_warning() {
+                ui::check_warn("hosts", format!("{reason} (run `silo doctor` to diagnose)"));
+            } else {
+                ui::check_warn(
+                    "hosts",
+                    format!("{} not found in /etc/hosts", session.hostname()),
+                );
+            }
         }
 
         for e in &entries {

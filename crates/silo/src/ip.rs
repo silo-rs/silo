@@ -57,6 +57,7 @@ fn run_ip_helper(request: &IpRequest) -> Result<(), SessionError> {
     if !status.success() {
         return Err(SessionError::CommandFailed {
             command: format!("sudo {}", bin.display()),
+            status,
         });
     }
 
@@ -108,6 +109,7 @@ fn run_direct_add(ip: Ipv4Addr) -> Result<(), SessionError> {
         if !status.success() {
             return Err(SessionError::CommandFailed {
                 command: format!("ifconfig lo0 alias {}", ip),
+                status,
             });
         }
     }
@@ -122,6 +124,7 @@ fn run_direct_add(ip: Ipv4Addr) -> Result<(), SessionError> {
         if !status.success() {
             return Err(SessionError::CommandFailed {
                 command: format!("{} addr add {}/8 dev lo", ip_cmd, ip),
+                status,
             });
         }
     }
@@ -139,6 +142,7 @@ fn run_direct_remove(ip: Ipv4Addr) -> Result<(), SessionError> {
         if !status.success() {
             return Err(SessionError::CommandFailed {
                 command: format!("ifconfig lo0 -alias {}", ip),
+                status,
             });
         }
     }
@@ -153,6 +157,7 @@ fn run_direct_remove(ip: Ipv4Addr) -> Result<(), SessionError> {
         if !status.success() {
             return Err(SessionError::CommandFailed {
                 command: format!("{} addr del {}/8 dev lo", ip_cmd, ip),
+                status,
             });
         }
     }

@@ -76,6 +76,7 @@ impl Default for ActivateOptions {
 pub struct Session {
     ctx: Context,
     backend: Box<dyn BackendSession>,
+    hosts_warning: Option<String>,
 }
 
 impl Session {
@@ -92,13 +93,20 @@ impl Session {
         if opts.ip_alias {
             ip::add_alias(ctx.ip())?;
         }
+        let mut hosts_warning = None;
         if opts.hosts_entry {
             hosts::check_collision(ctx.ip(), ctx.hostname())?;
             if let Err(e) = hosts::ensure_entry(ctx.ip(), ctx.hostname(), ctx.dir()) {
-                tracing::warn!("failed to update /etc/hosts: {e} (run `silo doctor` to diagnose)");
+                let msg = format!("failed to update /etc/hosts: {e}");
+                tracing::warn!("{msg} (run `silo doctor` to diagnose)");
+                hosts_warning = Some(msg);
             }
         }
-        Ok(Self { ctx, backend })
+        Ok(Self {
+            ctx,
+            backend,
+            hosts_warning,
+        })
     }
 
     pub fn prepare(&self, cmd: &mut Command) -> Result<(), SessionError> {
@@ -130,6 +138,10 @@ impl Session {
 
     pub fn dir(&self) -> &Path {
         self.ctx.dir()
+    }
+
+    pub fn hosts_warning(&self) -> Option<&str> {
+        self.hosts_warning.as_deref()
     }
 }
 

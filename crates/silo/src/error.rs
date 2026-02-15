@@ -1,5 +1,7 @@
 use std::borrow::Cow;
 use std::io;
+use std::net::Ipv4Addr;
+use std::process::ExitStatus;
 
 use thiserror::Error as ThisError;
 
@@ -27,7 +29,7 @@ pub enum ResolveError {
     NotGitRepo,
 
     #[error("ip override {0} is not in 127.0.0.0/8")]
-    InvalidIpOverride(std::net::Ipv4Addr),
+    InvalidIpOverride(Ipv4Addr),
 
     #[error(transparent)]
     Io(#[from] IoError),
@@ -41,22 +43,50 @@ impl ResolveError {
 
 #[derive(Debug, ThisError)]
 #[non_exhaustive]
+pub enum ValidationError {
+    #[error("IP {0} is not in 127.0.0.0/8")]
+    IpNotLoopback(Ipv4Addr),
+
+    #[error("127.0.0.1 is reserved for localhost")]
+    IpReservedLocalhost,
+
+    #[error("hostname '{0}' does not end with .silo")]
+    HostnameMissingSuffix(String),
+
+    #[error("hostname must have labels before .silo")]
+    HostnameEmptyPrefix,
+
+    #[error("hostname exceeds 253 characters")]
+    HostnameTooLong,
+
+    #[error("hostname '{0}' contains invalid characters")]
+    HostnameInvalidChars(String),
+
+    #[error("directory path is empty")]
+    DirEmpty,
+
+    #[error("directory path contains invalid characters")]
+    DirInvalidChars,
+}
+
+#[derive(Debug, ThisError)]
+#[non_exhaustive]
 pub enum SessionError {
     #[error(
         "IP collision: {ip} is already assigned to `{existing}` but this session \
              needs it for `{new}`. Use `silo run --ip <addr>` to assign a different address."
     )]
     IpCollision {
-        ip: std::net::Ipv4Addr,
+        ip: Ipv4Addr,
         existing: String,
         new: String,
     },
 
-    #[error("hosts validation: {0}")]
-    HostsValidation(String),
+    #[error("validation: {0}")]
+    Validation(#[from] ValidationError),
 
-    #[error("command failed: {command}")]
-    CommandFailed { command: String },
+    #[error("{command} exited with {status}")]
+    CommandFailed { command: String, status: ExitStatus },
 
     #[error("{0}")]
     Backend(#[source] Box<dyn std::error::Error + Send + Sync>),

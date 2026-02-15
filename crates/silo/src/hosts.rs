@@ -7,7 +7,7 @@ use fd_lock::RwLock;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-use crate::error::SessionError;
+use crate::error::{SessionError, ValidationError};
 
 pub(crate) const HOSTS_PATH: &str = "/etc/hosts";
 pub const SECURE_IP_HELPER: &str = "/usr/local/libexec/silo-ip-helper";
@@ -35,59 +35,42 @@ pub struct RemovedEntry {
     pub hostname: String,
 }
 
-pub(crate) fn validate_ip(ip: Ipv4Addr) -> Result<(), SessionError> {
+pub(crate) fn validate_ip(ip: Ipv4Addr) -> Result<(), ValidationError> {
     if ip.octets()[0] != 127 {
-        return Err(SessionError::HostsValidation(format!(
-            "IP {} is not in 127.0.0.0/8",
-            ip
-        )));
+        return Err(ValidationError::IpNotLoopback(ip));
     }
     if ip == Ipv4Addr::new(127, 0, 0, 1) {
-        return Err(SessionError::HostsValidation(
-            "127.0.0.1 is reserved for localhost".into(),
-        ));
+        return Err(ValidationError::IpReservedLocalhost);
     }
     Ok(())
 }
 
-pub(crate) fn validate_hostname(hostname: &str) -> Result<(), SessionError> {
+pub(crate) fn validate_hostname(hostname: &str) -> Result<(), ValidationError> {
     if !hostname.ends_with(".silo") {
-        return Err(SessionError::HostsValidation(format!(
-            "hostname '{}' does not end with .silo",
-            hostname
-        )));
+        return Err(ValidationError::HostnameMissingSuffix(hostname.to_string()));
     }
     let prefix = &hostname[..hostname.len() - 5];
     if prefix.is_empty() || prefix == "." {
-        return Err(SessionError::HostsValidation(
-            "hostname must have labels before .silo".into(),
-        ));
+        return Err(ValidationError::HostnameEmptyPrefix);
     }
     if hostname.len() > 253 {
-        return Err(SessionError::HostsValidation("hostname too long".into()));
+        return Err(ValidationError::HostnameTooLong);
     }
     if !hostname
         .bytes()
         .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
     {
-        return Err(SessionError::HostsValidation(format!(
-            "hostname '{}' contains invalid characters",
-            hostname
-        )));
+        return Err(ValidationError::HostnameInvalidChars(hostname.to_string()));
     }
     Ok(())
 }
 
-pub(crate) fn validate_dir(dir: &str) -> Result<(), SessionError> {
+pub(crate) fn validate_dir(dir: &str) -> Result<(), ValidationError> {
     if dir.is_empty() {
-        return Err(SessionError::HostsValidation(
-            "directory path is empty".into(),
-        ));
+        return Err(ValidationError::DirEmpty);
     }
     if dir.contains('\n') || dir.contains('\r') || dir.contains('\t') || dir.contains('\0') {
-        return Err(SessionError::HostsValidation(
-            "directory path contains invalid characters".into(),
-        ));
+        return Err(ValidationError::DirInvalidChars);
     }
     Ok(())
 }
@@ -247,6 +230,7 @@ pub(crate) fn ensure_entry(ip: Ipv4Addr, hostname: &str, dir: &Path) -> Result<(
     if !status.success() {
         return Err(SessionError::CommandFailed {
             command: format!("sudo {} (add {} {})", bin.display(), ip, hostname),
+            status,
         });
     }
 
@@ -320,6 +304,7 @@ pub fn remove_entries(
     if !output.status.success() {
         return Err(SessionError::CommandFailed {
             command: format!("sudo {} (remove)", bin.display()),
+            status: output.status,
         });
     }
 
