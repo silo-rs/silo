@@ -7,7 +7,7 @@ use fd_lock::RwLock;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-use crate::error::{Error, Result};
+use crate::error::SessionError;
 
 pub(crate) const HOSTS_PATH: &str = "/etc/hosts";
 pub const SECURE_IP_HELPER: &str = "/usr/local/libexec/silo-ip-helper";
@@ -35,42 +35,42 @@ pub struct RemovedEntry {
     pub hostname: String,
 }
 
-pub(crate) fn validate_ip(ip: Ipv4Addr) -> Result<()> {
+pub(crate) fn validate_ip(ip: Ipv4Addr) -> Result<(), SessionError> {
     if ip.octets()[0] != 127 {
-        return Err(Error::HostsValidation(format!(
+        return Err(SessionError::HostsValidation(format!(
             "IP {} is not in 127.0.0.0/8",
             ip
         )));
     }
     if ip == Ipv4Addr::new(127, 0, 0, 1) {
-        return Err(Error::HostsValidation(
+        return Err(SessionError::HostsValidation(
             "127.0.0.1 is reserved for localhost".into(),
         ));
     }
     Ok(())
 }
 
-pub(crate) fn validate_hostname(hostname: &str) -> Result<()> {
+pub(crate) fn validate_hostname(hostname: &str) -> Result<(), SessionError> {
     if !hostname.ends_with(".silo") {
-        return Err(Error::HostsValidation(format!(
+        return Err(SessionError::HostsValidation(format!(
             "hostname '{}' does not end with .silo",
             hostname
         )));
     }
     let prefix = &hostname[..hostname.len() - 5];
     if prefix.is_empty() || prefix == "." {
-        return Err(Error::HostsValidation(
+        return Err(SessionError::HostsValidation(
             "hostname must have labels before .silo".into(),
         ));
     }
     if hostname.len() > 253 {
-        return Err(Error::HostsValidation("hostname too long".into()));
+        return Err(SessionError::HostsValidation("hostname too long".into()));
     }
     if !hostname
         .bytes()
         .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
     {
-        return Err(Error::HostsValidation(format!(
+        return Err(SessionError::HostsValidation(format!(
             "hostname '{}' contains invalid characters",
             hostname
         )));
@@ -78,12 +78,14 @@ pub(crate) fn validate_hostname(hostname: &str) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn validate_dir(dir: &str) -> Result<()> {
+pub(crate) fn validate_dir(dir: &str) -> Result<(), SessionError> {
     if dir.is_empty() {
-        return Err(Error::HostsValidation("directory path is empty".into()));
+        return Err(SessionError::HostsValidation(
+            "directory path is empty".into(),
+        ));
     }
     if dir.contains('\n') || dir.contains('\r') || dir.contains('\t') || dir.contains('\0') {
-        return Err(Error::HostsValidation(
+        return Err(SessionError::HostsValidation(
             "directory path contains invalid characters".into(),
         ));
     }
@@ -103,14 +105,14 @@ fn find_ip_conflict(entries: &[String], ip: Ipv4Addr, hostname: &str) -> Option<
     None
 }
 
-pub(crate) fn check_collision(ip: Ipv4Addr, hostname: &str) -> Result<()> {
+pub(crate) fn check_collision(ip: Ipv4Addr, hostname: &str) -> Result<(), SessionError> {
     let content = match std::fs::read_to_string(HOSTS_PATH) {
         Ok(c) => c,
         Err(_) => return Ok(()),
     };
     let (_, entries, _) = parse_block(&content);
     if let Some(conflict) = find_ip_conflict(&entries, ip, hostname) {
-        return Err(Error::IpCollision {
+        return Err(SessionError::IpCollision {
             ip,
             existing: conflict,
             new: hostname.to_string(),
@@ -119,7 +121,7 @@ pub(crate) fn check_collision(ip: Ipv4Addr, hostname: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn run_hosts_direct(request: &HostsRequest) -> Result<Vec<RemovedEntry>> {
+pub fn run_hosts_direct(request: &HostsRequest) -> Result<Vec<RemovedEntry>, SessionError> {
     match request {
         HostsRequest::Add { ip, hostname, dir } => {
             run_direct_add(*ip, hostname, dir)?;
@@ -129,7 +131,7 @@ pub fn run_hosts_direct(request: &HostsRequest) -> Result<Vec<RemovedEntry>> {
     }
 }
 
-fn run_direct_add(ip: Ipv4Addr, hostname: &str, dir: &str) -> Result<()> {
+fn run_direct_add(ip: Ipv4Addr, hostname: &str, dir: &str) -> Result<(), SessionError> {
     validate_ip(ip)?;
     validate_hostname(hostname)?;
     validate_dir(dir)?;
@@ -137,16 +139,16 @@ fn run_direct_add(ip: Ipv4Addr, hostname: &str, dir: &str) -> Result<()> {
     let mut lock = open_helper_lock()?;
     let _guard = lock
         .write()
-        .map_err(|e| Error::io("failed to acquire hosts lock", e))?;
+        .map_err(|e| SessionError::io("failed to acquire hosts lock", e))?;
 
     let content = std::fs::read_to_string(HOSTS_PATH)
-        .map_err(|e| Error::io("failed to read /etc/hosts", e))?;
+        .map_err(|e| SessionError::io("failed to read /etc/hosts", e))?;
     let (before, mut entries, after) = parse_block(&content);
 
     let new_line = format!("{}\t{}\t# {}", ip, hostname, dir);
 
     if let Some(conflict) = find_ip_conflict(&entries, ip, hostname) {
-        return Err(Error::IpCollision {
+        return Err(SessionError::IpCollision {
             ip,
             existing: conflict,
             new: hostname.to_string(),
@@ -171,7 +173,7 @@ fn run_direct_add(ip: Ipv4Addr, hostname: &str, dir: &str) -> Result<()> {
     Ok(())
 }
 
-fn run_direct_remove(ips: &[Ipv4Addr]) -> Result<Vec<RemovedEntry>> {
+fn run_direct_remove(ips: &[Ipv4Addr]) -> Result<Vec<RemovedEntry>, SessionError> {
     for ip in ips {
         validate_ip(*ip)?;
     }
@@ -180,10 +182,10 @@ fn run_direct_remove(ips: &[Ipv4Addr]) -> Result<Vec<RemovedEntry>> {
     let mut lock = open_helper_lock()?;
     let _guard = lock
         .write()
-        .map_err(|e| Error::io("failed to acquire hosts lock", e))?;
+        .map_err(|e| SessionError::io("failed to acquire hosts lock", e))?;
 
     let content = std::fs::read_to_string(HOSTS_PATH)
-        .map_err(|e| Error::io("failed to read /etc/hosts", e))?;
+        .map_err(|e| SessionError::io("failed to read /etc/hosts", e))?;
     let (before, entries, after) = parse_block(&content);
 
     let mut removed = Vec::new();
@@ -214,7 +216,7 @@ fn hosts_helper_bin() -> PathBuf {
     PathBuf::from(SECURE_HOSTS_HELPER)
 }
 
-pub(crate) fn ensure_entry(ip: Ipv4Addr, hostname: &str, dir: &Path) -> Result<()> {
+pub(crate) fn ensure_entry(ip: Ipv4Addr, hostname: &str, dir: &Path) -> Result<(), SessionError> {
     let bin = hosts_helper_bin();
 
     let request = HostsRequest::Add {
@@ -229,20 +231,21 @@ pub(crate) fn ensure_entry(ip: Ipv4Addr, hostname: &str, dir: &Path) -> Result<(
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())
         .spawn()
-        .map_err(|e| Error::io("failed to run silo-hosts-helper", e))?;
+        .map_err(|e| SessionError::io("failed to run silo-hosts-helper", e))?;
 
     {
         let stdin = child.stdin.take().expect("stdin was piped");
-        serde_json::to_writer(stdin, &request)
-            .map_err(|e| Error::io("failed to write to silo-hosts-helper stdin", e.into()))?;
+        serde_json::to_writer(stdin, &request).map_err(|e| {
+            SessionError::io("failed to write to silo-hosts-helper stdin", e.into())
+        })?;
     }
 
     let status = child
         .wait()
-        .map_err(|e| Error::io("failed to wait for silo-hosts-helper", e))?;
+        .map_err(|e| SessionError::io("failed to wait for silo-hosts-helper", e))?;
 
     if !status.success() {
-        return Err(Error::CommandFailed {
+        return Err(SessionError::CommandFailed {
             command: format!("sudo {} (add {} {})", bin.display(), ip, hostname),
         });
     }
@@ -258,9 +261,9 @@ pub struct HostEntry {
     pub dir: Option<PathBuf>,
 }
 
-pub fn list_entries() -> Result<Vec<HostEntry>> {
+pub fn list_entries() -> Result<Vec<HostEntry>, SessionError> {
     let content = std::fs::read_to_string(HOSTS_PATH)
-        .map_err(|e| Error::io("failed to read /etc/hosts", e))?;
+        .map_err(|e| SessionError::io("failed to read /etc/hosts", e))?;
     let (_, entries, _) = parse_block(&content);
 
     let mut result = Vec::new();
@@ -282,7 +285,9 @@ pub fn list_entries() -> Result<Vec<HostEntry>> {
     Ok(result)
 }
 
-pub fn remove_entries(ips_to_remove: &HashSet<Ipv4Addr>) -> Result<Vec<(Ipv4Addr, String)>> {
+pub fn remove_entries(
+    ips_to_remove: &HashSet<Ipv4Addr>,
+) -> Result<Vec<(Ipv4Addr, String)>, SessionError> {
     if ips_to_remove.is_empty() {
         return Ok(Vec::new());
     }
@@ -299,26 +304,27 @@ pub fn remove_entries(ips_to_remove: &HashSet<Ipv4Addr>) -> Result<Vec<(Ipv4Addr
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()
-        .map_err(|e| Error::io("failed to run silo-hosts-helper", e))?;
+        .map_err(|e| SessionError::io("failed to run silo-hosts-helper", e))?;
 
     {
         let stdin = child.stdin.take().expect("stdin was piped");
-        serde_json::to_writer(stdin, &request)
-            .map_err(|e| Error::io("failed to write to silo-hosts-helper stdin", e.into()))?;
+        serde_json::to_writer(stdin, &request).map_err(|e| {
+            SessionError::io("failed to write to silo-hosts-helper stdin", e.into())
+        })?;
     }
 
     let output = child
         .wait_with_output()
-        .map_err(|e| Error::io("failed to wait for silo-hosts-helper", e))?;
+        .map_err(|e| SessionError::io("failed to wait for silo-hosts-helper", e))?;
 
     if !output.status.success() {
-        return Err(Error::CommandFailed {
+        return Err(SessionError::CommandFailed {
             command: format!("sudo {} (remove)", bin.display()),
         });
     }
 
     let removed: Vec<RemovedEntry> = serde_json::from_slice(&output.stdout)
-        .map_err(|e| Error::io("failed to parse silo-hosts-helper response", e.into()))?;
+        .map_err(|e| SessionError::io("failed to parse silo-hosts-helper response", e.into()))?;
 
     let result: Vec<(Ipv4Addr, String)> = removed.into_iter().map(|e| (e.ip, e.hostname)).collect();
 
@@ -326,40 +332,40 @@ pub fn remove_entries(ips_to_remove: &HashSet<Ipv4Addr>) -> Result<Vec<(Ipv4Addr
     Ok(result)
 }
 
-pub(crate) fn open_helper_lock() -> Result<RwLock<std::fs::File>> {
+pub(crate) fn open_helper_lock() -> Result<RwLock<std::fs::File>, SessionError> {
     let file = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
         .open(HELPER_LOCK_PATH)
-        .map_err(|e| Error::io("failed to open silo hosts lock file", e))?;
+        .map_err(|e| SessionError::io("failed to open silo hosts lock file", e))?;
     Ok(RwLock::new(file))
 }
 
-pub(crate) fn write_hosts_direct(content: &str) -> Result<()> {
+pub(crate) fn write_hosts_direct(content: &str) -> Result<(), SessionError> {
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
 
     let mut file = tempfile::NamedTempFile::new_in("/etc")
-        .map_err(|e| Error::io("failed to create temp hosts file", e))?;
+        .map_err(|e| SessionError::io("failed to create temp hosts file", e))?;
 
     file.write_all(content.as_bytes())
-        .map_err(|e| Error::io("failed to write temp hosts file", e))?;
+        .map_err(|e| SessionError::io("failed to write temp hosts file", e))?;
 
     file.as_file()
         .set_permissions(std::fs::Permissions::from_mode(0o644))
-        .map_err(|e| Error::io("failed to set permissions on temp hosts file", e))?;
+        .map_err(|e| SessionError::io("failed to set permissions on temp hosts file", e))?;
 
     file.as_file()
         .sync_all()
-        .map_err(|e| Error::io("failed to sync temp hosts file", e))?;
+        .map_err(|e| SessionError::io("failed to sync temp hosts file", e))?;
 
     file.persist(HOSTS_PATH)
-        .map_err(|e| Error::io("failed to rename temp hosts to /etc/hosts", e.into()))?;
+        .map_err(|e| SessionError::io("failed to rename temp hosts to /etc/hosts", e.into()))?;
 
     let readback = std::fs::read_to_string(HOSTS_PATH)
-        .map_err(|e| Error::io("failed to verify /etc/hosts after write", e))?;
+        .map_err(|e| SessionError::io("failed to verify /etc/hosts after write", e))?;
     if readback != content {
         tracing::warn!("/etc/hosts content changed after write — possible concurrent modification");
     }

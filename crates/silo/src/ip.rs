@@ -6,7 +6,7 @@ use std::process::{Command, Stdio};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, instrument};
 
-use crate::error::{Error, Result};
+use crate::error::SessionError;
 use crate::hosts;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -33,7 +33,7 @@ fn ip_helper_bin() -> PathBuf {
     PathBuf::from(hosts::SECURE_IP_HELPER)
 }
 
-fn run_ip_helper(request: &IpRequest) -> Result<()> {
+fn run_ip_helper(request: &IpRequest) -> Result<(), SessionError> {
     let bin = ip_helper_bin();
 
     let mut child = Command::new("sudo")
@@ -42,20 +42,20 @@ fn run_ip_helper(request: &IpRequest) -> Result<()> {
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())
         .spawn()
-        .map_err(|e| Error::io("failed to run silo-ip-helper", e))?;
+        .map_err(|e| SessionError::io("failed to run silo-ip-helper", e))?;
 
     {
         let stdin = child.stdin.take().expect("stdin was piped");
         serde_json::to_writer(stdin, request)
-            .map_err(|e| Error::io("failed to write to silo-ip-helper stdin", e.into()))?;
+            .map_err(|e| SessionError::io("failed to write to silo-ip-helper stdin", e.into()))?;
     }
 
     let status = child
         .wait()
-        .map_err(|e| Error::io("failed to wait for silo-ip-helper", e))?;
+        .map_err(|e| SessionError::io("failed to wait for silo-ip-helper", e))?;
 
     if !status.success() {
-        return Err(Error::CommandFailed {
+        return Err(SessionError::CommandFailed {
             command: format!("sudo {}", bin.display()),
         });
     }
@@ -64,7 +64,7 @@ fn run_ip_helper(request: &IpRequest) -> Result<()> {
 }
 
 #[instrument]
-pub fn add_alias(ip: Ipv4Addr) -> Result<()> {
+pub fn add_alias(ip: Ipv4Addr) -> Result<(), SessionError> {
     if alias_exists(ip)? {
         debug!(%ip, "alias already exists, skipping");
         return Ok(());
@@ -75,7 +75,7 @@ pub fn add_alias(ip: Ipv4Addr) -> Result<()> {
 }
 
 #[instrument]
-pub fn remove_alias(ip: Ipv4Addr) -> Result<()> {
+pub fn remove_alias(ip: Ipv4Addr) -> Result<(), SessionError> {
     if !alias_exists(ip)? {
         debug!(%ip, "alias does not exist, skipping");
         return Ok(());
@@ -85,7 +85,7 @@ pub fn remove_alias(ip: Ipv4Addr) -> Result<()> {
     run_ip_helper(&IpRequest::Remove { ip })
 }
 
-pub fn run_ip_direct(request: &IpRequest) -> Result<()> {
+pub fn run_ip_direct(request: &IpRequest) -> Result<(), SessionError> {
     match request {
         IpRequest::Add { ip } => {
             hosts::validate_ip(*ip)?;
@@ -98,15 +98,15 @@ pub fn run_ip_direct(request: &IpRequest) -> Result<()> {
     }
 }
 
-fn run_direct_add(ip: Ipv4Addr) -> Result<()> {
+fn run_direct_add(ip: Ipv4Addr) -> Result<(), SessionError> {
     #[cfg(target_os = "macos")]
     {
         let status = Command::new("/sbin/ifconfig")
             .args(["lo0", "alias", &ip.to_string(), "netmask", "255.0.0.0"])
             .status()
-            .map_err(|e| Error::io("failed to run ifconfig", e))?;
+            .map_err(|e| SessionError::io("failed to run ifconfig", e))?;
         if !status.success() {
-            return Err(Error::CommandFailed {
+            return Err(SessionError::CommandFailed {
                 command: format!("ifconfig lo0 alias {}", ip),
             });
         }
@@ -118,9 +118,9 @@ fn run_direct_add(ip: Ipv4Addr) -> Result<()> {
         let status = Command::new(&ip_cmd)
             .args(["addr", "add", &format!("{}/8", ip), "dev", "lo"])
             .status()
-            .map_err(|e| Error::io("failed to run ip addr add", e))?;
+            .map_err(|e| SessionError::io("failed to run ip addr add", e))?;
         if !status.success() {
-            return Err(Error::CommandFailed {
+            return Err(SessionError::CommandFailed {
                 command: format!("{} addr add {}/8 dev lo", ip_cmd, ip),
             });
         }
@@ -129,15 +129,15 @@ fn run_direct_add(ip: Ipv4Addr) -> Result<()> {
     Ok(())
 }
 
-fn run_direct_remove(ip: Ipv4Addr) -> Result<()> {
+fn run_direct_remove(ip: Ipv4Addr) -> Result<(), SessionError> {
     #[cfg(target_os = "macos")]
     {
         let status = Command::new("/sbin/ifconfig")
             .args(["lo0", "-alias", &ip.to_string()])
             .status()
-            .map_err(|e| Error::io("failed to run ifconfig", e))?;
+            .map_err(|e| SessionError::io("failed to run ifconfig", e))?;
         if !status.success() {
-            return Err(Error::CommandFailed {
+            return Err(SessionError::CommandFailed {
                 command: format!("ifconfig lo0 -alias {}", ip),
             });
         }
@@ -149,9 +149,9 @@ fn run_direct_remove(ip: Ipv4Addr) -> Result<()> {
         let status = Command::new(&ip_cmd)
             .args(["addr", "del", &format!("{}/8", ip), "dev", "lo"])
             .status()
-            .map_err(|e| Error::io("failed to run ip addr del", e))?;
+            .map_err(|e| SessionError::io("failed to run ip addr del", e))?;
         if !status.success() {
-            return Err(Error::CommandFailed {
+            return Err(SessionError::CommandFailed {
                 command: format!("{} addr del {}/8 dev lo", ip_cmd, ip),
             });
         }
@@ -160,12 +160,12 @@ fn run_direct_remove(ip: Ipv4Addr) -> Result<()> {
     Ok(())
 }
 
-pub fn alias_exists(ip: Ipv4Addr) -> Result<bool> {
+pub fn alias_exists(ip: Ipv4Addr) -> Result<bool, SessionError> {
     let lo_output = loopback_output()?;
     Ok(is_ip_in_output(&lo_output, ip))
 }
 
-pub fn active_aliases() -> Result<Vec<Ipv4Addr>> {
+pub fn active_aliases() -> Result<Vec<Ipv4Addr>, SessionError> {
     let output = loopback_output()?;
     let mut aliases = Vec::new();
 
@@ -192,7 +192,7 @@ pub fn active_aliases() -> Result<Vec<Ipv4Addr>> {
     Ok(aliases)
 }
 
-pub fn active_ips(ips: &[Ipv4Addr]) -> Result<HashSet<Ipv4Addr>> {
+pub fn active_ips(ips: &[Ipv4Addr]) -> Result<HashSet<Ipv4Addr>, SessionError> {
     let lo_output = loopback_output()?;
     Ok(ips
         .iter()
@@ -221,13 +221,13 @@ pub(crate) fn is_ip_in_output(output: &str, ip: Ipv4Addr) -> bool {
     })
 }
 
-fn loopback_output() -> Result<String> {
+fn loopback_output() -> Result<String, SessionError> {
     #[cfg(target_os = "macos")]
     {
         let output = Command::new("ifconfig")
             .arg("lo0")
             .output()
-            .map_err(|e| Error::io("failed to run ifconfig", e))?;
+            .map_err(|e| SessionError::io("failed to run ifconfig", e))?;
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 
@@ -237,7 +237,7 @@ fn loopback_output() -> Result<String> {
         let output = Command::new(&ip_cmd)
             .args(["addr", "show", "lo"])
             .output()
-            .map_err(|e| Error::io(format!("failed to run {} addr show lo", ip_cmd), e))?;
+            .map_err(|e| SessionError::io(format!("failed to run {} addr show lo", ip_cmd), e))?;
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 }

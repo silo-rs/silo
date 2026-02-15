@@ -1,26 +1,26 @@
 use std::path::{Path, PathBuf};
 
-use crate::error::{Error, Result};
+use crate::error::ResolveError;
 
-pub fn find_git_root(start: &Path) -> Result<PathBuf> {
+pub fn find_git_root(start: &Path) -> Result<PathBuf, ResolveError> {
     let mut current = start
         .canonicalize()
-        .map_err(|e| Error::io("failed to resolve path", e))?;
+        .map_err(|e| ResolveError::io("failed to resolve path", e))?;
     loop {
         if current.join(".git").exists() {
             return Ok(current);
         }
         if !current.pop() {
-            return Err(Error::NotGitRepo);
+            return Err(ResolveError::NotGitRepo);
         }
     }
 }
 
-pub(super) fn get_branch_name(git_root: &Path) -> Result<String> {
+pub(super) fn get_branch_name(git_root: &Path) -> Result<String, ResolveError> {
     let dot_git = git_root.join(".git");
     let head_ref = if dot_git.is_file() {
         let content = std::fs::read_to_string(&dot_git)
-            .map_err(|e| Error::io("failed to read .git file", e))?;
+            .map_err(|e| ResolveError::io("failed to read .git file", e))?;
         let gitdir = content.strip_prefix("gitdir: ").unwrap_or(&content).trim();
         let gitdir_path = if Path::new(gitdir).is_absolute() {
             PathBuf::from(gitdir)
@@ -28,10 +28,10 @@ pub(super) fn get_branch_name(git_root: &Path) -> Result<String> {
             git_root.join(gitdir)
         };
         let head = gitdir_path.join("HEAD");
-        std::fs::read_to_string(&head).map_err(|e| Error::io("failed to read HEAD", e))?
+        std::fs::read_to_string(&head).map_err(|e| ResolveError::io("failed to read HEAD", e))?
     } else {
         let head = dot_git.join("HEAD");
-        std::fs::read_to_string(&head).map_err(|e| Error::io("failed to read HEAD", e))?
+        std::fs::read_to_string(&head).map_err(|e| ResolveError::io("failed to read HEAD", e))?
     };
 
     let head_ref = head_ref.trim();

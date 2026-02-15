@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-use crate::error::{Error, Result};
+use crate::error::ResolveError;
 use crate::resolve;
 
 #[derive(Debug, Clone, Serialize)]
@@ -16,13 +16,17 @@ pub struct Context {
 }
 
 impl Context {
-    pub fn current(name: Option<&str>, ip: Option<Ipv4Addr>) -> Result<Self> {
-        let cwd = std::env::current_dir().map_err(|e| Error::io("failed to get cwd", e))?;
+    pub fn current(name: Option<&str>, ip: Option<Ipv4Addr>) -> Result<Self, ResolveError> {
+        let cwd = std::env::current_dir().map_err(|e| ResolveError::io("failed to get cwd", e))?;
         let cwd = cwd.canonicalize().unwrap_or(cwd);
         Self::for_dir(&cwd, name, ip)
     }
 
-    pub fn for_dir(dir: &Path, name: Option<&str>, ip: Option<Ipv4Addr>) -> Result<Self> {
+    pub fn for_dir(
+        dir: &Path,
+        name: Option<&str>,
+        ip: Option<Ipv4Addr>,
+    ) -> Result<Self, ResolveError> {
         resolve::resolve(dir, name, ip)
     }
 

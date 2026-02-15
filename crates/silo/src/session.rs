@@ -3,15 +3,14 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::context::Context;
-use crate::error::Result;
+use crate::error::{ResolveError, SessionError};
 use crate::{hosts, ip};
 
 pub trait BackendSession: Send {
-    fn prepare(&self, cmd: &mut Command) -> Result<()>;
+    fn prepare(&self, cmd: &mut Command) -> Result<(), SessionError>;
     fn name(&self) -> &str;
 }
 
-/// `LD_PRELOAD` / `DYLD_INSERT_LIBRARIES` backend.
 pub struct PreloadBackend {
     lib_path: PathBuf,
 }
@@ -27,7 +26,7 @@ impl PreloadBackend {
 }
 
 impl BackendSession for PreloadBackend {
-    fn prepare(&self, cmd: &mut Command) -> Result<()> {
+    fn prepare(&self, cmd: &mut Command) -> Result<(), SessionError> {
         #[cfg(target_os = "macos")]
         let key = "DYLD_INSERT_LIBRARIES";
         #[cfg(target_os = "linux")]
@@ -49,7 +48,7 @@ impl BackendSession for PreloadBackend {
 pub struct NoopBackend;
 
 impl BackendSession for NoopBackend {
-    fn prepare(&self, _cmd: &mut Command) -> Result<()> {
+    fn prepare(&self, _cmd: &mut Command) -> Result<(), SessionError> {
         Ok(())
     }
 
@@ -58,7 +57,6 @@ impl BackendSession for NoopBackend {
     }
 }
 
-/// Controls which side effects [`Session::activate`] performs.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct ActivateOptions {
@@ -81,7 +79,7 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn ip_for(dir: &Path, name: Option<&str>) -> Result<Ipv4Addr> {
+    pub fn ip_for(dir: &Path, name: Option<&str>) -> Result<Ipv4Addr, ResolveError> {
         let ctx = Context::for_dir(dir, name, None)?;
         Ok(ctx.ip())
     }
@@ -90,7 +88,7 @@ impl Session {
         ctx: Context,
         opts: ActivateOptions,
         backend: Box<dyn BackendSession>,
-    ) -> Result<Self> {
+    ) -> Result<Self, SessionError> {
         if opts.ip_alias {
             ip::add_alias(ctx.ip())?;
         }
@@ -103,7 +101,7 @@ impl Session {
         Ok(Self { ctx, backend })
     }
 
-    pub fn prepare(&self, cmd: &mut Command) -> Result<()> {
+    pub fn prepare(&self, cmd: &mut Command) -> Result<(), SessionError> {
         for (key, val) in self.ctx.env_vars() {
             cmd.env(key, val);
         }

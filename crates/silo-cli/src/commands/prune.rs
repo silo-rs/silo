@@ -247,6 +247,27 @@ fn execute_hosts_removal(hosts_ips_to_remove: &HashSet<Ipv4Addr>, json: bool) ->
     hosts_removed
 }
 
+#[cfg(target_os = "linux")]
+fn prune_linux_resources(json: bool) {
+    let cgroups_removed = crate::ebpf::prune_stale_cgroups();
+    if !json && cgroups_removed > 0 {
+        eprintln!(
+            "  {} pruned {} stale cgroup(s)",
+            "✓".green(),
+            cgroups_removed
+        );
+    }
+
+    let map_removed = crate::ebpf::prune_config_map();
+    if !json && map_removed > 0 {
+        eprintln!(
+            "  {} pruned {} stale config map entry(ies)",
+            "✓".green(),
+            map_removed
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -350,26 +371,5 @@ mod tests {
         assert_eq!(plan.aliases_to_remove, vec![idle]);
         assert!(plan.hosts_ips_to_remove.contains(&idle));
         assert!(!plan.hosts_ips_to_remove.contains(&busy));
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn prune_linux_resources(json: bool) {
-    let cgroups_removed = crate::ebpf::prune_stale_cgroups();
-    if !json && cgroups_removed > 0 {
-        eprintln!(
-            "  {} pruned {} stale cgroup(s)",
-            "✓".green(),
-            cgroups_removed
-        );
-    }
-
-    let map_removed = crate::ebpf::prune_config_map();
-    if !json && map_removed > 0 {
-        eprintln!(
-            "  {} pruned {} stale config map entry(ies)",
-            "✓".green(),
-            map_removed
-        );
     }
 }

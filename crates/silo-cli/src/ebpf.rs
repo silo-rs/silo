@@ -208,9 +208,9 @@ impl EbpfSession {
 }
 
 impl silo::BackendSession for EbpfSession {
-    fn prepare(&self, _cmd: &mut std::process::Command) -> silo::error::Result<()> {
+    fn prepare(&self, _cmd: &mut std::process::Command) -> Result<(), silo::SessionError> {
         self.add_pid(std::process::id())
-            .map_err(|e| silo::Error::Backend(e.into()))
+            .map_err(|e| silo::SessionError::Backend(e.into()))
     }
 
     fn name(&self) -> &str {
@@ -566,7 +566,6 @@ mod tests {
     #[test]
     fn sudo_caller_ids_no_sudo_non_root() {
         let _lock = ENV_LOCK.lock().unwrap();
-        // When not running as root and SUDO_UID is not set, should error
         if unsafe { libc::geteuid() } != 0 {
             unsafe {
                 std::env::remove_var("SUDO_UID");

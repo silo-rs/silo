@@ -12,6 +12,6 @@ pub mod ip;
 pub mod shebang;
 
 pub use context::Context;
-pub use error::Error;
+pub use error::{IoError, ResolveError, SessionError};
 pub use resolve::{compute_ip, sanitize_name};
 pub use session::{ActivateOptions, BackendSession, NoopBackend, PreloadBackend, Session};

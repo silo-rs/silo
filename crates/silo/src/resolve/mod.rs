@@ -8,7 +8,7 @@ use std::path::Path;
 use tracing::debug;
 
 use crate::context::Context;
-use crate::error::{Error, Result};
+use crate::error::ResolveError;
 
 pub use hash::compute_ip;
 pub use sanitize::sanitize_name;
@@ -17,7 +17,7 @@ pub fn resolve(
     cwd: &Path,
     name_override: Option<&str>,
     ip_override: Option<Ipv4Addr>,
-) -> Result<Context> {
+) -> Result<Context, ResolveError> {
     let git_root = git::find_git_root(cwd)?;
     let canonical = git_root.canonicalize().unwrap_or_else(|_| git_root.clone());
 
@@ -32,7 +32,7 @@ pub fn resolve(
     let ip = match ip_override {
         Some(ip) => {
             if ip.octets()[0] != 127 {
-                return Err(Error::InvalidIpOverride(ip));
+                return Err(ResolveError::InvalidIpOverride(ip));
             }
             ip
         }
