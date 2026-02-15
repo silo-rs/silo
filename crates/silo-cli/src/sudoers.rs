@@ -5,7 +5,7 @@ use eyre::{Context, bail};
 
 const SUDOERS_PATH: &str = "/etc/sudoers.d/silo";
 const STAMP_PATH: &str = "/usr/local/libexec/.silo-stamp";
-const SUDOERS_VERSION: u32 = 6;
+const SUDOERS_VERSION: u32 = 7;
 const SUDOERS_VERSION_PREFIX: &str = "# silo sudoers v";
 const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -93,62 +93,10 @@ fn install() -> eyre::Result<()> {
     let rules = sudoers_rules();
     validate_sudoers_syntax(&rules)?;
 
-    let status = Command::new("sudo")
-        .args(["tee", SUDOERS_PATH])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .and_then(|mut child| {
-            use std::io::Write;
-            if let Some(ref mut stdin) = child.stdin {
-                stdin.write_all(rules.as_bytes())?;
-            }
-            child.wait()
-        })
-        .context("failed to install sudoers rule")?;
-
-    if !status.success() {
-        bail!("sudo tee {SUDOERS_PATH} failed");
-    }
-
-    let status = Command::new("sudo")
-        .args(["chmod", "0440", SUDOERS_PATH])
-        .status()
-        .context("failed to chmod sudoers rule")?;
-
-    if !status.success() {
-        bail!("sudo chmod 0440 {SUDOERS_PATH} failed");
-    }
+    write_root_file(rules.as_bytes(), SUDOERS_PATH, "0440")?;
 
     let stamp_content = format!("{SUDOERS_VERSION_PREFIX}{SUDOERS_VERSION} pkg={PKG_VERSION}\n");
-    let status = Command::new("sudo")
-        .args(["tee", STAMP_PATH])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .and_then(|mut child| {
-            use std::io::Write;
-            if let Some(ref mut stdin) = child.stdin {
-                stdin.write_all(stamp_content.as_bytes())?;
-            }
-            child.wait()
-        })
-        .context("failed to write stamp file")?;
-
-    if !status.success() {
-        bail!("sudo tee {STAMP_PATH} failed");
-    }
-
-    let status = Command::new("sudo")
-        .args(["chmod", "0644", STAMP_PATH])
-        .status()
-        .context("failed to chmod stamp file")?;
-
-    if !status.success() {
-        bail!("sudo chmod 0644 {STAMP_PATH} failed");
-    }
+    write_root_file(stamp_content.as_bytes(), STAMP_PATH, "0644")?;
 
     cleanup_legacy_paths();
 
@@ -170,6 +118,10 @@ fn cleanup_legacy_paths() {
 }
 
 fn install_embedded_helper(bytes: &[u8], dest: &str) -> eyre::Result<()> {
+    write_root_file(bytes, dest, "755")
+}
+
+fn write_root_file(bytes: &[u8], dest: &str, mode: &str) -> eyre::Result<()> {
     use std::io::Write;
 
     let tmp_dest = format!("{dest}.tmp");
@@ -186,26 +138,26 @@ fn install_embedded_helper(bytes: &[u8], dest: &str) -> eyre::Result<()> {
             }
             child.wait()
         })
-        .with_context(|| format!("failed to write helper to {tmp_dest}"))?;
+        .with_context(|| format!("failed to write {tmp_dest}"))?;
 
     if !status.success() {
         bail!("sudo tee {tmp_dest} failed");
     }
 
     let status = Command::new("sudo")
-        .args(["chmod", "755", &tmp_dest])
+        .args(["chmod", mode, &tmp_dest])
         .status()
         .with_context(|| format!("failed to chmod {tmp_dest}"))?;
 
     if !status.success() {
         let _ = Command::new("sudo").args(["rm", "-f", &tmp_dest]).status();
-        bail!("sudo chmod 755 {tmp_dest} failed");
+        bail!("sudo chmod {mode} {tmp_dest} failed");
     }
 
     let status = Command::new("sudo")
         .args(["mv", "-f", &tmp_dest, dest])
         .status()
-        .with_context(|| format!("failed to move helper to {dest}"))?;
+        .with_context(|| format!("failed to move {tmp_dest} to {dest}"))?;
 
     if !status.success() {
         let _ = Command::new("sudo").args(["rm", "-f", &tmp_dest]).status();
@@ -218,24 +170,12 @@ fn install_embedded_helper(bytes: &[u8], dest: &str) -> eyre::Result<()> {
 fn validate_sudoers_syntax(rules: &str) -> eyre::Result<()> {
     use std::io::Write;
 
-    let mut tmp_file = match tempfile::NamedTempFile::new() {
-        Ok(f) => f,
-        Err(e) => {
-            eprintln!(
-                "  {} could not create temp file for visudo check: {e}",
-                "WARNING:".yellow().bold()
-            );
-            return Ok(());
-        }
-    };
+    let mut tmp_file =
+        tempfile::NamedTempFile::new().context("could not create temp file for visudo check")?;
 
-    if let Err(e) = tmp_file.write_all(rules.as_bytes()) {
-        eprintln!(
-            "  {} could not write temp file for visudo check: {e}",
-            "WARNING:".yellow().bold()
-        );
-        return Ok(());
-    }
+    tmp_file
+        .write_all(rules.as_bytes())
+        .context("could not write temp file for visudo check")?;
 
     let result = Command::new("visudo")
         .args([
@@ -306,8 +246,8 @@ fn sudoers_rules() -> String {
     {
         format!(
             "{SUDOERS_VERSION_PREFIX}{SUDOERS_VERSION} pkg={PKG_VERSION}\n\
-             %admin ALL=(root) NOPASSWD: {ip_helper}\n\
-             %admin ALL=(root) NOPASSWD: {hosts_helper}\n"
+             %admin ALL=(root) NOPASSWD: {ip_helper} \"\"\n\
+             %admin ALL=(root) NOPASSWD: {hosts_helper} \"\"\n"
         )
     }
 
@@ -316,8 +256,8 @@ fn sudoers_rules() -> String {
         let group = detect_admin_group();
         format!(
             "{SUDOERS_VERSION_PREFIX}{SUDOERS_VERSION} pkg={PKG_VERSION}\n\
-             {group} ALL=(root) NOPASSWD: {ip_helper}\n\
-             {group} ALL=(root) NOPASSWD: {hosts_helper}\n"
+             {group} ALL=(root) NOPASSWD: {ip_helper} \"\"\n\
+             {group} ALL=(root) NOPASSWD: {hosts_helper} \"\"\n"
         )
     }
 }
@@ -394,22 +334,16 @@ mod tests {
     }
 
     #[test]
-    fn sudoers_rules_helpers_have_no_trailing_args() {
+    fn sudoers_rules_restrict_to_no_args() {
         let rules = sudoers_rules();
         for line in rules.lines() {
             if line.starts_with('#') {
                 continue;
             }
-            if line.contains("silo-ip-helper") {
+            if line.contains("silo-ip-helper") || line.contains("silo-hosts-helper") {
                 assert!(
-                    line.ends_with("silo-ip-helper"),
-                    "ip helper rule must not have trailing args, got:\n{line}"
-                );
-            }
-            if line.contains("silo-hosts-helper") {
-                assert!(
-                    line.ends_with("silo-hosts-helper"),
-                    "hosts helper rule must not have trailing args, got:\n{line}"
+                    line.ends_with("\"\""),
+                    "helper rule must end with \"\" to restrict to no arguments, got:\n{line}"
                 );
             }
         }
