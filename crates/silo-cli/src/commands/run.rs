@@ -185,8 +185,16 @@ pub fn find_bind_lib() -> eyre::Result<PathBuf> {
     };
 
     if needs_extract {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+
         std::fs::create_dir_all(&lib_dir)?;
-        std::fs::write(&lib_path, EMBEDDED_BIND_LIB)?;
+        let mut tmp = tempfile::NamedTempFile::new_in(&lib_dir)?;
+        tmp.write_all(EMBEDDED_BIND_LIB)?;
+        tmp.as_file()
+            .set_permissions(std::fs::Permissions::from_mode(0o755))?;
+        tmp.as_file().sync_all()?;
+        tmp.persist(&lib_path)?;
     }
 
     Ok(lib_path)
