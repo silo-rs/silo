@@ -178,18 +178,15 @@ pub fn find_bind_lib() -> eyre::Result<PathBuf> {
         .join("lib");
 
     let lib_path = lib_dir.join(LIB_NAME);
-    let stamp_path = lib_dir.join(".silo-bind-stamp");
-    let current_stamp = env!("CARGO_PKG_VERSION");
 
-    let needs_extract = !lib_path.exists()
-        || std::fs::read_to_string(&stamp_path)
-            .map(|s| s.trim() != current_stamp)
-            .unwrap_or(true);
+    let needs_extract = match std::fs::read(&lib_path) {
+        Ok(content) => content != EMBEDDED_BIND_LIB,
+        Err(_) => true,
+    };
 
     if needs_extract {
         std::fs::create_dir_all(&lib_dir)?;
         std::fs::write(&lib_path, EMBEDDED_BIND_LIB)?;
-        std::fs::write(&stamp_path, current_stamp)?;
     }
 
     Ok(lib_path)
