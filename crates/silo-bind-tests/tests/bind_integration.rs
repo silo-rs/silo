@@ -259,20 +259,20 @@ fn bind_v6_dualstack_stays_ipv6() {
 
 #[test]
 #[cfg(target_os = "macos")]
-fn bind_v6_v6only_falls_back_to_ipv4() {
+fn bind_v6_v6only_not_rewritten() {
     let (stdout, _, success) = run_helper("bind_v6_v6only", Some(TEST_IP));
     assert!(success, "helper failed");
     assert!(
         stdout.contains("family=v6"),
-        "v6-only socket should stay AF_INET6 with V6ONLY cleared, got: {stdout}"
+        "v6-only socket should stay AF_INET6, got: {stdout}"
     );
     assert!(
-        stdout.contains("v6only_after=0"),
-        "V6ONLY should be cleared after rewrite, got: {stdout}"
+        stdout.contains("v6only_after=1"),
+        "V6ONLY should be preserved (not cleared by silo), got: {stdout}"
     );
     assert!(
-        stdout.contains(&format!("bound={TEST_IP}")),
-        "expected bind to {TEST_IP} via IPv4-mapped IPv6, got: {stdout}"
+        stdout.contains("bound=::"),
+        "v6-only socket should not be rewritten, got: {stdout}"
     );
 }
 
