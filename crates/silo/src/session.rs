@@ -6,7 +6,7 @@ use crate::context::Context;
 use crate::error::{ResolveError, SessionError};
 use crate::{hosts, ip};
 
-pub trait BackendSession: Send {
+pub trait BackendSession {
     fn prepare(&self, cmd: &mut Command) -> Result<(), SessionError>;
     fn name(&self) -> &str;
 }
@@ -111,7 +111,7 @@ impl Session {
 
     pub fn prepare(&self, cmd: &mut Command) -> Result<(), SessionError> {
         for (key, val) in self.ctx.env_vars() {
-            cmd.env(key, val);
+            cmd.env(key, val.as_ref());
         }
         self.backend.prepare(cmd)
     }

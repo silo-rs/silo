@@ -14,7 +14,7 @@ pub fn run(name: Option<&str>, ip: Option<std::net::Ipv4Addr>, json: bool) -> ey
         .context()
         .env_vars()
         .into_iter()
-        .map(|(k, v)| (k.into(), v))
+        .map(|(k, v)| (k.into(), v.into_owned()))
         .collect();
 
     if session.backend_name() == "preload" {

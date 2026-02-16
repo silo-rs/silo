@@ -40,14 +40,15 @@ fn now_secs() -> u64 {
 }
 
 fn maybe_expire_cache() {
-    let last = CACHE_EPOCH.load(Ordering::Relaxed);
+    let last = CACHE_EPOCH.load(Ordering::Acquire);
     let now = now_secs();
-    if now.saturating_sub(last) >= CACHE_TTL_SECS
-        && CACHE_EPOCH
-            .compare_exchange(last, now, Ordering::AcqRel, Ordering::Relaxed)
-            .is_ok()
-    {
-        cache_clear_all();
+    if now.saturating_sub(last) >= CACHE_TTL_SECS {
+        if let Ok(prev) =
+            CACHE_EPOCH.compare_exchange(last, now, Ordering::AcqRel, Ordering::Acquire)
+        {
+            debug_assert_eq!(prev, last);
+            cache_clear_all();
+        }
     }
 }
 

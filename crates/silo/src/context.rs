@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 
@@ -18,7 +19,9 @@ pub struct Context {
 impl Context {
     pub fn current(name: Option<&str>, ip: Option<Ipv4Addr>) -> Result<Self, ResolveError> {
         let cwd = std::env::current_dir().map_err(|e| ResolveError::io("failed to get cwd", e))?;
-        let cwd = cwd.canonicalize().unwrap_or(cwd);
+        let cwd = cwd
+            .canonicalize()
+            .map_err(|e| ResolveError::io("failed to canonicalize cwd", e))?;
         Self::for_dir(&cwd, name, ip)
     }
 
@@ -46,12 +49,12 @@ impl Context {
         &self.dir
     }
 
-    pub fn env_vars(&self) -> [(&'static str, String); 4] {
+    pub fn env_vars(&self) -> [(&'static str, Cow<'_, str>); 4] {
         [
-            ("SILO_IP", self.ip.to_string()),
-            ("SILO_NAME", self.name.clone()),
-            ("SILO_DIR", self.dir.display().to_string()),
-            ("SILO_HOST", self.hostname.clone()),
+            ("SILO_IP", Cow::Owned(self.ip.to_string())),
+            ("SILO_NAME", Cow::Borrowed(&self.name)),
+            ("SILO_DIR", Cow::Owned(self.dir.display().to_string())),
+            ("SILO_HOST", Cow::Borrowed(&self.hostname)),
         ]
     }
 }
@@ -114,7 +117,7 @@ mod tests {
         assert!(keys.contains(&"SILO_DIR"));
         assert!(keys.contains(&"SILO_HOST"));
         let name_val = vars.iter().find(|(k, _)| *k == "SILO_NAME").unwrap();
-        assert_eq!(name_val.1, "feat");
+        assert_eq!(name_val.1.as_ref(), "feat");
     }
 
     #[test]
