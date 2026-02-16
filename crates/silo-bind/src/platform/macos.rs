@@ -86,6 +86,13 @@ unsafe extern "C" fn silo_bind_entry(fd: c_int, addr: *const sockaddr, len: sock
         return ret;
     }
 
+    if !addr.is_null() {
+        let family = unsafe { (*addr).sa_family } as c_int;
+        if family == libc::AF_INET6 as c_int && unsafe { is_v6only(fd) } {
+            return unsafe { real_bind(fd, addr, len) };
+        }
+    }
+
     let mut storage = MaybeUninit::<SockaddrStorage>::uninit();
     let (addr, len) = unsafe { maybe_rewrite_addr(addr, len, true, &mut storage) };
     unsafe { real_bind(fd, addr, len) }

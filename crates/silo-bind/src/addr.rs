@@ -204,16 +204,7 @@ pub unsafe fn bind_prepare_v6(
     let ip = get_silo_ip()?;
     let new_v6 = rewrite::rewrite_ipv6_addr(sin6.sin6_addr.s6_addr, ip, true)?;
     if unsafe { is_v6only(fd) } {
-        let optval: c_int = 0;
-        unsafe {
-            libc::setsockopt(
-                fd,
-                libc::IPPROTO_IPV6,
-                libc::IPV6_V6ONLY,
-                &optval as *const _ as *const libc::c_void,
-                std::mem::size_of::<c_int>() as socklen_t,
-            );
-        }
+        return None;
     }
     let mut sin6_copy = *sin6;
     sin6_copy.sin6_addr.s6_addr = new_v6;
@@ -528,6 +519,36 @@ mod tests {
         if fd >= 0 {
             unsafe { libc::close(fd) };
         }
+    }
+
+    #[test]
+    fn bind_prepare_v6_v6only_returns_none() {
+        let fd = unsafe { libc::socket(libc::AF_INET6, libc::SOCK_STREAM, 0) };
+        assert!(fd >= 0, "failed to create IPv6 socket");
+
+        let optval: c_int = 1;
+        unsafe {
+            libc::setsockopt(
+                fd,
+                libc::IPPROTO_IPV6,
+                libc::IPV6_V6ONLY,
+                &optval as *const _ as *const libc::c_void,
+                std::mem::size_of::<c_int>() as socklen_t,
+            );
+        }
+
+        let mut sin6: libc::sockaddr_in6 = unsafe { std::mem::zeroed() };
+        sin6.sin6_family = libc::AF_INET6 as _;
+        sin6.sin6_addr.s6_addr = [0u8; 16]; // ::
+        let sa = &sin6 as *const libc::sockaddr_in6 as *const sockaddr;
+        let len = std::mem::size_of::<libc::sockaddr_in6>() as socklen_t;
+
+        let result = unsafe { bind_prepare_v6(fd, sa, len) };
+        assert!(result.is_none(), "v6-only socket should not be rewritten");
+
+        assert!(unsafe { is_v6only(fd) }, "v6-only flag should be preserved");
+
+        unsafe { libc::close(fd) };
     }
 
     #[test]

@@ -24,7 +24,9 @@ pub fn ensure_entry(ip: Ipv4Addr, hostname: &str, dir: &Path) -> Result<(), Sess
         .map_err(|e| SessionError::io("failed to run silo-hosts-helper", e))?;
 
     {
-        let stdin = child.stdin.take().expect("stdin was piped");
+        let stdin = child.stdin.take().ok_or_else(|| {
+            SessionError::io("stdin not available", std::io::ErrorKind::Other.into())
+        })?;
         serde_json::to_writer(stdin, &request).map_err(|e| {
             SessionError::io("failed to write to silo-hosts-helper stdin", e.into())
         })?;
@@ -65,7 +67,9 @@ pub fn remove_entries(
         .map_err(|e| SessionError::io("failed to run silo-hosts-helper", e))?;
 
     {
-        let stdin = child.stdin.take().expect("stdin was piped");
+        let stdin = child.stdin.take().ok_or_else(|| {
+            SessionError::io("stdin not available", std::io::ErrorKind::Other.into())
+        })?;
         serde_json::to_writer(stdin, &request).map_err(|e| {
             SessionError::io("failed to write to silo-hosts-helper stdin", e.into())
         })?;

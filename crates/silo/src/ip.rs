@@ -45,7 +45,9 @@ fn run_ip_helper(request: &IpRequest) -> Result<(), SessionError> {
         .map_err(|e| SessionError::io("failed to run silo-ip-helper", e))?;
 
     {
-        let stdin = child.stdin.take().expect("stdin was piped");
+        let stdin = child.stdin.take().ok_or_else(|| {
+            SessionError::io("stdin not available", std::io::ErrorKind::Other.into())
+        })?;
         serde_json::to_writer(stdin, request)
             .map_err(|e| SessionError::io("failed to write to silo-ip-helper stdin", e.into()))?;
     }

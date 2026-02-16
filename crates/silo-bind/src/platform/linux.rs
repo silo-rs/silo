@@ -5,7 +5,7 @@ use std::sync::OnceLock;
 use libc::{sockaddr, socklen_t};
 
 use crate::addr::{
-    SockaddrStorage, bind_prepare_v6, hide_other_silo_aliases, maybe_rewrite_addr,
+    SockaddrStorage, bind_prepare_v6, hide_other_silo_aliases, is_v6only, maybe_rewrite_addr,
     maybe_rewrite_connect_addr, prepare_sendmsg, read_port,
 };
 use crate::errno_ptr;
@@ -43,6 +43,13 @@ pub unsafe extern "C" fn bind(fd: c_int, addr: *const sockaddr, len: socklen_t) 
                 len,
             )
         };
+    }
+
+    if !addr.is_null() {
+        let family = unsafe { (*addr).sa_family } as c_int;
+        if family == libc::AF_INET6 as c_int && unsafe { is_v6only(fd) } {
+            return unsafe { real_fn(fd, addr, len) };
+        }
     }
 
     let mut storage = MaybeUninit::<SockaddrStorage>::uninit();
