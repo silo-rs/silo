@@ -31,7 +31,7 @@ pub fn resolve(
 
     let ip = match ip_override {
         Some(ip) => {
-            if ip.octets()[0] != 127 {
+            if ip.octets()[0] != 127 || ip == Ipv4Addr::LOCALHOST {
                 return Err(ResolveError::InvalidIpOverride(ip));
             }
             ip

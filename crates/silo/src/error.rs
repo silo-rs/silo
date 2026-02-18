@@ -28,7 +28,7 @@ pub enum ResolveError {
     #[error("not inside a git repository")]
     NotGitRepo,
 
-    #[error("ip override {0} is not in 127.0.0.0/8")]
+    #[error("ip override {0} is not a valid silo IP (must be in 127.0.0.0/8, not 127.0.0.1)")]
     InvalidIpOverride(Ipv4Addr),
 
     #[error(transparent)]

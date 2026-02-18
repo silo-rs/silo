@@ -147,6 +147,14 @@ mod tests {
     }
 
     #[test]
+    fn context_ip_override_localhost_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        git_init(dir.path());
+        let ip = Ipv4Addr::new(127, 0, 0, 1);
+        assert!(Context::for_dir(dir.path(), Some("test"), Some(ip)).is_err());
+    }
+
+    #[test]
     fn context_hostname_ends_with_silo() {
         let dir = tempfile::tempdir().unwrap();
         git_init(dir.path());
