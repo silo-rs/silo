@@ -10,7 +10,9 @@ pub fn is_sip_path(path: &str) -> bool {
 
 pub fn find_non_sip_in_path(name: &str) -> Option<CString> {
     let fallbacks: &[&str] = match name {
-        "sh" | "bash" | "zsh" | "dash" | "ksh" => &["bash", "zsh", "sh"],
+        "sh" | "bash" | "zsh" => &["bash", "zsh", "sh"],
+        "dash" => &["dash", "bash", "zsh", "sh"],
+        "ksh" => &["ksh", "bash", "zsh", "sh"],
         "make" => &["make", "gmake"],
         _ => &[],
     };
