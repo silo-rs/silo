@@ -9,10 +9,7 @@ const SUDOERS_VERSION: u32 = 8;
 const SUDOERS_VERSION_PREFIX: &str = "# silo sudoers v";
 const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-#[cfg(target_os = "macos")]
-pub const SECURE_BIND_LIB: &str = "/usr/local/libexec/libsilo_bind.dylib";
-#[cfg(target_os = "linux")]
-pub const SECURE_BIND_LIB: &str = "/usr/local/libexec/libsilo_bind.so";
+pub const SECURE_BIND_LIB: &str = silo::DEFAULT_BIND_LIB_PATH;
 
 pub fn ensure() -> eyre::Result<()> {
     if let Ok(stamp) = std::fs::read_to_string(STAMP_PATH)
