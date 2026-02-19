@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -6,12 +5,6 @@ use std::process::Command;
 use crate::context::Context;
 use crate::error::{ResolveError, SessionError};
 use crate::{hosts, ip};
-
-#[cfg(target_os = "macos")]
-pub const DEFAULT_BIND_LIB_PATH: &str = "/usr/local/libexec/libsilo_bind.dylib";
-
-#[cfg(target_os = "linux")]
-pub const DEFAULT_BIND_LIB_PATH: &str = "/usr/local/libexec/libsilo_bind.so";
 
 pub trait BackendSession {
     fn prepare(&self, cmd: &mut Command) -> Result<(), SessionError>;
@@ -149,21 +142,6 @@ impl Session {
 
     pub fn hosts_warning(&self) -> Option<&str> {
         self.hosts_warning.as_deref()
-    }
-
-    pub fn deactivate(self) -> Result<(), SessionError> {
-        let mut last_err = None;
-
-        if let Err(e) = ip::remove_alias(self.ctx.ip()) {
-            last_err = Some(e);
-        }
-
-        let ips = HashSet::from([self.ctx.ip()]);
-        if let Err(e) = hosts::remove_entries(&ips) {
-            last_err = Some(e);
-        }
-
-        last_err.map_or(Ok(()), Err)
     }
 }
 

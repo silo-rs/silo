@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-use crate::error::{ResolveError, ValidationError};
+use crate::error::ResolveError;
 use crate::resolve;
 
 #[derive(Debug, Clone, Serialize)]
@@ -17,26 +17,6 @@ pub struct Context {
 }
 
 impl Context {
-    pub fn new(
-        name: impl Into<String>,
-        ip: Ipv4Addr,
-        dir: impl Into<PathBuf>,
-        hostname: impl Into<String>,
-    ) -> Result<Self, ValidationError> {
-        if ip.octets()[0] != 127 {
-            return Err(ValidationError::IpNotLoopback(ip));
-        }
-        if ip == Ipv4Addr::LOCALHOST {
-            return Err(ValidationError::IpReservedLocalhost);
-        }
-        Ok(Self {
-            name: name.into(),
-            ip,
-            dir: dir.into(),
-            hostname: hostname.into(),
-        })
-    }
-
     pub fn current(name: Option<&str>, ip: Option<Ipv4Addr>) -> Result<Self, ResolveError> {
         let cwd = std::env::current_dir().map_err(|e| ResolveError::io("failed to get cwd", e))?;
         let cwd = cwd
@@ -199,60 +179,5 @@ mod tests {
         let a = Context::for_dir(dir.path(), Some("main"), None).unwrap();
         let b = Context::for_dir(dir.path(), Some("develop"), None).unwrap();
         assert_ne!(a.ip(), b.ip());
-    }
-
-    #[test]
-    fn context_new_valid() {
-        let ctx = Context::new(
-            "agent-codegen",
-            Ipv4Addr::new(127, 1, 42, 7),
-            "/tmp/workspace",
-            "agent-codegen.silo",
-        )
-        .unwrap();
-        assert_eq!(ctx.name(), "agent-codegen");
-        assert_eq!(ctx.ip(), Ipv4Addr::new(127, 1, 42, 7));
-        assert_eq!(ctx.dir(), std::path::Path::new("/tmp/workspace"));
-        assert_eq!(ctx.hostname(), "agent-codegen.silo");
-    }
-
-    #[test]
-    fn context_new_rejects_non_loopback() {
-        assert!(Context::new("test", Ipv4Addr::new(10, 0, 0, 1), "/tmp", "t.silo").is_err());
-        assert!(Context::new("test", Ipv4Addr::new(192, 168, 1, 1), "/tmp", "t.silo").is_err());
-    }
-
-    #[test]
-    fn context_new_rejects_localhost() {
-        assert!(Context::new("test", Ipv4Addr::LOCALHOST, "/tmp", "t.silo").is_err());
-    }
-
-    #[test]
-    fn context_new_env_vars() {
-        let ctx = Context::new(
-            "my-agent",
-            Ipv4Addr::new(127, 10, 20, 30),
-            "/work",
-            "my-agent.silo",
-        )
-        .unwrap();
-        let vars = ctx.env_vars();
-        let ip_val = vars.iter().find(|(k, _)| *k == "SILO_IP").unwrap();
-        assert_eq!(ip_val.1.as_ref(), "127.10.20.30");
-        let name_val = vars.iter().find(|(k, _)| *k == "SILO_NAME").unwrap();
-        assert_eq!(name_val.1.as_ref(), "my-agent");
-    }
-
-    #[test]
-    fn context_new_no_git_required() {
-        let dir = tempfile::tempdir().unwrap();
-        // No git init — Context::new() should work without git
-        let ctx = Context::new(
-            "standalone",
-            Ipv4Addr::new(127, 5, 5, 5),
-            dir.path(),
-            "standalone.silo",
-        );
-        assert!(ctx.is_ok());
     }
 }
