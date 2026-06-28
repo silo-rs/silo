@@ -33,7 +33,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 libc = "0.2"
 
 # ebpf deps
-aya = "0.13"
+aya = "0.14"
 
 # dev deps
 tempfile = "3"
